@@ -1,80 +1,111 @@
 {
-  "name": "SN links",
-  "children": [
-    {
-      "name": "Set list item limit",
-      "type": "scriptlet",
-      "code": "var glideListClassRef = globalThis.g_list ?? globalThis.gsft_main?.g_list ?? globalThis.GlideList2 ?? globalThis.gsft_main.GlideList2; if (!glideListClassRef.table) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new GlideList2(ids[0]) } glideListClassRef.setRowsPerPage({limit});",
-      "parameter": {
-        "name": "limit",
-        "placeholder": "limit",
-        "default": "100"
-      }
-    },
-    {
-      "name": "Show navigator",
-      "type": "scriptlet",
-      "code": "(function(){var l=window.location,p=l.pathname.replace(/^\\/+/,'');if(/^now\\/nav\\/ui\\/classic\\/params\\/target\\//.test(p))return;var t=encodeURIComponent(p+l.search+l.hash);l.href=l.origin+'/now/nav/ui/classic/params/target/'+t;})();"
-    },
-    {
-      "name": "SN Upload XML",
-      "type": "instance-path",
-      "path": "/now/nav/ui/classic/params/target/upload.do"
-    },
-    {
-      "name": "Cancel transactions",
-      "type": "scriptlet",
-      "code": "void(window.location.href = '/cancel_my_transaction.do');"
-    },
-    {
-      "name": "App Log | ServiceNow",
-      "type": "scriptlet",
-      "code": "window.location.href=\"/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()\""
-    },
-    {
-      "name": "App Log | ServiceNow",
-      "type": "instance-path",
-      "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONLast%20hour@javascript:gs.beginningOfLastHour()@javascript:gs.endOfLastHour()%5Esys_scope%3Djavascript:gs.getCurrentApplicationId()&sysparm_first_row=1&sysparm_view="
-    },
-    {
-      "name": "Custom Layout for sp-model/spModel ( Istanbul ) - ServiceNow Community",
-      "type": "external",
-      "url": "https://www.servicenow.com/community/developer-articles/custom-layout-for-sp-model-spmodel-istanbul/ta-p/2303547"
-    },
-    {
-      "name": "UIB form component",
-      "children": [
-        {
-          "name": "UI Builder | ServiceNow",
-          "type": "instance-path",
-          "path": "/now/builder/ui/controller/029f04e053610110ac9bddeeff7b1294"
-        },
-        {
-          "name": "Form Controller | UX Macroponent Definition | ServiceNow",
-          "type": "instance-path",
-          "path": "/sys_ux_macroponent.do?sys_id={sys_id}",
-          "parameter": {
-            "name": "sys_id",
-            "placeholder": "sys_id",
-            "default": "67ee2538534501108135ddeeff7b121b"
-          }
-        },
-        {
-          "name": "UX Events View: Advanced | ServiceNow",
-          "type": "instance-path",
-          "path": "/sys_ux_event_list.do?sysparm_query=sys_scope%3D6d940d54d63c3f847df337e8f4e0d712&sysparm_first_row=1&sysparm_view=advanced"
+  "ServiceNow": {
+    "hostPattern": "\\.service-now\\.com$",
+    "children": [
+      {
+        "name": "Set list item limit",
+        "type": "scriptlet",
+        "code": "var glideListClassRef = globalThis.g_list ?? globalThis.gsft_main?.g_list ?? globalThis.GlideList2 ?? globalThis.gsft_main.GlideList2; if (!glideListClassRef.table) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new GlideList2(ids[0]) } glideListClassRef.setRowsPerPage({limit});",
+        "parameter": {
+          "name": "limit",
+          "placeholder": "limit",
+          "default": "100"
         }
-      ]
-    },
-    {
-      "name": "ServiceNow node logs",
-      "type": "scriptlet",
-      "code": "void(window.location.href = '/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29');"
-    },
-    {
-      "name": "Now Component Library | ServiceNow Developers",
-      "type": "external",
-      "url": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
-    }
-  ]
+      },
+      {
+        "name": "Show navigator",
+        "type": "scriptlet",
+        "code": "(function(){var l=window.location,p=l.pathname.replace(/^\\/+/,'');if(/^now\\/nav\\/ui\\/classic\\/params\\/target\\//.test(p))return;var t=encodeURIComponent(p+l.search+l.hash);l.href=l.origin+'/now/nav/ui/classic/params/target/'+t;})();"
+      },
+      {
+        "name": "SN Upload XML",
+        "type": "instance-path",
+        "path": "/now/nav/ui/classic/params/target/upload.do"
+      },
+      {
+        "name": "Cancel transactions",
+        "type": "scriptlet",
+        "code": "void(window.location.href = '/cancel_my_transaction.do');"
+      },
+      {
+        "name": "App Log | ServiceNow",
+        "type": "scriptlet",
+        "code": "window.location.href=\"/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()\""
+      },
+      {
+        "name": "App Log | ServiceNow",
+        "type": "instance-path",
+        "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONLast%20hour@javascript:gs.beginningOfLastHour()@javascript:gs.endOfLastHour()%5Esys_scope%3Djavascript:gs.getCurrentApplicationId()&sysparm_first_row=1&sysparm_view="
+      },
+      {
+        "name": "Custom Layout for sp-model/spModel ( Istanbul ) - ServiceNow Community",
+        "type": "external",
+        "url": "https://www.servicenow.com/community/developer-articles/custom-layout-for-sp-model-spmodel-istanbul/ta-p/2303547"
+      },
+      {
+        "name": "UIB form component",
+        "children": [
+          {
+            "name": "UI Builder | ServiceNow",
+            "type": "instance-path",
+            "path": "/now/builder/ui/controller/029f04e053610110ac9bddeeff7b1294"
+          },
+          {
+            "name": "Form Controller | UX Macroponent Definition | ServiceNow",
+            "type": "instance-path",
+            "path": "/sys_ux_macroponent.do?sys_id={sys_id}",
+            "parameter": {
+              "name": "sys_id",
+              "placeholder": "sys_id",
+              "default": "67ee2538534501108135ddeeff7b121b"
+            }
+          },
+          {
+            "name": "UX Events View: Advanced | ServiceNow",
+            "type": "instance-path",
+            "path": "/sys_ux_event_list.do?sysparm_query=sys_scope%3D6d940d54d63c3f847df337e8f4e0d712&sysparm_first_row=1&sysparm_view=advanced"
+          }
+        ]
+      },
+      {
+        "name": "ServiceNow node logs",
+        "type": "scriptlet",
+        "code": "void(window.location.href = '/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29');"
+      },
+      {
+        "name": "Now Component Library | ServiceNow Developers",
+        "type": "external",
+        "url": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
+      }
+    ]
+  },
+  "Reverse-engineering tools": {
+    "children": [
+      {
+        "name": "Non-default attributes",
+        "type": "scriptlet",
+        "code": "var iframe=document.createElement('iframe');iframe.style.display='none';document.documentElement.appendChild(iframe);var added=[];var modified=[];for(const key of Object.getOwnPropertyNames(window)){const current=Object.getOwnPropertyDescriptor(window,key);const clean=Object.getOwnPropertyDescriptor(iframe.contentWindow,key);if(!clean){added.push(key)}else if(current?.value!==clean?.value){modified.push(key)}} console.log('Added:',added.sort());console.log('Modified:',modified.sort());iframe.remove()"
+      },
+      {
+        "name": "Remove blur & overflow hidden",
+        "type": "scriptlet",
+        "code": "(function(){var maxDepth=Math.max(1,parseInt($depth,10)||3);var n=0;function strip(el){var cs=getComputedStyle(el);if(/blur\\s*\\(/i.test(cs.filter))el.style.setProperty('filter','none','important'),n++;if(/blur\\s*\\(/i.test(cs.backdropFilter||''))el.style.setProperty('backdrop-filter','none','important'),n++;if(el.style.filter&&/blur/i.test(el.style.filter)){el.style.filter=el.style.filter.replace(/blur\\([^)]*\\)/gi,'').replace(/^[\\s,]+|[\\s,]+$/g,'');el.style.filter||el.style.removeProperty('filter');n++}(['overflow','overflowX','overflowY']).forEach(function(k,i){var p=['overflow','overflow-x','overflow-y'][i],val=cs[k];if(val==='hidden'||val==='clip')el.style.setProperty(p,'visible','important'),n++})}function walk(el,d){strip(el);if(d>=maxDepth)return;for(var i=0;i<el.children.length;i++)walk(el.children[i],d+1)}if(!document.body){console.warn('No document.body');return}walk(document.body,1);console.log('Removed blur/overflow: '+n+' within '+maxDepth+' level(s) including body')})();",
+        "parameter": {
+          "name": "depth",
+          "placeholder": "depth",
+          "default": "3"
+        }
+      },
+      {
+        "name": "Intercept events",
+        "type": "scriptlet",
+        "code": "(function(){var type='$type'.replace(/['\"]/g,'')||'click';window.addEventListener(type,function(event){event.stopPropagation();event.stopImmediatePropagation();console.log(event)},true);console.log('Intercepting '+type+' on window (capture)')})();",
+        "parameter": {
+          "name": "type",
+          "placeholder": "type",
+          "default": "click"
+        }
+      }
+    ]
+  }
 }

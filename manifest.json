@@ -10,7 +10,7 @@
     }
   },
   "permissions": ["activeTab", "scripting", "storage", "tabs"],
-  "host_permissions": ["*://*.service-now.com/*"],
+  "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "ServiceNow Links",

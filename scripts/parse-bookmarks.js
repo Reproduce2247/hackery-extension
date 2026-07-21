@@ -108,10 +108,15 @@ function parseBlock(block, folderPath) {
 }
 
 function buildTree(items) {
-  const root = { name: "SN links", children: [] };
+  const root = {
+    ServiceNow: {
+      hostPattern: String.raw`\.service-now\.com$`,
+      children: [],
+    },
+  };
 
   for (const item of items) {
-    let node = root;
+    let node = root.ServiceNow;
     for (const part of item.folder) {
       let child = node.children.find(
         (c) => c.name === part && Array.isArray(c.children)

@@ -1,5 +1,6 @@
-const SN_HOST = /\.service-now\.com$/i;
 const NAV_TARGET_PREFIX = /^now\/nav\/ui\/classic\/params\/target\//;
+const LAST_ORIGINS_KEY = "lastOrigins";
+const hostPatternCache = new Map();
 
 function toNavigatorPath(path) {
   const normalized = path.startsWith("/") ? path : `/${path}`;
@@ -25,8 +26,10 @@ function extractNavigationPath(code) {
 
 const CUSTOM_SCRIPTS_KEY = "customScripts";
 const PARAM_VALUES_KEY = "linkParamValues";
+const SECTION_TAB_KEY = "activeSectionTab";
 const PARAM_TOKEN_RE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
 
+const sectionTabsEl = document.getElementById("section-tabs");
 const linksEl = document.getElementById("links");
 const instanceStatusEl = document.getElementById("instance-status");
 const messageEl = document.getElementById("message");
@@ -34,7 +37,20 @@ const scriptNameInput = document.getElementById("script-name");
 const scriptCodeInput = document.getElementById("script-code");
 const addScriptBtn = document.getElementById("add-script-btn");
 
-let linkTree = null;
+let linkSections = null;
+let activeSectionName = null;
+
+function parseLinkSections(raw) {
+  return Object.entries(raw).map(([name, section]) => ({
+    name,
+    hostPattern: section?.hostPattern ?? null,
+    children: section?.children || [],
+  }));
+}
+
+function getActiveSection() {
+  return linkSections?.find((section) => section.name === activeSectionName) || null;
+}
 
 function showMessage(text) {
   messageEl.textContent = text;
@@ -45,12 +61,39 @@ function hideMessage() {
   messageEl.classList.add("hidden");
 }
 
-function isServiceNowUrl(urlString) {
+function resolveHostPattern(node, inherited) {
+  if (Object.prototype.hasOwnProperty.call(node, "hostPattern")) {
+    return node.hostPattern || null;
+  }
+  return inherited ?? null;
+}
+
+function getHostPatternRegex(pattern) {
+  if (!hostPatternCache.has(pattern)) {
+    hostPatternCache.set(pattern, new RegExp(pattern, "i"));
+  }
+  return hostPatternCache.get(pattern);
+}
+
+function matchesHostPattern(urlString, pattern) {
+  if (!pattern) {
+    return true;
+  }
   try {
-    return SN_HOST.test(new URL(urlString).hostname);
+    return getHostPatternRegex(pattern).test(new URL(urlString).hostname);
   } catch {
     return false;
   }
+}
+
+function resolvePathOnTab(tab, path) {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  if (!tab?.url) {
+    throw new Error("Active tab has no URL to resolve path against.");
+  }
+  return new URL(path, tab.url).href;
 }
 
 async function getActiveTab() {
@@ -58,49 +101,47 @@ async function getActiveTab() {
   return tab;
 }
 
-async function resolveInstanceOrigin() {
-  const tab = await getActiveTab();
-  if (tab?.url && isServiceNowUrl(tab.url)) {
-    const origin = new URL(tab.url).origin;
-    await browser.storage.local.set({ lastInstance: origin });
-    return { origin, tabId: tab.id };
-  }
-
-  const { lastInstance } = await browser.storage.local.get("lastInstance");
-  if (lastInstance) {
-    return { origin: lastInstance, tabId: null };
-  }
-
-  return { origin: null, tabId: null };
+async function rememberOrigin(hostPattern, origin) {
+  const stored = await browser.storage.local.get(LAST_ORIGINS_KEY);
+  const lastOrigins = stored[LAST_ORIGINS_KEY] || {};
+  lastOrigins[hostPattern] = origin;
+  await browser.storage.local.set({ [LAST_ORIGINS_KEY]: lastOrigins });
 }
 
-async function findServiceNowTab(preferredOrigin) {
+async function getRememberedOrigin(hostPattern) {
+  const stored = await browser.storage.local.get(LAST_ORIGINS_KEY);
+  return (stored[LAST_ORIGINS_KEY] || {})[hostPattern] || null;
+}
+
+async function findMatchingTab(hostPattern, preferredOrigin) {
   const tabs = await browser.tabs.query({ currentWindow: true });
-  const snTabs = tabs.filter((tab) => tab.url && isServiceNowUrl(tab.url));
+  const matchingTabs = tabs.filter(
+    (tab) => tab.url && matchesHostPattern(tab.url, hostPattern)
+  );
 
   if (preferredOrigin) {
-    const match = snTabs.find(
+    const match = matchingTabs.find(
       (tab) => new URL(tab.url).origin === preferredOrigin
     );
     if (match) return match;
   }
 
-  return snTabs[0] || null;
+  return matchingTabs[0] || null;
 }
 
-async function ensureServiceNowTab(origin) {
-  const existing = await findServiceNowTab(origin);
+async function ensureMatchingTab(hostPattern, origin) {
+  const existing = await findMatchingTab(hostPattern, origin);
   if (existing) {
     return existing;
   }
 
   if (!origin) {
     throw new Error(
-      "Open a ServiceNow instance tab first, or visit one so the extension can remember it."
+      `Open a tab matching /${hostPattern}/ first, or visit one so the extension can remember it.`
     );
   }
 
-  return browser.tabs.create({ url: `${origin}/navpage.do`, active: false });
+  return browser.tabs.create({ url: `${origin}/`, active: false });
 }
 
 async function waitForTabLoad(tabId) {
@@ -120,20 +161,33 @@ async function waitForTabLoad(tabId) {
   });
 }
 
-async function getTargetServiceNowTab() {
+async function getActiveTargetTab() {
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    throw new Error("No active tab.");
+  }
+  const origin = tab.url ? new URL(tab.url).origin : null;
+  return { tab, origin };
+}
+
+async function getTargetTab(hostPattern) {
+  if (!hostPattern) {
+    return getActiveTargetTab();
+  }
+
   const activeTab = await getActiveTab();
-  if (activeTab?.url && isServiceNowUrl(activeTab.url)) {
+  if (activeTab?.url && matchesHostPattern(activeTab.url, hostPattern)) {
     const origin = new URL(activeTab.url).origin;
-    await browser.storage.local.set({ lastInstance: origin });
+    await rememberOrigin(hostPattern, origin);
     return { tab: activeTab, origin };
   }
 
-  const { lastInstance } = await browser.storage.local.get("lastInstance");
-  const tab = await ensureServiceNowTab(lastInstance || null);
+  const rememberedOrigin = await getRememberedOrigin(hostPattern);
+  const tab = await ensureMatchingTab(hostPattern, rememberedOrigin);
   const loadedTab =
     tab.status === "complete" ? tab : await waitForTabLoad(tab.id);
   const origin = new URL(loadedTab.url).origin;
-  await browser.storage.local.set({ lastInstance: origin });
+  await rememberOrigin(hostPattern, origin);
   return { tab: loadedTab, origin };
 }
 
@@ -149,9 +203,16 @@ function displayHint(node, paramValues = {}) {
   const resolved = resolveNode(node, paramValues);
   if (resolved.type === "scriptlet") {
     const path = extractNavigationPath(resolved.code);
-    return path ? toNavigatorPath(path) : "Runs on the current instance tab";
+    if (path) {
+      return node.hostPattern ? toNavigatorPath(path) : path;
+    }
+    return node.hostPattern ? "Runs on the matched instance tab" : "Runs on the active tab";
   }
-  if (resolved.type === "instance-path") return toNavigatorPath(resolved.path);
+  if (resolved.type === "instance-path") {
+    return resolved.hostPattern
+      ? toNavigatorPath(resolved.path)
+      : resolved.path;
+  }
   if (resolved.type === "external") return resolved.url;
   return "";
 }
@@ -230,7 +291,8 @@ function linkStorageKey(node) {
   if (node.id) {
     return node.id;
   }
-  return `${node.type}:${node.name}:${getLinkTemplate(node)}`;
+  const sectionPrefix = node.sectionName ? `${node.sectionName}:` : "";
+  return `${sectionPrefix}${node.type}:${node.name}:${getLinkTemplate(node)}`;
 }
 
 function resolveNode(node, paramValues) {
@@ -439,8 +501,15 @@ function createLinkRow(node, options = {}) {
   return row;
 }
 
-function renderNodes(nodes, container, savedParamValues) {
+function renderNodes(
+  nodes,
+  container,
+  savedParamValues,
+  inheritedHostPattern = null,
+  sectionName = null
+) {
   for (const node of nodes) {
+    const hostPattern = resolveHostPattern(node, inheritedHostPattern);
     if (node.children) {
       const folder = document.createElement("section");
       folder.className = "folder";
@@ -450,12 +519,49 @@ function renderNodes(nodes, container, savedParamValues) {
       title.textContent = node.name;
       folder.appendChild(title);
 
-      renderNodes(node.children, folder, savedParamValues);
+      renderNodes(
+        node.children,
+        folder,
+        savedParamValues,
+        hostPattern,
+        sectionName
+      );
       container.appendChild(folder);
       continue;
     }
 
-    container.appendChild(createLinkRow(node, { savedParamValues }));
+    container.appendChild(
+      createLinkRow(
+        { ...node, hostPattern, sectionName },
+        { savedParamValues }
+      )
+    );
+  }
+}
+
+function renderSectionTabs() {
+  if (!sectionTabsEl || !linkSections) {
+    return;
+  }
+
+  sectionTabsEl.replaceChildren();
+  for (const section of linkSections) {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "section-tab";
+    tab.role = "tab";
+    tab.textContent = section.name;
+    tab.setAttribute(
+      "aria-selected",
+      section.name === activeSectionName ? "true" : "false"
+    );
+    tab.classList.toggle("active", section.name === activeSectionName);
+    tab.addEventListener("click", async () => {
+      activeSectionName = section.name;
+      await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
+      await renderAll();
+    });
+    sectionTabsEl.appendChild(tab);
   }
 }
 
@@ -501,10 +607,18 @@ function renderCustomScripts(scripts, container, savedParamValues) {
 async function renderAll() {
   linksEl.replaceChildren();
   const savedParamValues = await loadParamValues();
-  if (linkTree) {
-    renderNodes(linkTree.children, linksEl, savedParamValues);
+  const section = getActiveSection();
+  if (section) {
+    renderNodes(
+      section.children,
+      linksEl,
+      savedParamValues,
+      section.hostPattern,
+      section.name
+    );
   }
   renderCustomScripts(await loadCustomScripts(), linksEl, savedParamValues);
+  renderSectionTabs();
 }
 
 async function addCustomScript() {
@@ -545,11 +659,16 @@ async function runScriptlet(tabId, code) {
   });
 }
 
-async function openInstancePath(origin, path, tabId) {
-  const url = toNavigatorUrl(origin, path);
+async function openInstancePath(origin, path, tab, hostPattern) {
+  const url = hostPattern
+    ? toNavigatorUrl(origin, path)
+    : resolvePathOnTab(tab, path);
 
-  if (tabId) {
-    await browser.tabs.update(tabId, { url, active: true });
+  if (tab?.id) {
+    await browser.tabs.update(tab.id, {
+      url,
+      active: Boolean(hostPattern),
+    });
     return;
   }
 
@@ -585,24 +704,27 @@ async function activateLink(node, row = null) {
       return;
     }
 
-    const { tab, origin } = await getTargetServiceNowTab();
+    const hostPattern = resolved.hostPattern ?? null;
+    const { tab, origin } = await getTargetTab(hostPattern);
 
     if (resolved.type === "scriptlet") {
       const navPath = extractNavigationPath(resolved.code);
       if (navPath) {
-        await openInstancePath(origin, navPath, tab.id);
+        await openInstancePath(origin, navPath, tab, hostPattern);
         window.close();
         return;
       }
 
-      await browser.tabs.update(tab.id, { active: true });
+      if (hostPattern) {
+        await browser.tabs.update(tab.id, { active: true });
+      }
       await runScriptlet(tab.id, resolved.code);
       window.close();
       return;
     }
 
     if (resolved.type === "instance-path") {
-      await openInstancePath(origin, resolved.path, tab.id);
+      await openInstancePath(origin, resolved.path, tab, hostPattern);
       window.close();
     }
   } catch (error) {
@@ -611,20 +733,22 @@ async function activateLink(node, row = null) {
 }
 
 async function init() {
-  linkTree = await fetch(browser.runtime.getURL("data/links.json")).then(
+  const raw = await fetch(browser.runtime.getURL("data/links.json")).then(
     (response) => response.json()
   );
+  linkSections = parseLinkSections(raw);
+  const stored = await browser.storage.local.get(SECTION_TAB_KEY);
+  activeSectionName =
+    stored[SECTION_TAB_KEY] ||
+    linkSections.find((section) => section.name === "ServiceNow")?.name ||
+    linkSections[0]?.name ||
+    null;
 
-  const { origin } = await resolveInstanceOrigin();
-
-  if (origin) {
-    instanceStatusEl.textContent = `Instance: ${origin}`;
+  const activeTab = await getActiveTab();
+  if (activeTab?.url) {
+    instanceStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
   } else {
-    instanceStatusEl.textContent =
-      "No ServiceNow tab detected — instance links use your last visited instance.";
-    showMessage(
-      "Open any *.service-now.com tab so scriptlets and instance paths target the right instance."
-    );
+    instanceStatusEl.textContent = "No active tab";
   }
 
   addScriptBtn.addEventListener("click", () => {
