@@ -18,27 +18,37 @@
       aria-label="Link sections"
     ></nav>
     <div id="links" class="links" role="tabpanel"></div>
-    <section class="add-script" aria-label="Add custom script">
-      <h2>Add action</h2>
-      <label class="field">
-        <span class="field-label">Name</span>
-        <input
-          id="script-name"
-          type="text"
-          placeholder="Optional label"
-          autocomplete="off"
-        />
-      </label>
-      <label class="field">
-        <span class="field-label">Script</span>
-        <textarea
-          id="script-code"
-          rows="4"
-          placeholder="Paste JavaScript or a javascript: bookmarklet. Use {value} for an input."
-          spellcheck="false"
-        ></textarea>
-      </label>
-      <button id="add-script-btn" type="button">Add action</button>
+    <section class="add-script is-collapsed" aria-label="Add custom script">
+      <button
+        id="add-script-toggle"
+        type="button"
+        class="add-script-toggle"
+        aria-expanded="false"
+        aria-controls="add-script-panel"
+      >
+        Add action
+      </button>
+      <div id="add-script-panel" class="add-script-panel" hidden>
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input
+            id="script-name"
+            type="text"
+            placeholder="Optional label"
+            autocomplete="off"
+          />
+        </label>
+        <label class="field">
+          <span class="field-label">Script</span>
+          <textarea
+            id="script-code"
+            rows="4"
+            placeholder="Paste JavaScript or a javascript: bookmarklet. Use {value} for an input."
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <button id="add-script-btn" type="button">Add action</button>
+      </div>
     </section>
     <script type="module" src="popup.js"></script>
   </body>

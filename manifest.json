@@ -9,8 +9,11 @@
       "strict_min_version": "109.0"
     }
   },
-  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
   "host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["background.js"]
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "ServiceNow Links",

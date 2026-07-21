@@ -27,6 +27,8 @@ function extractNavigationPath(code) {
 const CUSTOM_SCRIPTS_KEY = "customScripts";
 const PARAM_VALUES_KEY = "linkParamValues";
 const SECTION_TAB_KEY = "activeSectionTab";
+const ADD_SCRIPT_EXPANDED_KEY = "addScriptExpanded";
+const INJECT_ON_LOAD_KEY = "injectOnLoad";
 const PARAM_TOKEN_RE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
 
 const sectionTabsEl = document.getElementById("section-tabs");
@@ -36,6 +38,9 @@ const messageEl = document.getElementById("message");
 const scriptNameInput = document.getElementById("script-name");
 const scriptCodeInput = document.getElementById("script-code");
 const addScriptBtn = document.getElementById("add-script-btn");
+const addScriptSection = document.querySelector(".add-script");
+const addScriptToggle = document.getElementById("add-script-toggle");
+const addScriptPanel = document.getElementById("add-script-panel");
 
 let linkSections = null;
 let activeSectionName = null;
@@ -392,6 +397,22 @@ async function saveCustomScripts(scripts) {
   await browser.storage.local.set({ [CUSTOM_SCRIPTS_KEY]: scripts });
 }
 
+async function loadInjectOnLoad() {
+  const stored = await browser.storage.local.get(INJECT_ON_LOAD_KEY);
+  return stored[INJECT_ON_LOAD_KEY] || {};
+}
+
+async function setInjectOnLoad(linkKey, enabled) {
+  const injectOnLoad = await loadInjectOnLoad();
+  if (enabled) {
+    injectOnLoad[linkKey] = true;
+  } else {
+    delete injectOnLoad[linkKey];
+  }
+  await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: injectOnLoad });
+  await browser.runtime.sendMessage({ type: "REFRESH_INJECT" }).catch(() => {});
+}
+
 function defaultScriptName(code, scripts) {
   const navPath = extractNavigationPath(code);
   if (navPath) {
@@ -436,6 +457,30 @@ function createParamInputs(parameterDefs, savedValues, linkKey, onEnter) {
   return wrap;
 }
 
+function createLinkListHeader({ showRemove = false } = {}) {
+  const header = document.createElement("div");
+  header.className = "link-list-header";
+  header.setAttribute("role", "row");
+
+  const columns = [
+    { className: "col-action", label: "Action" },
+    { className: "col-params", label: "Params" },
+    { className: "col-on-load", label: "On load" },
+  ];
+  if (showRemove) {
+    columns.push({ className: "col-remove", label: "Remove" });
+  }
+
+  for (const column of columns) {
+    const cell = document.createElement("span");
+    cell.className = column.className;
+    cell.textContent = column.label;
+    header.appendChild(cell);
+  }
+
+  return header;
+}
+
 function createLinkRow(node, options = {}) {
   const parameterDefs = getParameterDefs(node);
   const linkKey = linkStorageKey(node);
@@ -443,7 +488,13 @@ function createLinkRow(node, options = {}) {
 
   const row = document.createElement("div");
   row.className = "link-row";
+  if (options.showRemove) {
+    row.classList.add("has-remove");
+  }
   row.dataset.linkKey = linkKey;
+
+  const actionCell = document.createElement("div");
+  actionCell.className = "link-row-action";
 
   const button = document.createElement("button");
   button.type = "button";
@@ -473,7 +524,11 @@ function createLinkRow(node, options = {}) {
   button.appendChild(badge);
   button.appendChild(labelWrap);
   button.addEventListener("click", () => activateLink(node, row));
-  row.appendChild(button);
+  actionCell.appendChild(button);
+  row.appendChild(actionCell);
+
+  const paramsCell = document.createElement("div");
+  paramsCell.className = "link-row-params";
 
   const paramInputs = createParamInputs(
     parameterDefs,
@@ -485,17 +540,47 @@ function createLinkRow(node, options = {}) {
     for (const input of paramInputs.querySelectorAll(".param-input")) {
       input.addEventListener("input", updateHint);
     }
-    row.appendChild(paramInputs);
+    paramsCell.appendChild(paramInputs);
   }
+  row.appendChild(paramsCell);
 
-  if (options.onDelete) {
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "delete-btn";
-    deleteBtn.title = "Remove action";
-    deleteBtn.textContent = "×";
-    deleteBtn.addEventListener("click", options.onDelete);
-    row.appendChild(deleteBtn);
+  const onLoadCell = document.createElement("div");
+  onLoadCell.className = "link-row-on-load";
+
+  if (node.type === "scriptlet" && !extractNavigationPath(node.code)) {
+    const injectLabel = document.createElement("label");
+    injectLabel.className = "inject-load";
+    injectLabel.title = "Inject at document start on each navigation";
+
+    const injectCheck = document.createElement("input");
+    injectCheck.type = "checkbox";
+    injectCheck.className = "inject-load-checkbox";
+    injectCheck.checked = Boolean(options.injectOnLoad?.[linkKey]);
+    injectCheck.addEventListener("click", (event) => event.stopPropagation());
+    injectCheck.addEventListener("change", async () => {
+      await setInjectOnLoad(linkKey, injectCheck.checked);
+    });
+
+    injectLabel.appendChild(injectCheck);
+    onLoadCell.appendChild(injectLabel);
+  }
+  row.appendChild(onLoadCell);
+
+  if (options.showRemove) {
+    const removeCell = document.createElement("div");
+    removeCell.className = "link-row-remove";
+
+    if (options.onDelete) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "delete-btn";
+      deleteBtn.title = "Remove action";
+      deleteBtn.textContent = "×";
+      deleteBtn.addEventListener("click", options.onDelete);
+      removeCell.appendChild(deleteBtn);
+    }
+
+    row.appendChild(removeCell);
   }
 
   return row;
@@ -506,7 +591,9 @@ function renderNodes(
   container,
   savedParamValues,
   inheritedHostPattern = null,
-  sectionName = null
+  sectionName = null,
+  injectOnLoad = {},
+  options = {}
 ) {
   for (const node of nodes) {
     const hostPattern = resolveHostPattern(node, inheritedHostPattern);
@@ -524,7 +611,9 @@ function renderNodes(
         folder,
         savedParamValues,
         hostPattern,
-        sectionName
+        sectionName,
+        injectOnLoad,
+        options
       );
       container.appendChild(folder);
       continue;
@@ -533,7 +622,7 @@ function renderNodes(
     container.appendChild(
       createLinkRow(
         { ...node, hostPattern, sectionName },
-        { savedParamValues }
+        { savedParamValues, injectOnLoad, showRemove: options.showRemove }
       )
     );
   }
@@ -565,7 +654,7 @@ function renderSectionTabs() {
   }
 }
 
-function renderCustomScripts(scripts, container, savedParamValues) {
+function renderCustomScripts(scripts, container, savedParamValues, injectOnLoad) {
   if (scripts.length === 0) {
     return;
   }
@@ -591,10 +680,15 @@ function renderCustomScripts(scripts, container, savedParamValues) {
     folder.appendChild(
       createLinkRow(node, {
         savedParamValues,
+        injectOnLoad,
+        showRemove: true,
         onDelete: async (event) => {
           event.stopPropagation();
           const nextScripts = scripts.filter((item) => item.id !== script.id);
           await saveCustomScripts(nextScripts);
+          const nextInject = await loadInjectOnLoad();
+          delete nextInject[script.id];
+          await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: nextInject });
           await renderAll();
         },
       })
@@ -607,17 +701,31 @@ function renderCustomScripts(scripts, container, savedParamValues) {
 async function renderAll() {
   linksEl.replaceChildren();
   const savedParamValues = await loadParamValues();
+  const injectOnLoad = await loadInjectOnLoad();
+  const customScripts = await loadCustomScripts();
+  const showRemove = customScripts.length > 0;
   const section = getActiveSection();
+
+  const list = document.createElement("div");
+  list.className = "link-list";
+  if (showRemove) {
+    list.classList.add("has-remove");
+  }
+  list.appendChild(createLinkListHeader({ showRemove }));
+
   if (section) {
     renderNodes(
       section.children,
-      linksEl,
+      list,
       savedParamValues,
       section.hostPattern,
-      section.name
+      section.name,
+      injectOnLoad,
+      { showRemove }
     );
   }
-  renderCustomScripts(await loadCustomScripts(), linksEl, savedParamValues);
+  renderCustomScripts(customScripts, list, savedParamValues, injectOnLoad);
+  linksEl.appendChild(list);
   renderSectionTabs();
 }
 
@@ -732,6 +840,23 @@ async function activateLink(node, row = null) {
   }
 }
 
+async function initAddScriptCollapse() {
+  const stored = await browser.storage.local.get(ADD_SCRIPT_EXPANDED_KEY);
+  setAddScriptExpanded(stored[ADD_SCRIPT_EXPANDED_KEY] === true);
+
+  addScriptToggle.addEventListener("click", async () => {
+    const expanded = addScriptToggle.getAttribute("aria-expanded") !== "true";
+    setAddScriptExpanded(expanded);
+    await browser.storage.local.set({ [ADD_SCRIPT_EXPANDED_KEY]: expanded });
+  });
+}
+
+function setAddScriptExpanded(expanded) {
+  addScriptSection.classList.toggle("is-collapsed", !expanded);
+  addScriptToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  addScriptPanel.hidden = !expanded;
+}
+
 async function init() {
   const raw = await fetch(browser.runtime.getURL("data/links.json")).then(
     (response) => response.json()
@@ -762,6 +887,7 @@ async function init() {
     }
   });
 
+  await initAddScriptCollapse();
   await renderAll();
 }
 
