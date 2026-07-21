@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "ServiceNow Links",
+  "version": "1.0.0",
+  "description": "Instance-independent quick links from the SN links bookmarks folder.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sn-links@local.dev",
+      "strict_min_version": "109.0"
+    }
+  },
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": ["*://*.service-now.com/*"],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "ServiceNow Links",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png"
+    }
+  },
+  "icons": {
+    "48": "icon.png",
+    "96": "icon.png"
+  }
+}
