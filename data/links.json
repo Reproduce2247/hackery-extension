@@ -14,45 +14,59 @@
       },
       {
         "name": "Show navigator",
-        "type": "scriptlet",
-        "code": "(function(){var l=window.location,p=l.pathname.replace(/^\\/+/,'');if(/^now\\/nav\\/ui\\/classic\\/params\\/target\\//.test(p))return;var t=encodeURIComponent(p+l.search+l.hash);l.href=l.origin+'/now/nav/ui/classic/params/target/'+t;})();"
+        "type": "derived-url",
+        "nav": "same-tab",
+        "extract": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$",
+        "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}",
+        "parameter": {
+          "name": "target",
+          "optional": true
+        }
       },
       {
         "name": "SN Upload XML",
-        "type": "instance-path",
+        "type": "derived-url",
+        "nav": "foreground",
         "path": "/now/nav/ui/classic/params/target/upload.do"
       },
       {
         "name": "Cancel transactions",
-        "type": "instance-path",
+        "type": "derived-url",
+        "nav": "foreground",
         "path": "/cancel_my_transaction.do"
       },
       {
         "name": "App Log | ServiceNow",
-        "type": "instance-path",
+        "type": "derived-url",
+        "nav": "foreground",
         "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
       },
       {
         "name": "App Log | ServiceNow",
-        "type": "instance-path",
+        "type": "derived-url",
+        "nav": "foreground",
         "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONLast%20hour@javascript:gs.beginningOfLastHour()@javascript:gs.endOfLastHour()%5Esys_scope%3Djavascript:gs.getCurrentApplicationId()&sysparm_first_row=1&sysparm_view="
       },
       {
         "name": "Custom Layout for sp-model/spModel ( Istanbul ) - ServiceNow Community",
-        "type": "external",
-        "url": "https://www.servicenow.com/community/developer-articles/custom-layout-for-sp-model-spmodel-istanbul/ta-p/2303547"
+        "type": "derived-url",
+        "nav": "foreground",
+        "hostPattern": null,
+        "path": "https://www.servicenow.com/community/developer-articles/custom-layout-for-sp-model-spmodel-istanbul/ta-p/2303547"
       },
       {
         "name": "UIB form component",
         "children": [
           {
             "name": "UI Builder | ServiceNow",
-            "type": "instance-path",
+            "type": "derived-url",
+            "nav": "foreground",
             "path": "/now/builder/ui/controller/029f04e053610110ac9bddeeff7b1294"
           },
           {
             "name": "Form Controller | UX Macroponent Definition | ServiceNow",
-            "type": "instance-path",
+            "type": "derived-url",
+            "nav": "foreground",
             "path": "/sys_ux_macroponent.do?sys_id={sys_id}",
             "parameter": {
               "name": "sys_id",
@@ -62,20 +76,24 @@
           },
           {
             "name": "UX Events View: Advanced | ServiceNow",
-            "type": "instance-path",
+            "type": "derived-url",
+            "nav": "foreground",
             "path": "/sys_ux_event_list.do?sysparm_query=sys_scope%3D6d940d54d63c3f847df337e8f4e0d712&sysparm_first_row=1&sysparm_view=advanced"
           }
         ]
       },
       {
         "name": "ServiceNow node logs",
-        "type": "scriptlet",
-        "code": "void(window.location.href = '/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29');"
+        "type": "derived-url",
+        "nav": "foreground",
+        "path": "/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29"
       },
       {
         "name": "Now Component Library | ServiceNow Developers",
-        "type": "external",
-        "url": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
+        "type": "derived-url",
+        "nav": "foreground",
+        "hostPattern": null,
+        "path": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
       }
     ]
   },
@@ -103,7 +121,110 @@
         "parameter": {
           "name": "type",
           "placeholder": "type",
-          "default": "click"
+          "default": "click",
+          "choices": [
+            "click",
+            "dblclick",
+            "mousedown",
+            "mouseup",
+            "mousemove",
+            "mouseenter",
+            "mouseleave",
+            "mouseover",
+            "mouseout",
+            "contextmenu",
+            "auxclick",
+            "pointerdown",
+            "pointerup",
+            "pointermove",
+            "pointerover",
+            "pointerout",
+            "pointerenter",
+            "pointerleave",
+            "pointercancel",
+            "gotpointercapture",
+            "lostpointercapture",
+            "touchstart",
+            "touchend",
+            "touchmove",
+            "touchcancel",
+            "wheel",
+            "keydown",
+            "keyup",
+            "keypress",
+            "input",
+            "beforeinput",
+            "focus",
+            "blur",
+            "focusin",
+            "focusout",
+            "submit",
+            "reset",
+            "change",
+            "invalid",
+            "search",
+            "formdata",
+            "DOMContentLoaded",
+            "load",
+            "unload",
+            "beforeunload",
+            "resize",
+            "scroll",
+            "scrollend",
+            "error",
+            "abort",
+            "hashchange",
+            "pageshow",
+            "pagehide",
+            "popstate",
+            "visibilitychange",
+            "readystatechange",
+            "drag",
+            "dragstart",
+            "dragend",
+            "dragover",
+            "dragenter",
+            "dragleave",
+            "drop",
+            "animationstart",
+            "animationend",
+            "animationiteration",
+            "animationcancel",
+            "transitionrun",
+            "transitionstart",
+            "transitionend",
+            "transitioncancel",
+            "canplay",
+            "canplaythrough",
+            "durationchange",
+            "emptied",
+            "ended",
+            "loadeddata",
+            "loadedmetadata",
+            "loadstart",
+            "pause",
+            "play",
+            "playing",
+            "progress",
+            "ratechange",
+            "seeked",
+            "seeking",
+            "stalled",
+            "suspend",
+            "timeupdate",
+            "volumechange",
+            "waiting",
+            "copy",
+            "cut",
+            "paste",
+            "toggle",
+            "cancel",
+            "close",
+            "online",
+            "offline",
+            "message",
+            "open"
+          ]
         }
       },
       {
@@ -147,9 +268,36 @@
         }
       },
       {
+        "name": "Watch performance",
+        "type": "scriptlet",
+        "code": "(function(){if(window.__perfWatchInstalled)return;window.__perfWatchInstalled=true;var ms=Math.max(250,parseInt('$interval',10)||1000);var ORIG_TITLE=document.title;var warned=false;var stats={events:0,mutations:0,timers:0,rafs:0,longTasks:0,longTaskMs:0};var eventTypes={};var thresholds={events:10000,mutations:5000,rafs:500,timers:2000,longTasks:5};function warn(snap){if(warned)return;warned=true;var parts=[];if(snap.events>thresholds.events)parts.push('events='+snap.events);if(snap.mutations>thresholds.mutations)parts.push('mutations='+snap.mutations);if(snap.rafs>thresholds.rafs)parts.push('rafs='+snap.rafs);if(snap.timers>thresholds.timers)parts.push('timers='+snap.timers);if(snap.longTasks>thresholds.longTasks)parts.push('longTasks='+snap.longTasks);console.warn('[PERFWATCH] threshold exceeded:',parts.join(', '),snap);document.title='\\uD83D\\uDD25 PERF - '+ORIG_TITLE;var fav=document.querySelector('link[rel*=icon]');if(!fav){fav=document.createElement('link');fav.rel='icon';document.head.appendChild(fav)}fav.href='data:image/svg+xml,'+encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\"><rect width=\"64\" height=\"64\" fill=\"red\"/><text x=\"50%\" y=\"55%\" text-anchor=\"middle\" font-size=\"42\" fill=\"white\">!</text></svg>')}function countEvent(type){stats.events++;if(type)eventTypes[type]=(eventTypes[type]||0)+1}try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){countEvent(e.name)})}).observe({type:'event',buffered:true,durationThreshold:0})}catch(e1){try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){countEvent(e.name)})}).observe({entryTypes:['event']})}catch(e2){var od=EventTarget.prototype.dispatchEvent;EventTarget.prototype.dispatchEvent=function(ev){countEvent(ev&&ev.type);return od.call(this,ev)}}}new MutationObserver(function(records){stats.mutations+=records.length}).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});var _st=window.setTimeout,_si=window.setInterval,_raf=window.requestAnimationFrame;window.setTimeout=function(){stats.timers++;return _st.apply(this,arguments)};window.setInterval=function(){stats.timers++;return _si.apply(this,arguments)};window.requestAnimationFrame=function(cb){stats.rafs++;return _raf.call(this,cb)};try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){stats.longTasks++;stats.longTaskMs+=e.duration})}).observe({entryTypes:['longtask']})}catch(e){}function topEvents(){var keys=Object.keys(eventTypes);if(!keys.length)return null;return keys.sort(function(a,b){return eventTypes[b]-eventTypes[a]}).slice(0,8).map(function(t){return t+':'+eventTypes[t]})}function snapshot(){var snap={intervalMs:ms,events:stats.events,mutations:stats.mutations,timers:stats.timers,rafs:stats.rafs,longTasks:stats.longTasks,longTaskMs:Math.round(stats.longTaskMs)};var top=topEvents();if(top)snap.topEvents=top;if(performance.memory)snap.memMB={used:Math.round(performance.memory.usedJSHeapSize/1048576),total:Math.round(performance.memory.totalJSHeapSize/1048576)};return snap}function reset(){stats.events=stats.mutations=stats.timers=stats.rafs=stats.longTasks=0;stats.longTaskMs=0;for(var k in eventTypes)delete eventTypes[k]}function tick(){var snap=snapshot();if(snap.events>thresholds.events||snap.mutations>thresholds.mutations||snap.rafs>thresholds.rafs||snap.timers>thresholds.timers||snap.longTasks>thresholds.longTasks)warn(snap);console.log('[PERFWATCH]',snap);reset()}window.__perfWatch={stats:stats,thresholds:thresholds,snapshot:snapshot,reset:reset};_si(tick,ms);console.log('[PERFWATCH] watching every '+ms+'ms; inspect window.__perfWatch')})();",
+        "parameter": {
+          "name": "interval",
+          "placeholder": "ms",
+          "default": "5000"
+        }
+      },
+      {
         "name": "Hook addEventListener",
         "type": "scriptlet",
         "code": "(function(){var orig=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(type,fn,opts){console.log('addEventListener',type,this,fn);return orig.call(this,type,fn,opts)};console.log('addEventListener hooked')})();"
+      }
+    ]
+  },
+  "Misc": {
+    "children": [
+      {
+        "hostPattern": "chromewebstore\\.google\\.com/detail/",
+        "name": "Download Chrome extension",
+        "type": "derived-url",
+        "nav": "fetch",
+        "extract": "\\/detail\\/(?:[^/]+\\/)*([a-p]{32})(?:[/?#]|$)",
+        "url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=999.0&acceptformat=crx2,crx3&x=id%3D{id}%26uc",
+        "parameter": {
+          "name": "id",
+          "placeholder": "extension id",
+          "optional": true
+        }
       }
     ]
   }

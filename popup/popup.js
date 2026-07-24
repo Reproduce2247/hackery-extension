@@ -1,39 +1,28 @@
-const NAV_TARGET_PREFIX = /^now\/nav\/ui\/classic\/params\/target\//;
-const LAST_ORIGINS_KEY = "lastOrigins";
-const hostPatternCache = new Map();
-
-function toNavigatorPath(path) {
-  const normalized = path.startsWith("/") ? path : `/${path}`;
-  const parsed = new URL(normalized, "https://example.service-now.com");
-  const barePath = parsed.pathname.replace(/^\/+/, "");
-
-  if (NAV_TARGET_PREFIX.test(barePath)) {
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  }
-
-  const target = encodeURIComponent(barePath + parsed.search + parsed.hash);
-  return `/now/nav/ui/classic/params/target/${target}`;
-}
-
-function toNavigatorUrl(origin, path) {
-  return `${origin}${toNavigatorPath(path)}`;
-}
-
-function extractNavigationPath(code) {
-  const match = code.match(/window\.location\.href\s*=\s*(['"])(.*?)\1/);
-  return match ? match[2] : null;
-}
+const { toNavigatorPath, toNavigatorUrl, resolvePathOnTab, isAbsoluteUrl, resolvePathUrl, resolveDerivedUrl, resolveDerivedLink, evaluateNavScript, resolveAbsoluteUrl, resolveNav, performNavigation } =
+  globalThis.SnLinksNav;
 
 const CUSTOM_SCRIPTS_KEY = "customScripts";
+const LAST_ORIGINS_KEY = "lastOrigins";
+const hostPatternCache = new Map();
 const PARAM_VALUES_KEY = "linkParamValues";
 const SECTION_TAB_KEY = "activeSectionTab";
 const ADD_SCRIPT_EXPANDED_KEY = "addScriptExpanded";
 const INJECT_ON_LOAD_KEY = "injectOnLoad";
-const PARAM_TOKEN_RE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+const POPUP_SIZE_KEY = "popupSize";
+const POPUP_MIN_WIDTH = 420;
+const POPUP_MIN_HEIGHT = 400;
+const POPUP_MAX_WIDTH = 800;
+const POPUP_MAX_HEIGHT = 600;
+const POPUP_DEFAULT_WIDTH = 420;
+const POPUP_DEFAULT_HEIGHT = 560;
 
 const sectionTabsEl = document.getElementById("section-tabs");
 const linksEl = document.getElementById("links");
 const instanceStatusEl = document.getElementById("instance-status");
+const cspDisableLabel = document.getElementById("csp-disable-label");
+const cspDisableCheckbox = document.getElementById("csp-disable-checkbox");
+const injectOnLoadEnabledEl = document.getElementById("inject-on-load-enabled");
+const networkHooksEnabledEl = document.getElementById("network-hooks-enabled");
 const messageEl = document.getElementById("message");
 const scriptNameInput = document.getElementById("script-name");
 const scriptCodeInput = document.getElementById("script-code");
@@ -85,20 +74,17 @@ function matchesHostPattern(urlString, pattern) {
     return true;
   }
   try {
-    return getHostPatternRegex(pattern).test(new URL(urlString).hostname);
+    const url = new URL(urlString);
+    const re = getHostPatternRegex(pattern);
+    return re.test(url.hostname) || re.test(url.href);
   } catch {
     return false;
   }
 }
 
-function resolvePathOnTab(tab, path) {
-  if (/^https?:\/\//i.test(path)) {
-    return path;
-  }
-  if (!tab?.url) {
-    throw new Error("Active tab has no URL to resolve path against.");
-  }
-  return new URL(path, tab.url).href;
+function extractNavigationPath(code) {
+  const match = code.match(/window\.location\.href\s*=\s*(['"])(.*?)\1/);
+  return match ? match[2] : null;
 }
 
 async function getActiveTab() {
@@ -118,24 +104,47 @@ async function getRememberedOrigin(hostPattern) {
   return (stored[LAST_ORIGINS_KEY] || {})[hostPattern] || null;
 }
 
-async function findMatchingTab(hostPattern, preferredOrigin) {
+async function findMatchingTab(hostPattern, preferredOrigin, activeTab) {
   const tabs = await browser.tabs.query({ currentWindow: true });
+  const active = activeTab ?? (await getActiveTab());
+  const activeIndex = active?.index ?? 0;
+
   const matchingTabs = tabs.filter(
     (tab) => tab.url && matchesHostPattern(tab.url, hostPattern)
   );
 
-  if (preferredOrigin) {
-    const match = matchingTabs.find(
-      (tab) => new URL(tab.url).origin === preferredOrigin
-    );
-    if (match) return match;
+  if (matchingTabs.length === 0) {
+    return null;
   }
 
-  return matchingTabs[0] || null;
+  function distanceFromActive(tab) {
+    return Math.abs(tab.index - activeIndex);
+  }
+
+  function nearestTab(candidates) {
+    return [...candidates].sort((a, b) => {
+      const dist = distanceFromActive(a) - distanceFromActive(b);
+      if (dist !== 0) {
+        return dist;
+      }
+      return a.index - b.index;
+    })[0];
+  }
+
+  if (preferredOrigin) {
+    const originMatches = matchingTabs.filter(
+      (tab) => new URL(tab.url).origin === preferredOrigin
+    );
+    if (originMatches.length > 0) {
+      return nearestTab(originMatches);
+    }
+  }
+
+  return nearestTab(matchingTabs);
 }
 
-async function ensureMatchingTab(hostPattern, origin) {
-  const existing = await findMatchingTab(hostPattern, origin);
+async function ensureMatchingTab(hostPattern, origin, activeTab) {
+  const existing = await findMatchingTab(hostPattern, origin, activeTab);
   if (existing) {
     return existing;
   }
@@ -188,7 +197,7 @@ async function getTargetTab(hostPattern) {
   }
 
   const rememberedOrigin = await getRememberedOrigin(hostPattern);
-  const tab = await ensureMatchingTab(hostPattern, rememberedOrigin);
+  const tab = await ensureMatchingTab(hostPattern, rememberedOrigin, activeTab);
   const loadedTab =
     tab.status === "complete" ? tab : await waitForTabLoad(tab.id);
   const origin = new URL(loadedTab.url).origin;
@@ -198,33 +207,67 @@ async function getTargetTab(hostPattern) {
 
 function displayLabel(node) {
   if (node.name === "App Log | ServiceNow") {
-    if (node.type === "scriptlet") return "App Log (current hour)";
     if (node.path?.includes("Last%20hour")) return "App Log (last hour)";
+    return "App Log (current hour)";
   }
   return node.name;
+}
+
+function linkBadgeLabel(node) {
+  if (node.type === "scriptlet") return "Run";
+  if (node.type === "derived-url") return "Derive";
+  if (node.type === "navigate") {
+    return isAbsoluteUrl(node.path || "") ? "Web" : "Open";
+  }
+  return "Open";
+}
+
+function linkBadgeClass(node) {
+  let classes = "link-badge";
+  if (node.type === "derived-url") classes += " derived-url";
+  if (node.type === "navigate" && isAbsoluteUrl(node.path || "")) {
+    classes += " absolute-url";
+  }
+  return classes;
 }
 
 function displayHint(node, paramValues = {}) {
   const resolved = resolveNode(node, paramValues);
   if (resolved.type === "scriptlet") {
+    if (resolved.nav) {
+      return "Navigates via extension";
+    }
     const path = extractNavigationPath(resolved.code);
     if (path) {
       return node.hostPattern ? toNavigatorPath(path) : path;
     }
     return node.hostPattern ? "Runs on the matched instance tab" : "Runs on the active tab";
   }
-  if (resolved.type === "instance-path") {
-    return resolved.hostPattern
-      ? toNavigatorPath(resolved.path)
-      : resolved.path;
+  if (resolved.type === "derived-url") {
+    if (resolved.path) {
+      if (isAbsoluteUrl(resolved.path)) {
+        return resolved.path;
+      }
+      return resolved.hostPattern
+        ? toNavigatorPath(resolved.path)
+        : resolved.path;
+    }
+    return resolved.url.replace(/\{encode:[^}]+\}/g, "…").replace(/\{[^}]+\}/g, "…");
   }
-  if (resolved.type === "external") return resolved.url;
+  if (resolved.type === "navigate") {
+    const path = resolved.path || "";
+    if (isAbsoluteUrl(path)) {
+      return path;
+    }
+    return resolved.hostPattern ? toNavigatorPath(path) : path;
+  }
   return "";
 }
 
 function getLinkTemplate(node) {
-  if (node.type === "instance-path") return node.path || "";
-  if (node.type === "external") return node.url || "";
+  if (node.type === "navigate" || node.type === "derived-url") {
+    return node.url || node.path || "";
+  }
   if (node.type === "scriptlet") return node.code || "";
   return "";
 }
@@ -252,30 +295,164 @@ function buildParameterDef(node, paramName) {
     label: config.label || paramName,
     placeholder: config.placeholder || paramName,
     default: config.default ?? "",
+    optional: Boolean(config.optional),
+    choices: Array.isArray(config.choices) ? config.choices : null,
   };
 }
 
-function getParameterDefs(node) {
-  const template = getLinkTemplate(node);
-  const found = [...template.matchAll(PARAM_TOKEN_RE)].map((match) => match[1]);
+function bindParamInput(input, def, linkKey, onEnter) {
+  input.classList.add("param-input");
+  input.dataset.param = def.name;
+  input.placeholder = def.placeholder;
+  input.title = def.label;
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onEnter();
+    }
+  });
+  input.addEventListener("change", async () => {
+    await saveParamValue(linkKey, def.name, input.value.trim());
+  });
+}
 
-  if (node.type === "scriptlet") {
-    const scriptParams = [
-      ...template.matchAll(/(^|[^\\])\$([a-zA-Z_][a-zA-Z0-9_]*)/g),
-    ].map((match) => match[2]);
-    found.push(...scriptParams);
+let openCombobox = null;
+
+function closeOpenCombobox() {
+  if (!openCombobox) {
+    return;
   }
+  openCombobox.list.hidden = true;
+  if (openCombobox.onScroll) {
+    window.removeEventListener("scroll", openCombobox.onScroll, true);
+  }
+  openCombobox = null;
+}
 
-  const unique = [...new Set(found)];
+function positionComboboxList(root, list) {
+  const rect = root.getBoundingClientRect();
+  const width = Math.max(176, rect.width + 72);
+  const left = Math.max(8, rect.right - width);
 
-  if (node.parameter && !Array.isArray(node.parameter)) {
-    const name = node.parameter.name || "value";
-    if (!unique.includes(name)) {
-      unique.unshift(name);
+  list.style.width = `${width}px`;
+  list.style.left = `${left}px`;
+  list.style.top = `${rect.bottom + 2}px`;
+  list.style.right = "auto";
+}
+
+function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
+  const root = document.createElement("div");
+  root.className = "param-combobox";
+
+  const field = document.createElement("div");
+  field.className = "param-combobox-field";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  const saved = savedValues[def.name];
+  input.value = saved !== undefined ? saved : def.default;
+  bindParamInput(input, def, linkKey, onEnter);
+  input.classList.add("param-combobox-input");
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "param-combobox-toggle";
+  toggle.setAttribute("aria-label", `Choose ${def.label}`);
+  toggle.textContent = "▾";
+
+  const list = document.createElement("ul");
+  list.className = "param-combobox-list";
+  list.hidden = true;
+  list.setAttribute("role", "listbox");
+
+  function renderList() {
+    const query = input.value.trim().toLowerCase();
+    list.replaceChildren();
+    const matches = def.choices.filter(
+      (choice) => !query || choice.toLowerCase().includes(query)
+    );
+    if (matches.length === 0) {
+      list.hidden = true;
+      if (openCombobox?.root === root) {
+        openCombobox = null;
+      }
+      return;
+    }
+
+    for (const choice of matches) {
+      const item = document.createElement("li");
+      item.className = "param-combobox-option";
+      item.textContent = choice;
+      item.setAttribute("role", "option");
+      item.addEventListener("mousedown", (event) => event.preventDefault());
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        input.value = choice;
+        closeOpenCombobox();
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      list.appendChild(item);
     }
   }
 
-  return unique.map((paramName) => buildParameterDef(node, paramName));
+  function openList() {
+    renderList();
+    if (list.children.length === 0) {
+      return;
+    }
+    closeOpenCombobox();
+    positionComboboxList(root, list);
+    list.hidden = false;
+    const onScroll = () => closeOpenCombobox();
+    window.addEventListener("scroll", onScroll, true);
+    openCombobox = { root, list, onScroll };
+  }
+
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (list.hidden) {
+      input.focus();
+      openList();
+    } else {
+      closeOpenCombobox();
+    }
+  });
+
+  input.addEventListener("focus", openList);
+  input.addEventListener("input", () => {
+    if (!list.hidden || document.activeElement === input) {
+      openList();
+    }
+  });
+  input.addEventListener("blur", () => {
+    window.setTimeout(closeOpenCombobox, 120);
+  });
+
+  field.appendChild(input);
+  field.appendChild(toggle);
+  root.appendChild(field);
+  root.appendChild(list);
+  return root;
+}
+
+function getParameterDefs(node) {
+  const names = [];
+
+  if (node.parameters && typeof node.parameters === "object") {
+    names.push(...Object.keys(node.parameters));
+  }
+
+  if (node.parameter && !Array.isArray(node.parameter)) {
+    const name = node.parameter.name || "value";
+    if (!names.includes(name)) {
+      names.unshift(name);
+    }
+  }
+
+  return names.map((paramName) => buildParameterDef(node, paramName));
 }
 
 function applyParameters(template, values, { scriptlet = false } = {}) {
@@ -301,22 +478,42 @@ function linkStorageKey(node) {
 }
 
 function resolveNode(node, paramValues) {
-  const template = getLinkTemplate(node);
-  if (!template || Object.keys(paramValues).length === 0) {
+  const parameterDefs = getParameterDefs(node);
+  if (parameterDefs.length === 0) {
     return node;
   }
 
-  const applied = applyParameters(template, paramValues, {
-    scriptlet: node.type === "scriptlet",
-  });
-  if (node.type === "instance-path") {
-    return { ...node, path: applied };
+  const values = {};
+  for (const def of parameterDefs) {
+    const value = paramValues[def.name];
+    if (value !== "" && value !== undefined) {
+      values[def.name] = value;
+    } else if (!def.optional) {
+      values[def.name] = value ?? def.default ?? "";
+    }
   }
-  if (node.type === "external") {
-    return { ...node, url: applied };
+  if (Object.keys(values).length === 0) {
+    return node;
+  }
+
+  const apply = (template) =>
+    applyParameters(template, values, { scriptlet: node.type === "scriptlet" });
+
+  if (node.type === "navigate") {
+    return { ...node, path: apply(node.path || "") };
+  }
+  if (node.type === "derived-url") {
+    const result = { ...node };
+    if (node.path) {
+      result.path = apply(node.path);
+    }
+    if (node.url) {
+      result.url = apply(node.url);
+    }
+    return result;
   }
   if (node.type === "scriptlet") {
-    return { ...node, code: applied };
+    return { ...node, code: apply(node.code || "") };
   }
   return node;
 }
@@ -354,7 +551,7 @@ function resolveParamValues(parameterDefs, rawValues) {
 
 function validateParamValues(parameterDefs, values) {
   const missing = parameterDefs
-    .filter((def) => !values[def.name])
+    .filter((def) => !def.optional && !values[def.name])
     .map((def) => def.label || def.name);
   if (missing.length === 0) {
     return null;
@@ -432,50 +629,97 @@ function createParamInputs(parameterDefs, savedValues, linkKey, onEnter) {
   wrap.className = "param-inputs";
 
   for (const def of parameterDefs) {
+    if (def.choices?.length) {
+      wrap.appendChild(createChoiceCombobox(def, savedValues, linkKey, onEnter));
+      continue;
+    }
+
     const input = document.createElement("input");
     input.type = "text";
-    input.className = "param-input";
-    input.dataset.param = def.name;
-    input.placeholder = def.placeholder;
-    input.title = def.label;
     const saved = savedValues[def.name];
     input.value = saved !== undefined ? saved : def.default;
-    input.addEventListener("click", (event) => event.stopPropagation());
-    input.addEventListener("keydown", (event) => {
-      event.stopPropagation();
-      if (event.key === "Enter") {
-        event.preventDefault();
-        onEnter();
-      }
-    });
-    input.addEventListener("change", async () => {
-      await saveParamValue(linkKey, def.name, input.value.trim());
-    });
+    bindParamInput(input, def, linkKey, onEnter);
     wrap.appendChild(input);
   }
 
   return wrap;
 }
 
-function createLinkListHeader({ showRemove = false } = {}) {
+function nodeHasParams(node) {
+  return getParameterDefs(node).length > 0;
+}
+
+function treeHasParams(nodes) {
+  for (const node of nodes) {
+    if (node.children) {
+      if (treeHasParams(node.children)) {
+        return true;
+      }
+      continue;
+    }
+    if (nodeHasParams(node)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function nodeHasOnLoad(node) {
+  return (
+    node.type === "scriptlet" &&
+    !node.nav &&
+    !extractNavigationPath(node.code || "")
+  );
+}
+
+function treeHasOnLoad(nodes) {
+  for (const node of nodes) {
+    if (node.children) {
+      if (treeHasOnLoad(node.children)) {
+        return true;
+      }
+      continue;
+    }
+    if (nodeHasOnLoad(node)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function createLinkListHeader({
+  showRemove = false,
+  showParams = false,
+  showOnLoad = false,
+} = {}) {
   const header = document.createElement("div");
   header.className = "link-list-header";
   header.setAttribute("role", "row");
 
-  const columns = [
-    { className: "col-action", label: "Action" },
-    { className: "col-params", label: "Params" },
-    { className: "col-on-load", label: "On load" },
-  ];
-  if (showRemove) {
-    columns.push({ className: "col-remove", label: "Remove" });
+  const actionHeader = document.createElement("span");
+  actionHeader.className = "col-action";
+  actionHeader.textContent = "Action";
+  header.appendChild(actionHeader);
+
+  if (showParams) {
+    const paramsHeader = document.createElement("span");
+    paramsHeader.className = "col-params";
+    paramsHeader.textContent = "Params";
+    header.appendChild(paramsHeader);
   }
 
-  for (const column of columns) {
-    const cell = document.createElement("span");
-    cell.className = column.className;
-    cell.textContent = column.label;
-    header.appendChild(cell);
+  if (showOnLoad) {
+    const onLoadHeader = document.createElement("span");
+    onLoadHeader.className = "col-on-load";
+    onLoadHeader.textContent = "On load";
+    header.appendChild(onLoadHeader);
+  }
+
+  if (showRemove) {
+    const removeHeader = document.createElement("span");
+    removeHeader.className = "col-remove";
+    removeHeader.textContent = "Remove";
+    header.appendChild(removeHeader);
   }
 
   return header;
@@ -502,9 +746,8 @@ function createLinkRow(node, options = {}) {
   button.dataset.type = node.type;
 
   const badge = document.createElement("span");
-  badge.className = `link-badge${node.type === "external" ? " external" : ""}`;
-  badge.textContent =
-    node.type === "scriptlet" ? "Run" : node.type === "external" ? "Web" : "Open";
+  badge.className = linkBadgeClass(node);
+  badge.textContent = linkBadgeLabel(node);
 
   const labelWrap = document.createElement("span");
   labelWrap.className = "link-label";
@@ -525,7 +768,6 @@ function createLinkRow(node, options = {}) {
   button.appendChild(labelWrap);
   button.addEventListener("click", () => activateLink(node, row));
   actionCell.appendChild(button);
-  row.appendChild(actionCell);
 
   const paramsCell = document.createElement("div");
   paramsCell.className = "link-row-params";
@@ -541,16 +783,26 @@ function createLinkRow(node, options = {}) {
       input.addEventListener("input", updateHint);
     }
     paramsCell.appendChild(paramInputs);
+    row.classList.add("has-params");
   }
-  row.appendChild(paramsCell);
+
+  row.appendChild(actionCell);
+  if (paramInputs) {
+    row.appendChild(paramsCell);
+  }
 
   const onLoadCell = document.createElement("div");
   onLoadCell.className = "link-row-on-load";
+  const hasOnLoad = nodeHasOnLoad(node);
 
-  if (node.type === "scriptlet" && !extractNavigationPath(node.code)) {
+  if (hasOnLoad) {
+    row.classList.add("has-on-load");
     const injectLabel = document.createElement("label");
     injectLabel.className = "inject-load";
-    injectLabel.title = "Inject at document start on each navigation";
+    const hostHint = node.hostPattern
+      ? `Inject at document start when tab URL matches /${node.hostPattern}/`
+      : "Inject at document start on every page";
+    injectLabel.title = hostHint;
 
     const injectCheck = document.createElement("input");
     injectCheck.type = "checkbox";
@@ -563,8 +815,8 @@ function createLinkRow(node, options = {}) {
 
     injectLabel.appendChild(injectCheck);
     onLoadCell.appendChild(injectLabel);
+    row.appendChild(onLoadCell);
   }
-  row.appendChild(onLoadCell);
 
   if (options.showRemove) {
     const removeCell = document.createElement("div");
@@ -705,13 +957,32 @@ async function renderAll() {
   const customScripts = await loadCustomScripts();
   const showRemove = customScripts.length > 0;
   const section = getActiveSection();
+  const showParams =
+    customScripts.some((script) =>
+      nodeHasParams({
+        type: "scriptlet",
+        code: script.code,
+        parameter: script.parameter,
+        parameters: script.parameters,
+      })
+    ) || (section ? treeHasParams(section.children) : false);
+  const showOnLoad =
+    customScripts.some((script) =>
+      nodeHasOnLoad({ type: "scriptlet", code: script.code })
+    ) || (section ? treeHasOnLoad(section.children) : false);
 
   const list = document.createElement("div");
   list.className = "link-list";
   if (showRemove) {
     list.classList.add("has-remove");
   }
-  list.appendChild(createLinkListHeader({ showRemove }));
+  if (showParams) {
+    list.classList.add("has-params");
+  }
+  if (showOnLoad) {
+    list.classList.add("has-on-load");
+  }
+  list.appendChild(createLinkListHeader({ showRemove, showParams, showOnLoad }));
 
   if (section) {
     renderNodes(
@@ -756,31 +1027,28 @@ async function addCustomScript() {
 }
 
 async function runScriptlet(tabId, code) {
-  await browser.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: (source) => {
-      const runner = new Function(source);
-      runner();
-    },
-    args: [code],
+  const response = await browser.runtime.sendMessage({
+    type: "RUN_SCRIPTLET",
+    tabId,
+    code,
   });
+  if (!response?.ok) {
+    throw new Error(response?.error || "Script injection failed.");
+  }
 }
 
-async function openInstancePath(origin, path, tab, hostPattern) {
-  const url = hostPattern
-    ? toNavigatorUrl(origin, path)
-    : resolvePathOnTab(tab, path);
-
-  if (tab?.id) {
-    await browser.tabs.update(tab.id, {
-      url,
-      active: Boolean(hostPattern),
-    });
-    return;
+function resolveNavigationUrl(resolved, tab, origin, hostPattern, paramValues) {
+  if (resolved.type === "derived-url") {
+    return resolveDerivedLink(resolved, tab, origin, hostPattern, paramValues);
   }
-
-  await browser.tabs.create({ url, active: true });
+  if (resolved.type === "navigate") {
+    return resolvePathUrl(resolved.path, tab, origin, hostPattern);
+  }
+  if (resolved.type === "scriptlet" && resolved.nav) {
+    const result = evaluateNavScript(resolved.code, tab.url);
+    return resolveAbsoluteUrl(result, tab, origin, hostPattern);
+  }
+  return null;
 }
 
 async function activateLink(node, row = null) {
@@ -806,23 +1074,21 @@ async function activateLink(node, row = null) {
 
     const resolved = resolveNode(node, paramValues);
 
-    if (resolved.type === "external") {
-      await browser.tabs.create({ url: resolved.url, active: true });
-      window.close();
-      return;
-    }
-
-    const hostPattern = resolved.hostPattern ?? null;
-    const { tab, origin } = await getTargetTab(hostPattern);
-
-    if (resolved.type === "scriptlet") {
+    if (resolved.type === "scriptlet" && !resolved.nav) {
       const navPath = extractNavigationPath(resolved.code);
       if (navPath) {
-        await openInstancePath(origin, navPath, tab, hostPattern);
+        const hostPattern = resolved.hostPattern ?? null;
+        const { tab, origin } = await getTargetTab(hostPattern);
+        const url = hostPattern
+          ? toNavigatorUrl(origin, navPath)
+          : resolvePathOnTab(tab, navPath);
+        await performNavigation("same-tab", url, tab, hostPattern);
         window.close();
         return;
       }
 
+      const hostPattern = resolved.hostPattern ?? null;
+      const { tab } = await getTargetTab(hostPattern);
       if (hostPattern) {
         await browser.tabs.update(tab.id, { active: true });
       }
@@ -831,13 +1097,148 @@ async function activateLink(node, row = null) {
       return;
     }
 
-    if (resolved.type === "instance-path") {
-      await openInstancePath(origin, resolved.path, tab, hostPattern);
+    const hostPattern = resolved.hostPattern ?? null;
+    const { tab, origin } = await getTargetTab(hostPattern);
+    const url = resolveNavigationUrl(
+      resolved,
+      tab,
+      origin,
+      hostPattern,
+      paramValues
+    );
+
+    if (url === null) {
       window.close();
+      return;
     }
+
+    const nav = resolveNav(resolved);
+    if (!nav) {
+      throw new Error(`Navigation mode is required for ${resolved.type} links.`);
+    }
+
+    await performNavigation(nav, url, tab, hostPattern);
+    window.close();
   } catch (error) {
     showMessage(error.message || String(error));
   }
+}
+
+async function initPopupSize() {
+  const stored = await browser.storage.local.get(POPUP_SIZE_KEY);
+  const size = stored[POPUP_SIZE_KEY];
+
+  const width =
+    size?.width >= POPUP_MIN_WIDTH ? size.width : POPUP_DEFAULT_WIDTH;
+  const height =
+    size?.height >= POPUP_MIN_HEIGHT ? size.height : POPUP_DEFAULT_HEIGHT;
+
+  applyPopupSize(width, height);
+  initResizeHandle();
+
+  let saveTimer = null;
+  new ResizeObserver(() => {
+    if (popupResizeObserverPaused) {
+      return;
+    }
+    window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(savePopupSize, 200);
+  }).observe(document.body);
+}
+
+let popupResizeObserverPaused = false;
+let popupResizeFrame = null;
+let pendingPopupSize = null;
+
+function clampPopupSize(width, height) {
+  return {
+    width: Math.min(POPUP_MAX_WIDTH, Math.max(POPUP_MIN_WIDTH, Math.round(width))),
+    height: Math.min(
+      POPUP_MAX_HEIGHT,
+      Math.max(POPUP_MIN_HEIGHT, Math.round(height))
+    ),
+  };
+}
+
+function applyPopupSize(width, height) {
+  const size = clampPopupSize(width, height);
+  document.body.style.width = `${size.width}px`;
+  document.body.style.height = `${size.height}px`;
+  return size;
+}
+
+function schedulePopupSize(width, height) {
+  pendingPopupSize = { width, height };
+  if (popupResizeFrame !== null) {
+    return;
+  }
+  popupResizeFrame = requestAnimationFrame(() => {
+    popupResizeFrame = null;
+    if (!pendingPopupSize) {
+      return;
+    }
+    applyPopupSize(pendingPopupSize.width, pendingPopupSize.height);
+    pendingPopupSize = null;
+  });
+}
+
+async function savePopupSize() {
+  await browser.storage.local.set({
+    [POPUP_SIZE_KEY]: {
+      width: document.body.offsetWidth,
+      height: document.body.offsetHeight,
+    },
+  });
+}
+
+function initResizeHandle() {
+  const handle = document.getElementById("resize-handle");
+  if (!handle) {
+    return;
+  }
+
+  handle.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    popupResizeObserverPaused = true;
+    document.body.classList.add("is-resizing");
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startWidth = document.body.offsetWidth;
+    const startHeight = document.body.offsetHeight;
+
+    function onMouseMove(moveEvent) {
+      schedulePopupSize(
+        startWidth - (moveEvent.clientX - startX),
+        startHeight + (moveEvent.clientY - startY)
+      );
+    }
+
+    function onMouseUp() {
+      popupResizeObserverPaused = false;
+      document.body.classList.remove("is-resizing");
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+
+      if (popupResizeFrame !== null) {
+        cancelAnimationFrame(popupResizeFrame);
+        popupResizeFrame = null;
+      }
+      if (pendingPopupSize) {
+        applyPopupSize(pendingPopupSize.width, pendingPopupSize.height);
+        pendingPopupSize = null;
+      }
+
+      savePopupSize();
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  });
 }
 
 async function initAddScriptCollapse() {
@@ -855,6 +1256,112 @@ function setAddScriptExpanded(expanded) {
   addScriptSection.classList.toggle("is-collapsed", !expanded);
   addScriptToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   addScriptPanel.hidden = !expanded;
+}
+
+async function syncCspDisableUi(tab) {
+  if (!cspDisableCheckbox || !cspDisableLabel) {
+    return;
+  }
+
+  const usable =
+    tab?.id != null &&
+    typeof tab.url === "string" &&
+    /^https?:\/\//i.test(tab.url);
+
+  cspDisableCheckbox.disabled = !usable;
+  cspDisableLabel.classList.toggle("is-disabled", !usable);
+
+  if (!usable) {
+    cspDisableCheckbox.checked = false;
+    return;
+  }
+
+  const response = await browser.runtime.sendMessage({
+    type: "GET_CSP_DISABLED",
+    tabId: tab.id,
+  });
+  cspDisableCheckbox.checked = Boolean(response?.disabled);
+}
+
+async function initExtensionSettingsControls() {
+  const response = await browser.runtime.sendMessage({
+    type: "GET_EXTENSION_SETTINGS",
+  });
+  const settings = response?.settings || {
+    networkHooksEnabled: true,
+    injectOnLoadEnabled: true,
+  };
+
+  if (injectOnLoadEnabledEl) {
+    injectOnLoadEnabledEl.checked = settings.injectOnLoadEnabled !== false;
+    injectOnLoadEnabledEl.addEventListener("change", async () => {
+      await browser.runtime.sendMessage({
+        type: "SET_EXTENSION_SETTINGS",
+        settings: { injectOnLoadEnabled: injectOnLoadEnabledEl.checked },
+      });
+    });
+  }
+
+  if (networkHooksEnabledEl) {
+    networkHooksEnabledEl.checked = settings.networkHooksEnabled !== false;
+    networkHooksEnabledEl.addEventListener("change", async () => {
+      await browser.runtime.sendMessage({
+        type: "SET_EXTENSION_SETTINGS",
+        settings: { networkHooksEnabled: networkHooksEnabledEl.checked },
+      });
+    });
+  }
+}
+
+async function initCspDisableControl() {
+  if (!cspDisableCheckbox) {
+    return;
+  }
+
+  const activeTab = await getActiveTab();
+  await syncCspDisableUi(activeTab);
+
+  cspDisableCheckbox.addEventListener("change", async () => {
+    const tab = await getActiveTab();
+    if (!tab?.id || cspDisableCheckbox.disabled) {
+      return;
+    }
+
+    await browser.runtime.sendMessage({
+      type: "SET_CSP_DISABLED",
+      tabId: tab.id,
+      disabled: cspDisableCheckbox.checked,
+    });
+
+    if (cspDisableCheckbox.checked) {
+      showMessage("CSP disabled for this tab. Reload the page to apply.");
+    } else {
+      hideMessage();
+    }
+  });
+}
+
+async function openNetworkRulesWindow() {
+  const rulesUrl = browser.runtime.getURL("rules/rules.html");
+  const windows = await browser.windows.getAll({ populate: true });
+  for (const win of windows) {
+    for (const tab of win.tabs || []) {
+      if (tab.url === rulesUrl && win.id != null) {
+        await browser.windows.update(win.id, { focused: true });
+        if (tab.id != null) {
+          await browser.tabs.update(tab.id, { active: true });
+        }
+        return;
+      }
+    }
+  }
+
+  await browser.windows.create({
+    url: rulesUrl,
+    type: "popup",
+    width: 960,
+    height: 760,
+  });
 }
 
 async function init() {
@@ -880,6 +1387,19 @@ async function init() {
     addCustomScript();
   });
 
+  const networkRulesBtn = document.getElementById("network-rules-btn");
+  if (networkRulesBtn) {
+    networkRulesBtn.addEventListener("click", () => {
+      openNetworkRulesWindow();
+    });
+  }
+
+  document.addEventListener("click", (event) => {
+    if (openCombobox && !openCombobox.root.contains(event.target)) {
+      closeOpenCombobox();
+    }
+  });
+
   scriptCodeInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
@@ -887,7 +1407,10 @@ async function init() {
     }
   });
 
+  await initPopupSize();
   await initAddScriptCollapse();
+  await initExtensionSettingsControls();
+  await initCspDisableControl();
   await renderAll();
 }
 

@@ -6,13 +6,30 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "sn-links@local.dev",
-      "strict_min_version": "109.0"
+      "strict_min_version": "128.0"
     }
   },
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "webNavigation"],
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "scripting",
+    "storage",
+    "tabs",
+    "webNavigation",
+    "webRequest",
+    "webRequestBlocking",
+    "webRequestFilterResponse"
+  ],
   "host_permissions": ["<all_urls>"],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "lib/navigation-shared.js",
+      "lib/network-rules-shared.js",
+      "lib/network-hook-install.js",
+      "lib/csp-disable.js",
+      "lib/network-webrequest.js",
+      "background.js"
+    ]
   },
   "action": {
     "default_popup": "popup/popup.html",

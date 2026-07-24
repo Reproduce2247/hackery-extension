@@ -37,15 +37,17 @@ function makeItem(folderPath, title, rawHref) {
     item.code = code;
   } else if (/^https?:\/\//.test(href)) {
     const url = new URL(href);
+    item.type = "derived-url";
+    item.nav = "foreground";
     if (/\.service-now\.com$/i.test(url.hostname)) {
-      item.type = "instance-path";
       item.path = url.pathname + url.search + url.hash;
     } else {
-      item.type = "external";
-      item.url = href;
+      item.path = href;
+      item.hostPattern = null;
     }
   } else {
-    item.type = "instance-path";
+    item.type = "derived-url";
+    item.nav = "foreground";
     item.path = href.startsWith("/") ? href : `/${href}`;
   }
 
@@ -127,10 +129,14 @@ function buildTree(items) {
       }
       node = child;
     }
-    const link = { name: item.title, type: item.type };
+    const link = {
+      name: item.title,
+      type: item.type,
+      nav: item.nav,
+    };
     if (item.type === "scriptlet") link.code = item.code;
-    else if (item.type === "instance-path") link.path = item.path;
-    else link.url = item.url;
+    else link.path = item.path;
+    if (item.hostPattern === null) link.hostPattern = null;
     node.children.push(link);
   }
 

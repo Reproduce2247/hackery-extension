@@ -7,8 +7,41 @@
   </head>
   <body>
     <header>
-      <h1>SN Links</h1>
-      <p id="instance-status" class="instance-status"></p>
+      <div class="header-row">
+        <h1>SN Links</h1>
+        <button id="network-rules-btn" type="button" class="header-btn">
+          Network rules
+        </button>
+      </div>
+      <div class="header-meta">
+        <p id="instance-status" class="instance-status"></p>
+        <div class="header-toggles">
+          <label
+            id="inject-on-load-enabled-label"
+            class="header-toggle"
+            title="When off, no on-load scriptlets run (per-link checkboxes are ignored)"
+          >
+            <input id="inject-on-load-enabled" type="checkbox" checked />
+            On load
+          </label>
+          <label
+            id="network-hooks-enabled-label"
+            class="header-toggle"
+            title="When off, network rules and fetch/XHR hooks do not run"
+          >
+            <input id="network-hooks-enabled" type="checkbox" checked />
+            Network
+          </label>
+          <label
+            id="csp-disable-label"
+            class="csp-disable-label"
+            title="Strip CSP response headers for this tab on reload"
+          >
+            <input id="csp-disable-checkbox" type="checkbox" />
+            Disable CSP
+          </label>
+        </div>
+      </div>
     </header>
     <div id="message" class="message hidden" role="status"></div>
     <nav
@@ -50,6 +83,14 @@
         <button id="add-script-btn" type="button">Add action</button>
       </div>
     </section>
+    <div
+      id="resize-handle"
+      class="resize-handle"
+      role="separator"
+      aria-label="Resize popup"
+      tabindex="-1"
+    ></div>
+    <script src="../lib/navigation-shared.js"></script>
     <script type="module" src="popup.js"></script>
   </body>
 </html>
