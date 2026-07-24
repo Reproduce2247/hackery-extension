@@ -1,6 +1,19 @@
-const INJECT_ON_LOAD_KEY = "injectOnLoad";
-const PARAM_VALUES_KEY = "linkParamValues";
-const CUSTOM_SCRIPTS_KEY = "customScripts";
+if (!globalThis.SnLinksLinkModel) {
+  throw new Error("sn-links: lib/link-model.js must load before background.js");
+}
+
+const {
+  INJECT_ON_LOAD_KEY,
+  PARAM_VALUES_KEY,
+  CUSTOM_SCRIPTS_KEY,
+  extractNavigationPath,
+  getParameterDefs,
+  applyParameters,
+  resolveParamValues,
+  matchesHostPattern,
+  collectScriptlets,
+} = globalThis.SnLinksLinkModel;
+
 const INJECT_SCRIPT_ID = "sn-links-on-load";
 
 let linksCache = null;
@@ -12,112 +25,6 @@ let networkHookVersion = "";
 let networkLogToken = "";
 let networkSharedState = {};
 let networkTabState = {};
-
-function extractNavigationPath(code) {
-  const match = code.match(/window\.location\.href\s*=\s*(['"])(.*?)\1/);
-  return match ? match[2] : null;
-}
-
-function getLinkTemplate(node) {
-  if (node.type === "derived-url") return node.url || "";
-  if (node.type === "scriptlet") return node.code || "";
-  return "";
-}
-
-function linkStorageKey(node) {
-  if (node.id) return node.id;
-  const sectionPrefix = node.sectionName ? `${node.sectionName}:` : "";
-  return `${sectionPrefix}${node.type}:${node.name}:${getLinkTemplate(node)}`;
-}
-
-function getParameterConfig(node, paramName) {
-  if (node.parameters?.[paramName]) return node.parameters[paramName];
-  const single = node.parameter;
-  if (single && !Array.isArray(single)) {
-    const singleName = single.name || "value";
-    if (paramName === singleName) return single;
-  }
-  return null;
-}
-
-function getParameterDefs(node) {
-  const names = [];
-
-  if (node.parameters && typeof node.parameters === "object") {
-    names.push(...Object.keys(node.parameters));
-  }
-
-  if (node.parameter && !Array.isArray(node.parameter)) {
-    const name = node.parameter.name || "value";
-    if (!names.includes(name)) {
-      names.unshift(name);
-    }
-  }
-
-  return names.map((paramName) => {
-    const config = getParameterConfig(node, paramName) || {};
-    return {
-      name: paramName,
-      default: config.default ?? "",
-      optional: Boolean(config.optional),
-    };
-  });
-}
-
-function applyParameters(template, values) {
-  let result = template;
-  for (const [name, value] of Object.entries(values)) {
-    result = result.split(`{${name}}`).join(value ?? "");
-    result = result.replace(
-      new RegExp(`(?<!\\\\)\\$${name}(?![a-zA-Z0-9_])`, "g"),
-      value ?? ""
-    );
-  }
-  return result;
-}
-
-function resolveParamValues(parameterDefs, rawValues) {
-  const values = {};
-  for (const def of parameterDefs) {
-    const raw = rawValues[def.name];
-    values[def.name] = raw !== "" && raw !== undefined ? raw : def.default;
-  }
-  return values;
-}
-
-function matchesHostPattern(urlString, pattern) {
-  if (!pattern) return true;
-  try {
-    const url = new URL(urlString);
-    const re = new RegExp(pattern, "i");
-    return re.test(url.hostname) || re.test(url.href);
-  } catch {
-    return false;
-  }
-}
-
-function resolveHostPattern(node, inherited) {
-  if (Object.prototype.hasOwnProperty.call(node, "hostPattern")) {
-    return node.hostPattern || null;
-  }
-  return inherited ?? null;
-}
-
-function collectScriptlets(nodes, inheritedHostPattern, sectionName, out) {
-  for (const node of nodes) {
-    const hostPattern = resolveHostPattern(node, inheritedHostPattern);
-    if (node.children) {
-      collectScriptlets(node.children, hostPattern, sectionName, out);
-      continue;
-    }
-    if (node.type !== "scriptlet") continue;
-    if (node.nav) continue;
-    out.push({
-      linkKey: linkStorageKey({ ...node, sectionName }),
-      node: { ...node, hostPattern, sectionName },
-    });
-  }
-}
 
 async function getLinkSections() {
   if (!linksCache) {
@@ -227,7 +134,7 @@ async function rebuildInjectCache() {
     const values = resolveParamValues(parameterDefs, rawValues);
     injectEntries.push({
       hostPattern: node.hostPattern ?? null,
-      code: applyParameters(node.code, values),
+      code: applyParameters(node.code, values, { scriptlet: true }),
     });
   }
 }
@@ -306,6 +213,17 @@ function pageHookRules() {
   return rulesForPageHook(enabledNetworkRules());
 }
 
+function getHookVersionForTab(tabId) {
+  const rules = pageHookRules();
+  const tabKey = tabId == null ? "" : String(tabId);
+  return getNetworkHookVersion({
+    enabled: networkRulesState.enabled,
+    rules,
+    sharedState: networkSharedState,
+    tabState: networkTabState[tabKey] || {},
+  });
+}
+
 function enabledNetworkRules() {
   if (!networkRulesState.enabled) {
     return [];
@@ -325,13 +243,14 @@ async function installNetworkHookInTab(tabId, frameId) {
   }
 
   const sharedStateBundle = getSharedStateBundleForTab(tabId);
+  const hookVersion = getHookVersionForTab(tabId);
 
   await browser.scripting.executeScript({
     target,
     world: "MAIN",
     injectImmediately: true,
     func: installNetworkHook,
-    args: [rules, networkHookVersion, networkLogToken, sharedStateBundle],
+    args: [rules, hookVersion, networkLogToken, sharedStateBundle],
   });
 }
 
@@ -436,11 +355,6 @@ async function reinjectNetworkHookAllTabs() {
   }
 
   await loadNetworkTabState();
-  networkHookVersion = getNetworkHookVersion({
-    enabled: networkRulesState.enabled,
-    rules,
-    sharedState: networkSharedState,
-  });
   networkLogToken = crypto.randomUUID();
 
   const tabs = await browser.tabs.query({ url: ["http://*/*", "https://*/*"] });
@@ -454,6 +368,37 @@ async function reinjectNetworkHookAllTabs() {
       // restricted tab — skip
     }
   }
+}
+
+let networkNavigationHookRegistered = false;
+
+async function onNavigationCommitted(details) {
+  if (details.tabId < 0) {
+    return;
+  }
+  if (!/^https?:/i.test(details.url || "")) {
+    return;
+  }
+  if (!pageHookRules().length) {
+    return;
+  }
+
+  await loadNetworkTabState();
+  try {
+    await installNetworkHookInTab(details.tabId);
+  } catch {
+    // restricted tab — skip
+  }
+}
+
+function initNetworkNavigationHook() {
+  if (networkNavigationHookRegistered) {
+    return;
+  }
+  browser.webNavigation.onCommitted.addListener((details) => {
+    onNavigationCommitted(details).catch(() => {});
+  });
+  networkNavigationHookRegistered = true;
 }
 
 function runInjectedSource(source) {
@@ -584,8 +529,15 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "NETWORK_SHARED_STATE") {
-    persistSharedState(message.persistent, message.tab, sender.tab?.id)
-      .then(() => sendResponse({ ok: true }))
+    const tabId = sender.tab?.id;
+    persistSharedState(message.persistent, message.tab, tabId)
+      .then(async () => {
+        if (tabId != null) {
+          await loadNetworkTabState();
+          await installNetworkHookInTab(tabId);
+        }
+        sendResponse({ ok: true });
+      })
       .catch(() => sendResponse({ ok: false }));
     return true;
   }
@@ -651,14 +603,17 @@ browser.runtime.onInstalled.addListener(() => {
   refreshInjectState();
   refreshNetworkRulesState();
   initCspDisable();
+  initNetworkNavigationHook();
 });
 
 browser.runtime.onStartup.addListener(() => {
   refreshInjectState();
   refreshNetworkRulesState();
   initCspDisable();
+  initNetworkNavigationHook();
 });
 
 refreshInjectState();
 refreshNetworkRulesState();
 initCspDisable();
+initNetworkNavigationHook();

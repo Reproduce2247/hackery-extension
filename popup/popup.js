@@ -1,13 +1,24 @@
-const { toNavigatorPath, toNavigatorUrl, resolvePathOnTab, isAbsoluteUrl, resolvePathUrl, resolveDerivedUrl, resolveDerivedLink, evaluateNavScript, resolveAbsoluteUrl, resolveNav, performNavigation } =
-  globalThis.SnLinksNav;
+import { getActiveTab } from "./tab-target.js";
+import { createActivateLink, loadParamValues } from "./activate-link.js";
+import { createSearchController, searchMatchScore } from "./search.js";
+import {
+  handleDocumentClickForCombobox,
+  createLinkUi,
+  loadCustomScripts,
+  loadInjectOnLoad,
+  saveCustomScripts,
+  setInjectOnLoad,
+} from "./link-ui.js";
 
-const CUSTOM_SCRIPTS_KEY = "customScripts";
-const LAST_ORIGINS_KEY = "lastOrigins";
-const hostPatternCache = new Map();
-const PARAM_VALUES_KEY = "linkParamValues";
+if (!globalThis.SnLinksLinkModel) {
+  throw new Error("sn-links: lib/link-model.js must load before popup.js");
+}
+
+const { parseLinkSections, normalizeScriptInput, defaultScriptName, flattenLinkNodes } =
+  globalThis.SnLinksLinkModel;
+
 const SECTION_TAB_KEY = "activeSectionTab";
 const ADD_SCRIPT_EXPANDED_KEY = "addScriptExpanded";
-const INJECT_ON_LOAD_KEY = "injectOnLoad";
 const POPUP_SIZE_KEY = "popupSize";
 const POPUP_MIN_WIDTH = 420;
 const POPUP_MIN_HEIGHT = 400;
@@ -35,21 +46,6 @@ const searchInputEl = document.getElementById("search-input");
 
 let linkSections = null;
 let activeSectionName = null;
-let searchQuery = "";
-let searchOverlayPageTabId = null;
-let searchUsesPageOverlay = true;
-
-function parseLinkSections(raw) {
-  return Object.entries(raw).map(([name, section]) => ({
-    name,
-    hostPattern: section?.hostPattern ?? null,
-    children: section?.children || [],
-  }));
-}
-
-function getActiveSection() {
-  return linkSections?.find((section) => section.name === activeSectionName) || null;
-}
 
 function showMessage(text) {
   messageEl.textContent = text;
@@ -60,1199 +56,19 @@ function hideMessage() {
   messageEl.classList.add("hidden");
 }
 
-function resolveHostPattern(node, inherited) {
-  if (Object.prototype.hasOwnProperty.call(node, "hostPattern")) {
-    return node.hostPattern || null;
-  }
-  return inherited ?? null;
-}
-
-function getHostPatternRegex(pattern) {
-  if (!hostPatternCache.has(pattern)) {
-    hostPatternCache.set(pattern, new RegExp(pattern, "i"));
-  }
-  return hostPatternCache.get(pattern);
-}
-
-function matchesHostPattern(urlString, pattern) {
-  if (!pattern) {
-    return true;
-  }
-  try {
-    const url = new URL(urlString);
-    const re = getHostPatternRegex(pattern);
-    return re.test(url.hostname) || re.test(url.href);
-  } catch {
-    return false;
-  }
-}
-
-function extractNavigationPath(code) {
-  const match = code.match(/window\.location\.href\s*=\s*(['"])(.*?)\1/);
-  return match ? match[2] : null;
-}
-
-async function getActiveTab() {
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  return tab;
-}
-
-async function rememberOrigin(hostPattern, origin) {
-  const stored = await browser.storage.local.get(LAST_ORIGINS_KEY);
-  const lastOrigins = stored[LAST_ORIGINS_KEY] || {};
-  lastOrigins[hostPattern] = origin;
-  await browser.storage.local.set({ [LAST_ORIGINS_KEY]: lastOrigins });
-}
-
-async function getRememberedOrigin(hostPattern) {
-  const stored = await browser.storage.local.get(LAST_ORIGINS_KEY);
-  return (stored[LAST_ORIGINS_KEY] || {})[hostPattern] || null;
-}
-
-async function findMatchingTab(hostPattern, preferredOrigin, activeTab) {
-  const tabs = await browser.tabs.query({ currentWindow: true });
-  const active = activeTab ?? (await getActiveTab());
-  const activeIndex = active?.index ?? 0;
-
-  const matchingTabs = tabs.filter(
-    (tab) => tab.url && matchesHostPattern(tab.url, hostPattern)
-  );
-
-  if (matchingTabs.length === 0) {
-    return null;
-  }
-
-  function distanceFromActive(tab) {
-    return Math.abs(tab.index - activeIndex);
-  }
-
-  function nearestTab(candidates) {
-    return [...candidates].sort((a, b) => {
-      const dist = distanceFromActive(a) - distanceFromActive(b);
-      if (dist !== 0) {
-        return dist;
-      }
-      return a.index - b.index;
-    })[0];
-  }
-
-  if (preferredOrigin) {
-    const originMatches = matchingTabs.filter(
-      (tab) => new URL(tab.url).origin === preferredOrigin
-    );
-    if (originMatches.length > 0) {
-      return nearestTab(originMatches);
-    }
-  }
-
-  return nearestTab(matchingTabs);
-}
-
-async function ensureMatchingTab(hostPattern, origin, activeTab) {
-  const existing = await findMatchingTab(hostPattern, origin, activeTab);
-  if (existing) {
-    return existing;
-  }
-
-  if (!origin) {
-    throw new Error(
-      `Open a tab matching /${hostPattern}/ first, or visit one so the extension can remember it.`
-    );
-  }
-
-  return browser.tabs.create({ url: `${origin}/`, active: false });
-}
-
-async function waitForTabLoad(tabId) {
-  const tab = await browser.tabs.get(tabId);
-  if (tab.status === "complete") {
-    return tab;
-  }
-
-  return new Promise((resolve) => {
-    const listener = (updatedTabId, changeInfo, updatedTab) => {
-      if (updatedTabId === tabId && changeInfo.status === "complete") {
-        browser.tabs.onUpdated.removeListener(listener);
-        resolve(updatedTab);
-      }
-    };
-    browser.tabs.onUpdated.addListener(listener);
-  });
-}
-
-async function getActiveTargetTab() {
-  const tab = await getActiveTab();
-  if (!tab?.id) {
-    throw new Error("No active tab.");
-  }
-  const origin = tab.url ? new URL(tab.url).origin : null;
-  return { tab, origin };
-}
-
-async function getTargetTab(hostPattern) {
-  if (!hostPattern) {
-    return getActiveTargetTab();
-  }
-
-  const activeTab = await getActiveTab();
-  if (activeTab?.url && matchesHostPattern(activeTab.url, hostPattern)) {
-    const origin = new URL(activeTab.url).origin;
-    await rememberOrigin(hostPattern, origin);
-    return { tab: activeTab, origin };
-  }
-
-  const rememberedOrigin = await getRememberedOrigin(hostPattern);
-  const tab = await ensureMatchingTab(hostPattern, rememberedOrigin, activeTab);
-  const loadedTab =
-    tab.status === "complete" ? tab : await waitForTabLoad(tab.id);
-  const origin = new URL(loadedTab.url).origin;
-  await rememberOrigin(hostPattern, origin);
-  return { tab: loadedTab, origin };
-}
-
-function displayLabel(node) {
-  if (node.name === "App Log | ServiceNow") {
-    if (node.path?.includes("Last%20hour")) return "App Log (last hour)";
-    return "App Log (current hour)";
-  }
-  return node.name;
-}
-
-function linkBadgeLabel(node) {
-  if (node.type === "scriptlet") return "Run";
-  if (node.type === "derived-url") return "Derive";
-  if (node.type === "navigate") {
-    return isAbsoluteUrl(node.path || "") ? "Web" : "Open";
-  }
-  return "Open";
-}
-
-function linkBadgeClass(node) {
-  let classes = "link-badge";
-  if (node.type === "derived-url") classes += " derived-url";
-  if (node.type === "navigate" && isAbsoluteUrl(node.path || "")) {
-    classes += " absolute-url";
-  }
-  return classes;
-}
-
-function displayHint(node, paramValues = {}) {
-  const resolved = resolveNode(node, paramValues);
-  if (resolved.type === "scriptlet") {
-    if (resolved.nav) {
-      return "Navigates via extension";
-    }
-    const path = extractNavigationPath(resolved.code);
-    if (path) {
-      return node.hostPattern ? toNavigatorPath(path) : path;
-    }
-    return node.hostPattern ? "Runs on the matched instance tab" : "Runs on the active tab";
-  }
-  if (resolved.type === "derived-url") {
-    if (resolved.path) {
-      if (isAbsoluteUrl(resolved.path)) {
-        return resolved.path;
-      }
-      return resolved.hostPattern
-        ? toNavigatorPath(resolved.path)
-        : resolved.path;
-    }
-    return resolved.url.replace(/\{encode:[^}]+\}/g, "…").replace(/\{[^}]+\}/g, "…");
-  }
-  if (resolved.type === "navigate") {
-    const path = resolved.path || "";
-    if (isAbsoluteUrl(path)) {
-      return path;
-    }
-    return resolved.hostPattern ? toNavigatorPath(path) : path;
-  }
-  return "";
-}
-
-function getLinkTemplate(node) {
-  if (node.type === "navigate" || node.type === "derived-url") {
-    return node.url || node.path || "";
-  }
-  if (node.type === "scriptlet") return node.code || "";
-  return "";
-}
-
-function getParameterConfig(node, paramName) {
-  if (node.parameters?.[paramName]) {
-    return node.parameters[paramName];
-  }
-
-  const single = node.parameter;
-  if (single && !Array.isArray(single)) {
-    const singleName = single.name || "value";
-    if (paramName === singleName) {
-      return single;
-    }
-  }
-
-  return null;
-}
-
-function buildParameterDef(node, paramName) {
-  const config = getParameterConfig(node, paramName) || {};
-  return {
-    name: paramName,
-    label: config.label || paramName,
-    placeholder: config.placeholder || paramName,
-    default: config.default ?? "",
-    optional: Boolean(config.optional),
-    choices: Array.isArray(config.choices) ? config.choices : null,
-  };
-}
-
-function bindParamInput(input, def, linkKey, onEnter) {
-  input.classList.add("param-input");
-  input.dataset.param = def.name;
-  input.placeholder = def.placeholder;
-  input.title = def.label;
-  input.addEventListener("click", (event) => event.stopPropagation());
-  input.addEventListener("keydown", (event) => {
-    event.stopPropagation();
-    if (event.key === "Enter") {
-      event.preventDefault();
-      onEnter();
-    }
-  });
-  input.addEventListener("change", async () => {
-    await saveParamValue(linkKey, def.name, input.value.trim());
-  });
-}
-
-let openCombobox = null;
-
-function closeOpenCombobox() {
-  if (!openCombobox) {
-    return;
-  }
-  openCombobox.list.hidden = true;
-  if (openCombobox.onScroll) {
-    window.removeEventListener("scroll", openCombobox.onScroll, true);
-  }
-  openCombobox = null;
-}
-
-function positionComboboxList(root, list) {
-  const rect = root.getBoundingClientRect();
-  const width = Math.max(176, rect.width + 72);
-  const left = Math.max(8, rect.right - width);
-
-  list.style.width = `${width}px`;
-  list.style.left = `${left}px`;
-  list.style.top = `${rect.bottom + 2}px`;
-  list.style.right = "auto";
-}
-
-function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
-  const root = document.createElement("div");
-  root.className = "param-combobox";
-
-  const field = document.createElement("div");
-  field.className = "param-combobox-field";
-
-  const input = document.createElement("input");
-  input.type = "text";
-  const saved = savedValues[def.name];
-  input.value = saved !== undefined ? saved : def.default;
-  bindParamInput(input, def, linkKey, onEnter);
-  input.classList.add("param-combobox-input");
-
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "param-combobox-toggle";
-  toggle.setAttribute("aria-label", `Choose ${def.label}`);
-  toggle.textContent = "▾";
-
-  const list = document.createElement("ul");
-  list.className = "param-combobox-list";
-  list.hidden = true;
-  list.setAttribute("role", "listbox");
-
-  function renderList() {
-    const query = input.value.trim().toLowerCase();
-    list.replaceChildren();
-    const matches = def.choices.filter(
-      (choice) => !query || choice.toLowerCase().includes(query)
-    );
-    if (matches.length === 0) {
-      list.hidden = true;
-      if (openCombobox?.root === root) {
-        openCombobox = null;
-      }
-      return;
-    }
-
-    for (const choice of matches) {
-      const item = document.createElement("li");
-      item.className = "param-combobox-option";
-      item.textContent = choice;
-      item.setAttribute("role", "option");
-      item.addEventListener("mousedown", (event) => event.preventDefault());
-      item.addEventListener("click", (event) => {
-        event.stopPropagation();
-        input.value = choice;
-        closeOpenCombobox();
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      list.appendChild(item);
-    }
-  }
-
-  function openList() {
-    renderList();
-    if (list.children.length === 0) {
-      return;
-    }
-    closeOpenCombobox();
-    positionComboboxList(root, list);
-    list.hidden = false;
-    const onScroll = () => closeOpenCombobox();
-    window.addEventListener("scroll", onScroll, true);
-    openCombobox = { root, list, onScroll };
-  }
-
-  toggle.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (list.hidden) {
-      input.focus();
-      openList();
-    } else {
-      closeOpenCombobox();
-    }
-  });
-
-  input.addEventListener("focus", openList);
-  input.addEventListener("input", () => {
-    if (!list.hidden || document.activeElement === input) {
-      openList();
-    }
-  });
-  input.addEventListener("blur", () => {
-    window.setTimeout(closeOpenCombobox, 120);
-  });
-
-  field.appendChild(input);
-  field.appendChild(toggle);
-  root.appendChild(field);
-  root.appendChild(list);
-  return root;
-}
-
-function getParameterDefs(node) {
-  const names = [];
-
-  if (node.parameters && typeof node.parameters === "object") {
-    names.push(...Object.keys(node.parameters));
-  }
-
-  if (node.parameter && !Array.isArray(node.parameter)) {
-    const name = node.parameter.name || "value";
-    if (!names.includes(name)) {
-      names.unshift(name);
-    }
-  }
-
-  return names.map((paramName) => buildParameterDef(node, paramName));
-}
-
-function applyParameters(template, values, { scriptlet = false } = {}) {
-  let result = template;
-  for (const [name, value] of Object.entries(values)) {
-    result = result.split(`{${name}}`).join(value ?? "");
-    if (scriptlet) {
-      result = result.replace(
-        new RegExp(`(?<!\\\\)\\$${name}(?![a-zA-Z0-9_])`, "g"),
-        value ?? ""
-      );
-    }
-  }
-  return result;
-}
-
-function linkStorageKey(node) {
-  if (node.id) {
-    return node.id;
-  }
-  const sectionPrefix = node.sectionName ? `${node.sectionName}:` : "";
-  return `${sectionPrefix}${node.type}:${node.name}:${getLinkTemplate(node)}`;
-}
-
-function resolveNode(node, paramValues) {
-  const parameterDefs = getParameterDefs(node);
-  if (parameterDefs.length === 0) {
-    return node;
-  }
-
-  const values = {};
-  for (const def of parameterDefs) {
-    const value = paramValues[def.name];
-    if (value !== "" && value !== undefined) {
-      values[def.name] = value;
-    } else if (!def.optional) {
-      values[def.name] = value ?? def.default ?? "";
-    }
-  }
-  if (Object.keys(values).length === 0) {
-    return node;
-  }
-
-  const apply = (template) =>
-    applyParameters(template, values, { scriptlet: node.type === "scriptlet" });
-
-  if (node.type === "navigate") {
-    return { ...node, path: apply(node.path || "") };
-  }
-  if (node.type === "derived-url") {
-    const result = { ...node };
-    if (node.path) {
-      result.path = apply(node.path);
-    }
-    if (node.url) {
-      result.url = apply(node.url);
-    }
-    return result;
-  }
-  if (node.type === "scriptlet") {
-    return { ...node, code: apply(node.code || "") };
-  }
-  return node;
-}
-
-async function loadParamValues() {
-  const stored = await browser.storage.local.get(PARAM_VALUES_KEY);
-  return stored[PARAM_VALUES_KEY] || {};
-}
-
-async function saveParamValue(linkKey, paramName, value) {
-  const allValues = await loadParamValues();
-  const linkValues = allValues[linkKey] || {};
-  linkValues[paramName] = value;
-  allValues[linkKey] = linkValues;
-  await browser.storage.local.set({ [PARAM_VALUES_KEY]: allValues });
-}
-
-function readParamValuesFromRow(row, parameterDefs) {
-  const values = {};
-  for (const def of parameterDefs) {
-    const input = row.querySelector(`[data-param="${def.name}"]`);
-    values[def.name] = input ? input.value.trim() : "";
-  }
-  return values;
-}
-
-function resolveParamValues(parameterDefs, rawValues) {
-  const values = {};
-  for (const def of parameterDefs) {
-    const raw = rawValues[def.name];
-    values[def.name] = raw !== "" ? raw : def.default;
-  }
-  return values;
-}
-
-function validateParamValues(parameterDefs, values) {
-  const missing = parameterDefs
-    .filter((def) => !def.optional && !values[def.name])
-    .map((def) => def.label || def.name);
-  if (missing.length === 0) {
-    return null;
-  }
-  if (missing.length === 1) {
-    return `Enter a value for ${missing[0]}.`;
-  }
-  return `Enter values for ${missing.join(", ")}.`;
-}
-
-function normalizeScriptInput(raw) {
-  let code = raw.trim();
-  if (!code) {
-    return "";
-  }
-
-  if (code.toLowerCase().startsWith("javascript:")) {
-    code = code.slice("javascript:".length);
-  }
-
-  try {
-    code = decodeURIComponent(code);
-  } catch {
-    // keep literal pasted text when it is not URI-encoded
-  }
-
-  if (code.startsWith("void(") && code.endsWith(")")) {
-    code = code.slice(5, -1);
-  }
-
-  return code.trim();
-}
-
-async function loadCustomScripts() {
-  const stored = await browser.storage.local.get(CUSTOM_SCRIPTS_KEY);
-  return stored[CUSTOM_SCRIPTS_KEY] || [];
-}
-
-async function saveCustomScripts(scripts) {
-  await browser.storage.local.set({ [CUSTOM_SCRIPTS_KEY]: scripts });
-}
-
-async function loadInjectOnLoad() {
-  const stored = await browser.storage.local.get(INJECT_ON_LOAD_KEY);
-  return stored[INJECT_ON_LOAD_KEY] || {};
-}
-
-async function setInjectOnLoad(linkKey, enabled) {
-  const injectOnLoad = await loadInjectOnLoad();
-  if (enabled) {
-    injectOnLoad[linkKey] = true;
-  } else {
-    delete injectOnLoad[linkKey];
-  }
-  await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: injectOnLoad });
-  await browser.runtime.sendMessage({ type: "REFRESH_INJECT" }).catch(() => {});
-}
-
-function defaultScriptName(code, scripts) {
-  const navPath = extractNavigationPath(code);
-  if (navPath) {
-    const leaf = navPath.split(/[/?#]/)[0].replace(/\.do$/, "") || "page";
-    return `Go to ${leaf}`;
-  }
-
-  return `Custom script ${scripts.length + 1}`;
-}
-
-function createParamInputs(parameterDefs, savedValues, linkKey, onEnter) {
-  if (parameterDefs.length === 0) {
-    return null;
-  }
-
-  const wrap = document.createElement("div");
-  wrap.className = "param-inputs";
-
-  for (const def of parameterDefs) {
-    if (def.choices?.length) {
-      wrap.appendChild(createChoiceCombobox(def, savedValues, linkKey, onEnter));
-      continue;
-    }
-
-    const input = document.createElement("input");
-    input.type = "text";
-    const saved = savedValues[def.name];
-    input.value = saved !== undefined ? saved : def.default;
-    bindParamInput(input, def, linkKey, onEnter);
-    wrap.appendChild(input);
-  }
-
-  return wrap;
-}
-
-function nodeHasParams(node) {
-  return getParameterDefs(node).length > 0;
-}
+const activateLink = createActivateLink({ showMessage, hideMessage });
+const linkUi = createLinkUi({ activateLink, setInjectOnLoad });
 
-function treeHasParams(nodes) {
-  for (const node of nodes) {
-    if (node.children) {
-      if (treeHasParams(node.children)) {
-        return true;
-      }
-      continue;
-    }
-    if (nodeHasParams(node)) {
-      return true;
-    }
-  }
-  return false;
+function getLinkSections() {
+  return linkSections;
 }
 
-function nodeHasOnLoad(node) {
-  return (
-    node.type === "scriptlet" &&
-    !node.nav &&
-    !extractNavigationPath(node.code || "")
-  );
+function getActiveSection() {
+  return linkSections?.find((section) => section.name === activeSectionName) || null;
 }
-
-function treeHasOnLoad(nodes) {
-  for (const node of nodes) {
-    if (node.children) {
-      if (treeHasOnLoad(node.children)) {
-        return true;
-      }
-      continue;
-    }
-    if (nodeHasOnLoad(node)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function createLinkListHeader({
-  showRemove = false,
-  showParams = false,
-  showOnLoad = false,
-} = {}) {
-  const header = document.createElement("div");
-  header.className = "link-list-header";
-  header.setAttribute("role", "row");
-
-  const actionHeader = document.createElement("span");
-  actionHeader.className = "col-action";
-  actionHeader.textContent = "Action";
-  header.appendChild(actionHeader);
-
-  if (showParams) {
-    const paramsHeader = document.createElement("span");
-    paramsHeader.className = "col-params";
-    paramsHeader.textContent = "Params";
-    header.appendChild(paramsHeader);
-  }
-
-  if (showOnLoad) {
-    const onLoadHeader = document.createElement("span");
-    onLoadHeader.className = "col-on-load";
-    onLoadHeader.textContent = "On load";
-    header.appendChild(onLoadHeader);
-  }
-
-  if (showRemove) {
-    const removeHeader = document.createElement("span");
-    removeHeader.className = "col-remove";
-    removeHeader.textContent = "Remove";
-    header.appendChild(removeHeader);
-  }
-
-  return header;
-}
-
-function createLinkRow(node, options = {}) {
-  const parameterDefs = getParameterDefs(node);
-  const linkKey = linkStorageKey(node);
-  const savedValues = options.savedParamValues?.[linkKey] || {};
-
-  const row = document.createElement("div");
-  row.className = "link-row";
-  if (options.showRemove) {
-    row.classList.add("has-remove");
-  }
-  if (options.searchMatch) {
-    row.classList.add("search-match");
-  }
-  if (options.searchExactMatch) {
-    row.classList.add("search-exact-match");
-  }
-  row.dataset.linkKey = linkKey;
-
-  const actionCell = document.createElement("div");
-  actionCell.className = "link-row-action";
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "link-item";
-  button.dataset.type = node.type;
-
-  const badge = document.createElement("span");
-  badge.className = linkBadgeClass(node);
-  badge.textContent = linkBadgeLabel(node);
-
-  const labelWrap = document.createElement("span");
-  labelWrap.className = "link-label";
-  labelWrap.textContent = displayLabel(node);
-
-  const hint = document.createElement("span");
-  hint.className = "link-hint";
-  const updateHint = () => {
-    hint.textContent = displayHint(
-      node,
-      resolveParamValues(parameterDefs, readParamValuesFromRow(row, parameterDefs))
-    );
-  };
-  updateHint();
-  labelWrap.appendChild(hint);
-
-  button.appendChild(badge);
-  button.appendChild(labelWrap);
-  button.addEventListener("click", () => activateLink(node, row));
-  actionCell.appendChild(button);
-
-  const paramsCell = document.createElement("div");
-  paramsCell.className = "link-row-params";
-
-  const paramInputs = createParamInputs(
-    parameterDefs,
-    savedValues,
-    linkKey,
-    () => activateLink(node, row)
-  );
-  if (paramInputs) {
-    for (const input of paramInputs.querySelectorAll(".param-input")) {
-      input.addEventListener("input", updateHint);
-    }
-    paramsCell.appendChild(paramInputs);
-    row.classList.add("has-params");
-  }
-
-  row.appendChild(actionCell);
-  if (paramInputs) {
-    row.appendChild(paramsCell);
-  }
-
-  const onLoadCell = document.createElement("div");
-  onLoadCell.className = "link-row-on-load";
-  const hasOnLoad = nodeHasOnLoad(node);
-
-  if (hasOnLoad) {
-    row.classList.add("has-on-load");
-    const injectLabel = document.createElement("label");
-    injectLabel.className = "inject-load";
-    const hostHint = node.hostPattern
-      ? `Inject at document start when tab URL matches /${node.hostPattern}/`
-      : "Inject at document start on every page";
-    injectLabel.title = hostHint;
-
-    const injectCheck = document.createElement("input");
-    injectCheck.type = "checkbox";
-    injectCheck.className = "inject-load-checkbox";
-    injectCheck.checked = Boolean(options.injectOnLoad?.[linkKey]);
-    injectCheck.addEventListener("click", (event) => event.stopPropagation());
-    injectCheck.addEventListener("change", async () => {
-      await setInjectOnLoad(linkKey, injectCheck.checked);
-    });
-
-    injectLabel.appendChild(injectCheck);
-    onLoadCell.appendChild(injectLabel);
-    row.appendChild(onLoadCell);
-  }
-
-  if (options.showRemove) {
-    const removeCell = document.createElement("div");
-    removeCell.className = "link-row-remove";
-
-    if (options.onDelete) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "delete-btn";
-      deleteBtn.title = "Remove action";
-      deleteBtn.textContent = "×";
-      deleteBtn.addEventListener("click", options.onDelete);
-      removeCell.appendChild(deleteBtn);
-    }
-
-    row.appendChild(removeCell);
-  }
-
-  return row;
-}
-
-function renderNodes(
-  nodes,
-  container,
-  savedParamValues,
-  inheritedHostPattern = null,
-  sectionName = null,
-  injectOnLoad = {},
-  options = {}
-) {
-  for (const node of nodes) {
-    const hostPattern = resolveHostPattern(node, inheritedHostPattern);
-    if (node.children) {
-      const folder = document.createElement("section");
-      folder.className = "folder";
-
-      const title = document.createElement("div");
-      title.className = "folder-title";
-      title.textContent = node.name;
-      folder.appendChild(title);
-
-      renderNodes(
-        node.children,
-        folder,
-        savedParamValues,
-        hostPattern,
-        sectionName,
-        injectOnLoad,
-        options
-      );
-      container.appendChild(folder);
-      continue;
-    }
-
-    container.appendChild(
-      createLinkRow(
-        { ...node, hostPattern, sectionName },
-        { savedParamValues, injectOnLoad, showRemove: options.showRemove }
-      )
-    );
-  }
-}
-
-function normalizeSearchQuery(raw) {
-  return raw.trim().toLowerCase();
-}
-
-function isExactSearchMatch(label, query) {
-  return Boolean(query) && label.toLowerCase() === query;
-}
-
-function getSearchTags(node) {
-  if (!Array.isArray(node.searchTags)) {
-    return [];
-  }
-
-  return node.searchTags
-    .filter((tag) => typeof tag === "string")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-}
-
-function nodeHasExactSearchMatch(node, query) {
-  if (!query) {
-    return false;
-  }
-
-  if (isExactSearchMatch(displayLabel(node), query)) {
-    return true;
-  }
-
-  return getSearchTags(node).some((tag) => isExactSearchMatch(tag, query));
-}
-
-function nodeSearchScore(node, query) {
-  if (!query) {
-    return 1;
-  }
-
-  let score = searchMatchScore(displayLabel(node), query);
-  for (const tag of getSearchTags(node)) {
-    score = Math.max(score, searchMatchScore(tag, query));
-  }
-  return score;
-}
-
-function searchMatchScore(label, query) {
-  if (!query) {
-    return 1;
-  }
-
-  const normalizedLabel = label.toLowerCase();
-  if (normalizedLabel === query) {
-    return 1000;
-  }
-  if (normalizedLabel.startsWith(query)) {
-    return 500 + Math.max(0, 100 - query.length);
-  }
-
-  const index = normalizedLabel.indexOf(query);
-  if (index === -1) {
-    return 0;
-  }
-
-  return 200 - index;
-}
-
-function flattenLinkNodes(nodes, inheritedHostPattern = null, sectionName = null) {
-  const results = [];
-
-  for (const node of nodes) {
-    const hostPattern = resolveHostPattern(node, inheritedHostPattern);
-    if (node.children) {
-      results.push(
-        ...flattenLinkNodes(node.children, hostPattern, sectionName)
-      );
-      continue;
-    }
-
-    results.push({ ...node, hostPattern, sectionName });
-  }
-
-  return results;
-}
-
-function sectionHasExactMatch(section, query) {
-  if (!query) {
-    return false;
-  }
-
-  return flattenLinkNodes(
-    section.children,
-    section.hostPattern,
-    section.name
-  ).some((node) => nodeHasExactSearchMatch(node, query));
-}
-
-function findSectionWithExactMatch(query) {
-  if (!query || !linkSections) {
-    return null;
-  }
-
-  return (
-    linkSections.find((section) => sectionHasExactMatch(section, query))?.name ??
-    null
-  );
-}
-
-function currentViewHasExactMatch(query, customScripts) {
-  const section = getActiveSection();
-  if (section && sectionHasExactMatch(section, query)) {
-    return true;
-  }
-
-  return customScripts.some((script) => isExactSearchMatch(script.name, query));
-}
-
-async function maybeSwitchSectionForExactMatch(customScripts) {
-  const query = normalizeSearchQuery(searchQuery);
-  if (!query || currentViewHasExactMatch(query, customScripts)) {
-    return false;
-  }
-
-  const sectionName = findSectionWithExactMatch(query);
-  if (!sectionName || sectionName === activeSectionName) {
-    return false;
-  }
-
-  activeSectionName = sectionName;
-  await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
-  return true;
-}
-
-function sortNodesBySearchScore(nodes, getScore) {
-  const query = normalizeSearchQuery(searchQuery);
-  if (!query) {
-    return nodes;
-  }
-
-  return [...nodes]
-    .map((node) => ({
-      node,
-      score: getScore(node, query),
-    }))
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        displayLabel(a.node).localeCompare(displayLabel(b.node))
-    )
-    .map((entry) => entry.node);
-}
-
-function getSearchRowHighlight(node, query) {
-  if (!query || nodeSearchScore(node, query) <= 0) {
-    return {};
-  }
-
-  return {
-    searchMatch: true,
-    searchExactMatch: nodeHasExactSearchMatch(node, query),
-  };
-}
-
-function getScriptSearchRowHighlight(script, query) {
-  if (!query || searchMatchScore(script.name, query) <= 0) {
-    return {};
-  }
-
-  return {
-    searchMatch: true,
-    searchExactMatch: isExactSearchMatch(script.name, query),
-  };
-}
-
-function focusSearchInput() {
-  if (!searchInputEl) {
-    return;
-  }
-
-  searchInputEl.focus();
-  const length = searchInputEl.value.length;
-  searchInputEl.setSelectionRange(length, length);
-}
-
-function setSearchOverlayFallback(usesFallback) {
-  if (!searchOverlayEl) {
-    return;
-  }
-
-  searchOverlayEl.classList.toggle("search-overlay-fallback", usesFallback);
-}
-
-async function syncPageSearchOverlay(visible, text) {
-  if (!searchUsesPageOverlay) {
-    return;
-  }
-
-  const tab = await getActiveTab();
-  const injectable =
-    tab?.id != null && typeof tab.url === "string" && /^https?:\/\//i.test(tab.url);
-
-  if (!injectable) {
-    searchUsesPageOverlay = false;
-    setSearchOverlayFallback(true);
-    return;
-  }
-
-  try {
-    if (searchOverlayPageTabId !== tab.id) {
-      await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ["lib/search-overlay-page.js"],
-      });
-      searchOverlayPageTabId = tab.id;
-    }
-
-    await browser.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (show, queryText) => {
-        globalThis.__snLinksSyncSearchOverlay?.(show, queryText);
-      },
-      args: [visible, text],
-    });
-    setSearchOverlayFallback(false);
-  } catch {
-    searchUsesPageOverlay = false;
-    setSearchOverlayFallback(true);
-  }
-}
-
-async function setSearchOverlayVisible(visible) {
-  if (!searchOverlayEl || !searchInputEl) {
-    return;
-  }
-
-  searchOverlayEl.classList.toggle("hidden", !visible);
-  searchOverlayEl.setAttribute("aria-hidden", visible ? "false" : "true");
-
-  if (visible) {
-    focusSearchInput();
-    await syncPageSearchOverlay(true, searchInputEl.value);
-    return;
-  }
-
-  await syncPageSearchOverlay(false, "");
-  searchOverlayPageTabId = null;
-}
-
-async function closeSearch() {
-  searchQuery = "";
-  if (searchInputEl) {
-    searchInputEl.value = "";
-  }
-  await setSearchOverlayVisible(false);
-  renderAll();
-}
-
-async function openSearch(initialValue = "") {
-  searchQuery = initialValue;
-  if (searchInputEl) {
-    searchInputEl.value = initialValue;
-  }
-  await setSearchOverlayVisible(true);
-  renderAll();
-}
-
-function isEditableElement(element) {
-  if (!element) {
-    return false;
-  }
-
-  const tag = element.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
-    return true;
-  }
-
-  return element.isContentEditable;
-}
-
-function shouldIgnoreSearchKey(event) {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return true;
-  }
-
-  if (event.key === "Tab" || event.key === "Enter") {
-    return true;
-  }
-
-  return false;
-}
-
-function initSearch() {
-  if (!searchOverlayEl || !searchInputEl) {
-    return;
-  }
-
-  searchInputEl.addEventListener("input", async () => {
-    searchQuery = searchInputEl.value;
-    if (!searchQuery) {
-      await closeSearch();
-      return;
-    }
-    await syncPageSearchOverlay(true, searchQuery);
-    renderAll();
-  });
-
-  searchInputEl.addEventListener("keydown", (event) => {
-    event.stopPropagation();
-    if (event.key === "Escape") {
-      event.preventDefault();
-      void closeSearch();
-    }
-  });
-
-  window.addEventListener("pagehide", () => {
-    void syncPageSearchOverlay(false, "");
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (shouldIgnoreSearchKey(event)) {
-      if (event.key === "Escape" && !searchOverlayEl.classList.contains("hidden")) {
-        event.preventDefault();
-        void closeSearch();
-      }
-      return;
-    }
-
-    if (
-      !searchOverlayEl.classList.contains("hidden") &&
-      document.activeElement === searchInputEl
-    ) {
-      return;
-    }
-
-    if (isEditableElement(document.activeElement)) {
-      return;
-    }
-
-    if (event.key === "Escape") {
-      return;
-    }
-
-    if (event.key === "Backspace") {
-      if (searchOverlayEl.classList.contains("hidden")) {
-        return;
-      }
-      event.preventDefault();
-      void (async () => {
-        const nextValue = searchQuery.slice(0, -1);
-        if (!nextValue) {
-          await closeSearch();
-          return;
-        }
-        await openSearch(nextValue);
-      })();
-      return;
-    }
-
-    if (event.key.length !== 1) {
-      return;
-    }
 
-    event.preventDefault();
-    void openSearch(searchQuery + event.key);
-  });
+function setActiveSectionName(name) {
+  activeSectionName = name;
 }
 
 function renderSectionTabs() {
@@ -1260,7 +76,7 @@ function renderSectionTabs() {
     return;
   }
 
-  const query = normalizeSearchQuery(searchQuery);
+  const query = search.normalizeSearchQuery(search.getSearchQuery());
   sectionTabsEl.replaceChildren();
   for (const section of linkSections) {
     const tab = document.createElement("button");
@@ -1275,7 +91,7 @@ function renderSectionTabs() {
     tab.classList.toggle("active", section.name === activeSectionName);
     tab.classList.toggle(
       "search-exact-match",
-      sectionHasExactMatch(section, query)
+      search.sectionHasExactMatch(section, query)
     );
     tab.addEventListener("click", async () => {
       activeSectionName = section.name;
@@ -1286,139 +102,123 @@ function renderSectionTabs() {
   }
 }
 
-function renderCustomScripts(
-  scripts,
-  container,
-  savedParamValues,
-  injectOnLoad,
-  query = ""
-) {
-  const sortedScripts = sortNodesBySearchScore(scripts, (script, activeQuery) =>
-    searchMatchScore(script.name, activeQuery)
-  );
-  if (sortedScripts.length === 0) {
+async function renderAll() {
+  if (!linksEl) {
     return;
   }
 
-  const folder = document.createElement("section");
-  folder.className = "folder";
+  try {
+    linksEl.replaceChildren();
+    const savedParamValues = await loadParamValues();
+    const injectOnLoad = await loadInjectOnLoad();
+    const customScripts = await loadCustomScripts();
+    const showRemove = customScripts.length > 0;
+    const section = getActiveSection();
+    const showParams =
+      customScripts.some((script) =>
+        linkUi.nodeHasParams({
+          type: "scriptlet",
+          code: script.code,
+          parameter: script.parameter,
+          parameters: script.parameters,
+        })
+      ) || (section ? linkUi.treeHasParams(section.children) : false);
+    const showOnLoad =
+      customScripts.some((script) =>
+        globalThis.SnLinksLinkModel.nodeHasOnLoad({
+          type: "scriptlet",
+          code: script.code,
+        })
+      ) || (section ? linkUi.treeHasOnLoad(section.children) : false);
+    const query = search.normalizeSearchQuery(search.getSearchQuery());
 
-  const title = document.createElement("div");
-  title.className = "folder-title";
-  title.textContent = "Custom scripts";
-  folder.appendChild(title);
-
-  for (const script of sortedScripts) {
-    const node = {
-      id: script.id,
-      name: script.name,
-      type: "scriptlet",
-      code: script.code,
-      parameter: script.parameter,
-      parameters: script.parameters,
-    };
-
-    folder.appendChild(
-      createLinkRow(node, {
-        savedParamValues,
-        injectOnLoad,
-        showRemove: true,
-        ...getScriptSearchRowHighlight(script, query),
-        onDelete: async (event) => {
-          event.stopPropagation();
-          const nextScripts = scripts.filter((item) => item.id !== script.id);
-          await saveCustomScripts(nextScripts);
-          const nextInject = await loadInjectOnLoad();
-          delete nextInject[script.id];
-          await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: nextInject });
-          await renderAll();
-        },
-      })
-    );
-  }
-
-  container.appendChild(folder);
-}
-
-async function renderAll() {
-  linksEl.replaceChildren();
-  const savedParamValues = await loadParamValues();
-  const injectOnLoad = await loadInjectOnLoad();
-  const customScripts = await loadCustomScripts();
-  await maybeSwitchSectionForExactMatch(customScripts);
-  const showRemove = customScripts.length > 0;
-  const section = getActiveSection();
-  const showParams =
-    customScripts.some((script) =>
-      nodeHasParams({
-        type: "scriptlet",
-        code: script.code,
-        parameter: script.parameter,
-        parameters: script.parameters,
-      })
-    ) || (section ? treeHasParams(section.children) : false);
-  const showOnLoad =
-    customScripts.some((script) =>
-      nodeHasOnLoad({ type: "scriptlet", code: script.code })
-    ) || (section ? treeHasOnLoad(section.children) : false);
-  const query = normalizeSearchQuery(searchQuery);
-
-  const list = document.createElement("div");
-  list.className = "link-list";
-  if (query) {
-    list.classList.add("is-searching");
-  }
-  if (showRemove) {
-    list.classList.add("has-remove");
-  }
-  if (showParams) {
-    list.classList.add("has-params");
-  }
-  if (showOnLoad) {
-    list.classList.add("has-on-load");
-  }
-  list.appendChild(createLinkListHeader({ showRemove, showParams, showOnLoad }));
-
-  if (section) {
+    const list = document.createElement("div");
+    list.className = "link-list";
     if (query) {
-      const sortedNodes = sortNodesBySearchScore(
-        flattenLinkNodes(section.children, section.hostPattern, section.name),
-        (node, activeQuery) => nodeSearchScore(node, activeQuery)
-      );
-      for (const node of sortedNodes) {
-        list.appendChild(
-          createLinkRow(node, {
-            savedParamValues,
-            injectOnLoad,
-            showRemove,
-            ...getSearchRowHighlight(node, query),
-          })
+      list.classList.add("is-searching");
+    }
+    if (showRemove) {
+      list.classList.add("has-remove");
+    }
+    if (showParams) {
+      list.classList.add("has-params");
+    }
+    if (showOnLoad) {
+      list.classList.add("has-on-load");
+    }
+    list.appendChild(linkUi.createLinkListHeader({ showRemove, showParams, showOnLoad }));
+
+    if (section) {
+      if (query) {
+        const sortedNodes = search.sortNodesBySearchScore(
+          flattenLinkNodes(section.children, section.hostPattern, section.name),
+          (node, activeQuery) => search.nodeSearchScore(node, activeQuery)
+        );
+        for (const node of sortedNodes) {
+          list.appendChild(
+            linkUi.createLinkRow(node, {
+              savedParamValues,
+              injectOnLoad,
+              showRemove,
+              ...search.getSearchRowHighlight(node, query),
+            })
+          );
+        }
+      } else {
+        linkUi.renderNodes(
+          section.children,
+          list,
+          savedParamValues,
+          section.hostPattern,
+          section.name,
+          injectOnLoad,
+          { showRemove }
         );
       }
-    } else {
-      renderNodes(
-        section.children,
-        list,
-        savedParamValues,
-        section.hostPattern,
-        section.name,
-        injectOnLoad,
-        { showRemove }
-      );
     }
+
+    linkUi.renderCustomScripts(
+      customScripts,
+      list,
+      savedParamValues,
+      injectOnLoad,
+      query,
+      {
+        sortNodesBySearchScore: search.sortNodesBySearchScore,
+        getScriptSearchRowHighlight: search.getScriptSearchRowHighlight,
+        searchMatchScore,
+        onDeleteScript: async (scriptId) => {
+          const scripts = await loadCustomScripts();
+          const nextScripts = scripts.filter((item) => item.id !== scriptId);
+          await saveCustomScripts(nextScripts);
+          const nextInject = await loadInjectOnLoad();
+          delete nextInject[scriptId];
+          await browser.storage.local.set({
+            [globalThis.SnLinksLinkModel.INJECT_ON_LOAD_KEY]: nextInject,
+          });
+          await renderAll();
+        },
+      }
+    );
+
+    linksEl.appendChild(list);
+    renderSectionTabs();
+  } catch (error) {
+    showMessage(error.message || String(error));
   }
-
-  renderCustomScripts(
-    customScripts,
-    list,
-    savedParamValues,
-    injectOnLoad,
-    query
-  );
-
-  linksEl.appendChild(list);
-  renderSectionTabs();
 }
+
+const search = createSearchController({
+  searchOverlayEl,
+  searchInputEl,
+  displayLabel: linkUi.displayLabel,
+  getLinkSections,
+  getActiveSection,
+  setActiveSectionName,
+  sectionTabKey: SECTION_TAB_KEY,
+  loadCustomScripts,
+  renderAll,
+});
 
 async function addCustomScript() {
   hideMessage();
@@ -1446,129 +246,10 @@ async function addCustomScript() {
   showMessage(`Added "${name}".`);
 }
 
-async function runScriptlet(tabId, code) {
-  const response = await browser.runtime.sendMessage({
-    type: "RUN_SCRIPTLET",
-    tabId,
-    code,
-  });
-  if (!response?.ok) {
-    throw new Error(response?.error || "Script injection failed.");
-  }
-}
-
-function resolveNavigationUrl(resolved, tab, origin, hostPattern, paramValues) {
-  if (resolved.type === "derived-url") {
-    return resolveDerivedLink(resolved, tab, origin, hostPattern, paramValues);
-  }
-  if (resolved.type === "navigate") {
-    return resolvePathUrl(resolved.path, tab, origin, hostPattern);
-  }
-  if (resolved.type === "scriptlet" && resolved.nav) {
-    const result = evaluateNavScript(resolved.code, tab.url);
-    return resolveAbsoluteUrl(result, tab, origin, hostPattern);
-  }
-  return null;
-}
-
-async function activateLink(node, row = null) {
-  hideMessage();
-
-  try {
-    const parameterDefs = getParameterDefs(node);
-    const rawValues =
-      row && parameterDefs.length > 0
-        ? readParamValuesFromRow(row, parameterDefs)
-        : {};
-    const paramValues = resolveParamValues(parameterDefs, rawValues);
-    const validationError = validateParamValues(parameterDefs, paramValues);
-    if (validationError) {
-      showMessage(validationError);
-      return;
-    }
-
-    const linkKey = linkStorageKey(node);
-    for (const def of parameterDefs) {
-      await saveParamValue(linkKey, def.name, paramValues[def.name]);
-    }
-
-    const resolved = resolveNode(node, paramValues);
-
-    if (resolved.type === "scriptlet" && !resolved.nav) {
-      const navPath = extractNavigationPath(resolved.code);
-      if (navPath) {
-        const hostPattern = resolved.hostPattern ?? null;
-        const { tab, origin } = await getTargetTab(hostPattern);
-        const url = hostPattern
-          ? toNavigatorUrl(origin, navPath)
-          : resolvePathOnTab(tab, navPath);
-        await performNavigation("same-tab", url, tab, hostPattern);
-        window.close();
-        return;
-      }
-
-      const hostPattern = resolved.hostPattern ?? null;
-      const { tab } = await getTargetTab(hostPattern);
-      if (hostPattern) {
-        await browser.tabs.update(tab.id, { active: true });
-      }
-      await runScriptlet(tab.id, resolved.code);
-      window.close();
-      return;
-    }
-
-    const hostPattern = resolved.hostPattern ?? null;
-    const { tab, origin } = await getTargetTab(hostPattern);
-    const url = resolveNavigationUrl(
-      resolved,
-      tab,
-      origin,
-      hostPattern,
-      paramValues
-    );
-
-    if (url === null) {
-      window.close();
-      return;
-    }
-
-    const nav = resolveNav(resolved);
-    if (!nav) {
-      throw new Error(`Navigation mode is required for ${resolved.type} links.`);
-    }
-
-    await performNavigation(nav, url, tab, hostPattern);
-    window.close();
-  } catch (error) {
-    showMessage(error.message || String(error));
-  }
-}
-
-async function initPopupSize() {
-  const stored = await browser.storage.local.get(POPUP_SIZE_KEY);
-  const size = stored[POPUP_SIZE_KEY];
-
-  const width =
-    size?.width >= POPUP_MIN_WIDTH ? size.width : POPUP_DEFAULT_WIDTH;
-  const height =
-    size?.height >= POPUP_MIN_HEIGHT ? size.height : POPUP_DEFAULT_HEIGHT;
-
-  applyPopupSize(width, height);
-  initResizeHandle();
-
-  let saveTimer = null;
-  new ResizeObserver(() => {
-    if (popupResizeObserverPaused) {
-      return;
-    }
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(savePopupSize, 200);
-  }).observe(document.body);
-}
-
 let popupResizeObserverPaused = false;
 let popupResizeFrame = null;
 let pendingPopupSize = null;
+let lastAppliedPopupSize = null;
 
 function clampPopupSize(width, height) {
   return {
@@ -1582,8 +263,20 @@ function clampPopupSize(width, height) {
 
 function applyPopupSize(width, height) {
   const size = clampPopupSize(width, height);
-  document.body.style.width = `${size.width}px`;
-  document.body.style.height = `${size.height}px`;
+  if (
+    lastAppliedPopupSize &&
+    lastAppliedPopupSize.width === size.width &&
+    lastAppliedPopupSize.height === size.height
+  ) {
+    return size;
+  }
+  lastAppliedPopupSize = size;
+  const widthPx = `${size.width}px`;
+  const heightPx = `${size.height}px`;
+  document.documentElement.style.width = widthPx;
+  document.documentElement.style.height = heightPx;
+  document.body.style.width = widthPx;
+  document.body.style.height = heightPx;
   return size;
 }
 
@@ -1659,6 +352,28 @@ function initResizeHandle() {
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
   });
+}
+
+async function initPopupSize() {
+  const stored = await browser.storage.local.get(POPUP_SIZE_KEY);
+  const size = stored[POPUP_SIZE_KEY];
+
+  const width =
+    size?.width >= POPUP_MIN_WIDTH ? size.width : POPUP_DEFAULT_WIDTH;
+  const height =
+    size?.height >= POPUP_MIN_HEIGHT ? size.height : POPUP_DEFAULT_HEIGHT;
+
+  applyPopupSize(width, height);
+  initResizeHandle();
+
+  let saveTimer = null;
+  new ResizeObserver(() => {
+    if (popupResizeObserverPaused) {
+      return;
+    }
+    window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(savePopupSize, 200);
+  }).observe(document.body);
 }
 
 async function initAddScriptCollapse() {
@@ -1738,8 +453,17 @@ async function initCspDisableControl() {
     return;
   }
 
-  const activeTab = await getActiveTab();
-  await syncCspDisableUi(activeTab);
+  const syncFromActiveTab = async () => {
+    await syncCspDisableUi(await getActiveTab());
+  };
+
+  await syncFromActiveTab();
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void syncFromActiveTab();
+    }
+  });
 
   cspDisableCheckbox.addEventListener("change", async () => {
     const tab = await getActiveTab();
@@ -1814,11 +538,7 @@ async function init() {
     });
   }
 
-  document.addEventListener("click", (event) => {
-    if (openCombobox && !openCombobox.root.contains(event.target)) {
-      closeOpenCombobox();
-    }
-  });
+  document.addEventListener("click", handleDocumentClickForCombobox);
 
   scriptCodeInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -1827,12 +547,22 @@ async function init() {
     }
   });
 
+  search.initSearch();
   await initPopupSize();
-  await initAddScriptCollapse();
-  await initExtensionSettingsControls();
-  await initCspDisableControl();
-  initSearch();
   await renderAll();
+  await initAddScriptCollapse();
+  try {
+    await initExtensionSettingsControls();
+  } catch (error) {
+    console.error("Failed to load extension settings:", error);
+  }
+  try {
+    await initCspDisableControl();
+  } catch (error) {
+    console.error("Failed to init CSP control:", error);
+  }
 }
 
-init();
+init().catch((error) => {
+  showMessage(error.message || String(error));
+});

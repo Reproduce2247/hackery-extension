@@ -34,6 +34,7 @@
 html {
   margin: 0;
   padding: 0;
+  overflow: hidden;
 }
 
 body {
@@ -46,6 +47,7 @@ body {
   max-height: 600px;
   overflow: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -90,6 +92,21 @@ body.is-resizing .resize-handle {
 body.is-resizing {
   user-select: none;
   overflow: hidden;
+  contain: layout size style;
+}
+
+/* Solid curtain hides link-grid reflow while Firefox resizes the popup chrome. */
+body.is-resizing::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: var(--bg);
+  pointer-events: none;
+}
+
+body.is-resizing header {
+  position: relative;
 }
 
 header {
@@ -291,13 +308,15 @@ h1 {
   width: 100%;
   margin: 0;
   padding: 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 28%, transparent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-  backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--panel) 12%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   color: var(--text);
   font: 14px/1.3 system-ui, -apple-system, Segoe UI, sans-serif;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 18%, transparent);
+  box-shadow: none;
+  text-shadow: 0 0 6px color-mix(in srgb, var(--bg) 70%, transparent);
 }
 
 .search-overlay:not(.search-overlay-fallback) .search-input {
@@ -309,7 +328,7 @@ h1 {
 }
 
 .search-overlay.search-overlay-fallback .search-input:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   outline-offset: 1px;
 }
 

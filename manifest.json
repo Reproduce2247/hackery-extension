@@ -24,6 +24,7 @@
   "background": {
     "scripts": [
       "lib/navigation-shared.js",
+      "lib/link-model.js",
       "lib/network-rules-shared.js",
       "lib/network-hook-install.js",
       "lib/csp-disable.js",

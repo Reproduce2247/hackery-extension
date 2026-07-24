@@ -19,6 +19,7 @@ The UI still says "ServiceNow Links" in places (`manifest.json`, README); treat 
 ```
 manifest.json
 ├── background.js          # Content-script registration, scriptlet execution, inject cache
+├── lib/link-model.js        # Shared link tree, parameters, host patterns, scriptlet normalization
 ├── lib/navigation-shared.js # Shared URL resolution and nav execution
 ├── lib/network-rules-shared.js # Rule model, matching, shared state helpers
 ├── lib/network-hook-install.js # MAIN-world fetch/XHR hook (injected)
@@ -27,7 +28,11 @@ manifest.json
 ├── rules/                 # Network rules editor (rules.html, rules.js)
 ├── popup/
 │   ├── popup.html         # Toolbar popup UI
-│   ├── popup.js           # Link rendering, tab targeting, parameter UI, custom scripts
+│   ├── popup.js           # Bootstrap, settings, render orchestration
+│   ├── link-ui.js         # Link row rendering, params, on-load checkboxes
+│   ├── activate-link.js   # Run / navigate / derive activation
+│   ├── tab-target.js      # Tab matching and origin memory
+│   ├── search.js          # Fuzzy search overlay and section switching
 │   └── popup.css
 ├── data/links.json        # Canonical link catalog (sections → tree of actions)
 └── scripts/
@@ -223,7 +228,7 @@ Popup **Add action** panel stores scripts in `customScripts` (local storage):
 - Firefox-only (uses `browser.*` APIs, gecko manifest settings).
 - Temporary add-ons do not persist across browser restarts unless signed/packaged.
 - `parse-bookmarks.js` reads `../../bookmarks.html` relative to the script — path assumes a sibling bookmarks export outside this repo.
-- Duplicate logic exists between `background.js` and `popup.js` (parameter resolution, host matching, link keys) — keep in sync when changing behavior.
+- Duplicate logic between `background.js` and `popup.js` for link/parameter handling lives in `lib/link-model.js` — update that module when changing behavior.
 - README describes an older, smaller link set; `data/links.json` is authoritative.
 
 ## Related tooling
