@@ -238,6 +238,104 @@ h1 {
   font-weight: 600;
 }
 
+.section-tab.search-exact-match:not(.active) {
+  margin-bottom: -1px;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 38%, var(--panel));
+  color: var(--text);
+  font-weight: 600;
+  box-shadow:
+    inset 0 -2px 0 var(--accent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.section-tab.active.search-exact-match {
+  border-color: var(--border);
+  border-top: 2px solid var(--accent);
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.search-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.search-overlay.hidden {
+  display: none;
+}
+
+.search-overlay.search-overlay-fallback {
+  top: 46px;
+  left: 50%;
+  width: min(320px, calc(100% - 24px));
+  height: auto;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  transform: translateX(-50%);
+  white-space: normal;
+}
+
+.search-input {
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--text);
+  font: 14px/1.3 system-ui, -apple-system, Segoe UI, sans-serif;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.search-overlay:not(.search-overlay-fallback) .search-input {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+}
+
+.search-overlay.search-overlay-fallback .search-input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.search-empty {
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.link-row.search-match .link-item {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.link-row.search-exact-match .link-item {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.link-row.search-match .link-item:hover,
+.link-row.search-match .link-item:focus-visible,
+.link-row.search-exact-match .link-item:hover,
+.link-row.search-exact-match .link-item:focus-visible {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
 .links {
   padding: 8px 0 0;
   width: 100%;

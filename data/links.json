@@ -5,6 +5,7 @@
       {
         "name": "Set list item limit",
         "type": "scriptlet",
+        "searchTags": ["limit", "rows", "list"],
         "code": "var glideListClassRef = globalThis.g_list ?? globalThis.gsft_main?.g_list ?? globalThis.GlideList2 ?? globalThis.gsft_main.GlideList2; if (!glideListClassRef.table) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new GlideList2(ids[0]) } glideListClassRef.setRowsPerPage({limit});",
         "parameter": {
           "name": "limit",
@@ -15,6 +16,7 @@
       {
         "name": "Show navigator",
         "type": "derived-url",
+        "searchTags": ["nav", "navigator"],
         "nav": "same-tab",
         "extract": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$",
         "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}",
@@ -26,18 +28,21 @@
       {
         "name": "SN Upload XML",
         "type": "derived-url",
+        "searchTags": ["upload", "xml"],
         "nav": "foreground",
         "path": "/now/nav/ui/classic/params/target/upload.do"
       },
       {
         "name": "Cancel transactions",
         "type": "derived-url",
+        "searchTags": ["cancel", "txn"],
         "nav": "foreground",
         "path": "/cancel_my_transaction.do"
       },
       {
         "name": "App Log | ServiceNow",
         "type": "derived-url",
+        "searchTags": ["syslog", "system log", "log"],
         "nav": "foreground",
         "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
       },
@@ -240,6 +245,7 @@
       {
         "name": "Disable redirects",
         "type": "scriptlet",
+        "searchTags": ["redirect", "navigation"],
         "code": "(function(){if(window.__SN_NO_REDIRECT__)return;window.__SN_NO_REDIRECT__=1;function block(k,u){console.log('blocked '+k,u)}var lp=Location.prototype,hd=Object.getOwnPropertyDescriptor(lp,'href');if(hd&&hd.set)Object.defineProperty(lp,'href',{configurable:1,enumerable:hd.enumerable,get:function(){return hd.get.call(this)},set:function(u){block('href',u)}});lp.assign=function(u){block('assign',u)};lp.replace=function(u){block('replace',u)};lp.reload=function(){block('reload')};var wl=Object.getOwnPropertyDescriptor(Window.prototype,'location');if(wl&&wl.set)Object.defineProperty(Window.prototype,'location',{configurable:1,enumerable:wl.enumerable,get:wl.get,set:function(u){block('window.location',u)}});var dl=Object.getOwnPropertyDescriptor(Document.prototype,'location');if(dl&&dl.set)Object.defineProperty(Document.prototype,'location',{configurable:1,enumerable:dl.enumerable,get:dl.get,set:function(u){block('document.location',u)}});var ps=history.pushState,rs=history.replaceState;history.pushState=function(s,t,u){if(u!=null&&u!=='')return block('pushState',u);return ps.apply(this,arguments)};history.replaceState=function(s,t,u){if(u!=null&&u!=='' )return block('replaceState',u);return rs.apply(this,arguments)};if(window.navigation&&navigation.addEventListener)navigation.addEventListener('navigate',function(e){e.preventDefault();block('navigation',e.destination&&e.destination.url)});var oo=window.open;window.open=function(u){if(u!=null&&u!=='')return block('open',u),null;return oo.apply(this,arguments)};function stripMeta(){document.querySelectorAll('meta[http-equiv=\"refresh\" i]').forEach(function(m){block('meta refresh',m.content);m.remove()});new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType===1&&n.matches&&n.matches('meta[http-equiv=\"refresh\" i]')){block('meta refresh',n.content);n.remove()}})})}).observe(document.documentElement,{subtree:1,childList:1})}if(document.documentElement)stripMeta();else document.addEventListener('DOMContentLoaded',stripMeta,{once:1});document.addEventListener('submit',function(e){var f=e.target;if(f&&f.action){block('form submit',f.action);e.preventDefault();e.stopImmediatePropagation()}},true);console.log('Redirects disabled')})();"
       },
       {

@@ -30,9 +30,14 @@ const addScriptBtn = document.getElementById("add-script-btn");
 const addScriptSection = document.querySelector(".add-script");
 const addScriptToggle = document.getElementById("add-script-toggle");
 const addScriptPanel = document.getElementById("add-script-panel");
+const searchOverlayEl = document.getElementById("search-overlay");
+const searchInputEl = document.getElementById("search-input");
 
 let linkSections = null;
 let activeSectionName = null;
+let searchQuery = "";
+let searchOverlayPageTabId = null;
+let searchUsesPageOverlay = true;
 
 function parseLinkSections(raw) {
   return Object.entries(raw).map(([name, section]) => ({
@@ -735,6 +740,12 @@ function createLinkRow(node, options = {}) {
   if (options.showRemove) {
     row.classList.add("has-remove");
   }
+  if (options.searchMatch) {
+    row.classList.add("search-match");
+  }
+  if (options.searchExactMatch) {
+    row.classList.add("search-exact-match");
+  }
   row.dataset.linkKey = linkKey;
 
   const actionCell = document.createElement("div");
@@ -880,11 +891,376 @@ function renderNodes(
   }
 }
 
+function normalizeSearchQuery(raw) {
+  return raw.trim().toLowerCase();
+}
+
+function isExactSearchMatch(label, query) {
+  return Boolean(query) && label.toLowerCase() === query;
+}
+
+function getSearchTags(node) {
+  if (!Array.isArray(node.searchTags)) {
+    return [];
+  }
+
+  return node.searchTags
+    .filter((tag) => typeof tag === "string")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function nodeHasExactSearchMatch(node, query) {
+  if (!query) {
+    return false;
+  }
+
+  if (isExactSearchMatch(displayLabel(node), query)) {
+    return true;
+  }
+
+  return getSearchTags(node).some((tag) => isExactSearchMatch(tag, query));
+}
+
+function nodeSearchScore(node, query) {
+  if (!query) {
+    return 1;
+  }
+
+  let score = searchMatchScore(displayLabel(node), query);
+  for (const tag of getSearchTags(node)) {
+    score = Math.max(score, searchMatchScore(tag, query));
+  }
+  return score;
+}
+
+function searchMatchScore(label, query) {
+  if (!query) {
+    return 1;
+  }
+
+  const normalizedLabel = label.toLowerCase();
+  if (normalizedLabel === query) {
+    return 1000;
+  }
+  if (normalizedLabel.startsWith(query)) {
+    return 500 + Math.max(0, 100 - query.length);
+  }
+
+  const index = normalizedLabel.indexOf(query);
+  if (index === -1) {
+    return 0;
+  }
+
+  return 200 - index;
+}
+
+function flattenLinkNodes(nodes, inheritedHostPattern = null, sectionName = null) {
+  const results = [];
+
+  for (const node of nodes) {
+    const hostPattern = resolveHostPattern(node, inheritedHostPattern);
+    if (node.children) {
+      results.push(
+        ...flattenLinkNodes(node.children, hostPattern, sectionName)
+      );
+      continue;
+    }
+
+    results.push({ ...node, hostPattern, sectionName });
+  }
+
+  return results;
+}
+
+function sectionHasExactMatch(section, query) {
+  if (!query) {
+    return false;
+  }
+
+  return flattenLinkNodes(
+    section.children,
+    section.hostPattern,
+    section.name
+  ).some((node) => nodeHasExactSearchMatch(node, query));
+}
+
+function findSectionWithExactMatch(query) {
+  if (!query || !linkSections) {
+    return null;
+  }
+
+  return (
+    linkSections.find((section) => sectionHasExactMatch(section, query))?.name ??
+    null
+  );
+}
+
+function currentViewHasExactMatch(query, customScripts) {
+  const section = getActiveSection();
+  if (section && sectionHasExactMatch(section, query)) {
+    return true;
+  }
+
+  return customScripts.some((script) => isExactSearchMatch(script.name, query));
+}
+
+async function maybeSwitchSectionForExactMatch(customScripts) {
+  const query = normalizeSearchQuery(searchQuery);
+  if (!query || currentViewHasExactMatch(query, customScripts)) {
+    return false;
+  }
+
+  const sectionName = findSectionWithExactMatch(query);
+  if (!sectionName || sectionName === activeSectionName) {
+    return false;
+  }
+
+  activeSectionName = sectionName;
+  await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
+  return true;
+}
+
+function sortNodesBySearchScore(nodes, getScore) {
+  const query = normalizeSearchQuery(searchQuery);
+  if (!query) {
+    return nodes;
+  }
+
+  return [...nodes]
+    .map((node) => ({
+      node,
+      score: getScore(node, query),
+    }))
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        displayLabel(a.node).localeCompare(displayLabel(b.node))
+    )
+    .map((entry) => entry.node);
+}
+
+function getSearchRowHighlight(node, query) {
+  if (!query || nodeSearchScore(node, query) <= 0) {
+    return {};
+  }
+
+  return {
+    searchMatch: true,
+    searchExactMatch: nodeHasExactSearchMatch(node, query),
+  };
+}
+
+function getScriptSearchRowHighlight(script, query) {
+  if (!query || searchMatchScore(script.name, query) <= 0) {
+    return {};
+  }
+
+  return {
+    searchMatch: true,
+    searchExactMatch: isExactSearchMatch(script.name, query),
+  };
+}
+
+function focusSearchInput() {
+  if (!searchInputEl) {
+    return;
+  }
+
+  searchInputEl.focus();
+  const length = searchInputEl.value.length;
+  searchInputEl.setSelectionRange(length, length);
+}
+
+function setSearchOverlayFallback(usesFallback) {
+  if (!searchOverlayEl) {
+    return;
+  }
+
+  searchOverlayEl.classList.toggle("search-overlay-fallback", usesFallback);
+}
+
+async function syncPageSearchOverlay(visible, text) {
+  if (!searchUsesPageOverlay) {
+    return;
+  }
+
+  const tab = await getActiveTab();
+  const injectable =
+    tab?.id != null && typeof tab.url === "string" && /^https?:\/\//i.test(tab.url);
+
+  if (!injectable) {
+    searchUsesPageOverlay = false;
+    setSearchOverlayFallback(true);
+    return;
+  }
+
+  try {
+    if (searchOverlayPageTabId !== tab.id) {
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["lib/search-overlay-page.js"],
+      });
+      searchOverlayPageTabId = tab.id;
+    }
+
+    await browser.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (show, queryText) => {
+        globalThis.__snLinksSyncSearchOverlay?.(show, queryText);
+      },
+      args: [visible, text],
+    });
+    setSearchOverlayFallback(false);
+  } catch {
+    searchUsesPageOverlay = false;
+    setSearchOverlayFallback(true);
+  }
+}
+
+async function setSearchOverlayVisible(visible) {
+  if (!searchOverlayEl || !searchInputEl) {
+    return;
+  }
+
+  searchOverlayEl.classList.toggle("hidden", !visible);
+  searchOverlayEl.setAttribute("aria-hidden", visible ? "false" : "true");
+
+  if (visible) {
+    focusSearchInput();
+    await syncPageSearchOverlay(true, searchInputEl.value);
+    return;
+  }
+
+  await syncPageSearchOverlay(false, "");
+  searchOverlayPageTabId = null;
+}
+
+async function closeSearch() {
+  searchQuery = "";
+  if (searchInputEl) {
+    searchInputEl.value = "";
+  }
+  await setSearchOverlayVisible(false);
+  renderAll();
+}
+
+async function openSearch(initialValue = "") {
+  searchQuery = initialValue;
+  if (searchInputEl) {
+    searchInputEl.value = initialValue;
+  }
+  await setSearchOverlayVisible(true);
+  renderAll();
+}
+
+function isEditableElement(element) {
+  if (!element) {
+    return false;
+  }
+
+  const tag = element.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+    return true;
+  }
+
+  return element.isContentEditable;
+}
+
+function shouldIgnoreSearchKey(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) {
+    return true;
+  }
+
+  if (event.key === "Tab" || event.key === "Enter") {
+    return true;
+  }
+
+  return false;
+}
+
+function initSearch() {
+  if (!searchOverlayEl || !searchInputEl) {
+    return;
+  }
+
+  searchInputEl.addEventListener("input", async () => {
+    searchQuery = searchInputEl.value;
+    if (!searchQuery) {
+      await closeSearch();
+      return;
+    }
+    await syncPageSearchOverlay(true, searchQuery);
+    renderAll();
+  });
+
+  searchInputEl.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void closeSearch();
+    }
+  });
+
+  window.addEventListener("pagehide", () => {
+    void syncPageSearchOverlay(false, "");
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (shouldIgnoreSearchKey(event)) {
+      if (event.key === "Escape" && !searchOverlayEl.classList.contains("hidden")) {
+        event.preventDefault();
+        void closeSearch();
+      }
+      return;
+    }
+
+    if (
+      !searchOverlayEl.classList.contains("hidden") &&
+      document.activeElement === searchInputEl
+    ) {
+      return;
+    }
+
+    if (isEditableElement(document.activeElement)) {
+      return;
+    }
+
+    if (event.key === "Escape") {
+      return;
+    }
+
+    if (event.key === "Backspace") {
+      if (searchOverlayEl.classList.contains("hidden")) {
+        return;
+      }
+      event.preventDefault();
+      void (async () => {
+        const nextValue = searchQuery.slice(0, -1);
+        if (!nextValue) {
+          await closeSearch();
+          return;
+        }
+        await openSearch(nextValue);
+      })();
+      return;
+    }
+
+    if (event.key.length !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    void openSearch(searchQuery + event.key);
+  });
+}
+
 function renderSectionTabs() {
   if (!sectionTabsEl || !linkSections) {
     return;
   }
 
+  const query = normalizeSearchQuery(searchQuery);
   sectionTabsEl.replaceChildren();
   for (const section of linkSections) {
     const tab = document.createElement("button");
@@ -897,6 +1273,10 @@ function renderSectionTabs() {
       section.name === activeSectionName ? "true" : "false"
     );
     tab.classList.toggle("active", section.name === activeSectionName);
+    tab.classList.toggle(
+      "search-exact-match",
+      sectionHasExactMatch(section, query)
+    );
     tab.addEventListener("click", async () => {
       activeSectionName = section.name;
       await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
@@ -906,8 +1286,17 @@ function renderSectionTabs() {
   }
 }
 
-function renderCustomScripts(scripts, container, savedParamValues, injectOnLoad) {
-  if (scripts.length === 0) {
+function renderCustomScripts(
+  scripts,
+  container,
+  savedParamValues,
+  injectOnLoad,
+  query = ""
+) {
+  const sortedScripts = sortNodesBySearchScore(scripts, (script, activeQuery) =>
+    searchMatchScore(script.name, activeQuery)
+  );
+  if (sortedScripts.length === 0) {
     return;
   }
 
@@ -919,7 +1308,7 @@ function renderCustomScripts(scripts, container, savedParamValues, injectOnLoad)
   title.textContent = "Custom scripts";
   folder.appendChild(title);
 
-  for (const script of scripts) {
+  for (const script of sortedScripts) {
     const node = {
       id: script.id,
       name: script.name,
@@ -934,6 +1323,7 @@ function renderCustomScripts(scripts, container, savedParamValues, injectOnLoad)
         savedParamValues,
         injectOnLoad,
         showRemove: true,
+        ...getScriptSearchRowHighlight(script, query),
         onDelete: async (event) => {
           event.stopPropagation();
           const nextScripts = scripts.filter((item) => item.id !== script.id);
@@ -955,6 +1345,7 @@ async function renderAll() {
   const savedParamValues = await loadParamValues();
   const injectOnLoad = await loadInjectOnLoad();
   const customScripts = await loadCustomScripts();
+  await maybeSwitchSectionForExactMatch(customScripts);
   const showRemove = customScripts.length > 0;
   const section = getActiveSection();
   const showParams =
@@ -970,9 +1361,13 @@ async function renderAll() {
     customScripts.some((script) =>
       nodeHasOnLoad({ type: "scriptlet", code: script.code })
     ) || (section ? treeHasOnLoad(section.children) : false);
+  const query = normalizeSearchQuery(searchQuery);
 
   const list = document.createElement("div");
   list.className = "link-list";
+  if (query) {
+    list.classList.add("is-searching");
+  }
   if (showRemove) {
     list.classList.add("has-remove");
   }
@@ -985,17 +1380,42 @@ async function renderAll() {
   list.appendChild(createLinkListHeader({ showRemove, showParams, showOnLoad }));
 
   if (section) {
-    renderNodes(
-      section.children,
-      list,
-      savedParamValues,
-      section.hostPattern,
-      section.name,
-      injectOnLoad,
-      { showRemove }
-    );
+    if (query) {
+      const sortedNodes = sortNodesBySearchScore(
+        flattenLinkNodes(section.children, section.hostPattern, section.name),
+        (node, activeQuery) => nodeSearchScore(node, activeQuery)
+      );
+      for (const node of sortedNodes) {
+        list.appendChild(
+          createLinkRow(node, {
+            savedParamValues,
+            injectOnLoad,
+            showRemove,
+            ...getSearchRowHighlight(node, query),
+          })
+        );
+      }
+    } else {
+      renderNodes(
+        section.children,
+        list,
+        savedParamValues,
+        section.hostPattern,
+        section.name,
+        injectOnLoad,
+        { showRemove }
+      );
+    }
   }
-  renderCustomScripts(customScripts, list, savedParamValues, injectOnLoad);
+
+  renderCustomScripts(
+    customScripts,
+    list,
+    savedParamValues,
+    injectOnLoad,
+    query
+  );
+
   linksEl.appendChild(list);
   renderSectionTabs();
 }
@@ -1411,6 +1831,7 @@ async function init() {
   await initAddScriptCollapse();
   await initExtensionSettingsControls();
   await initCspDisableControl();
+  initSearch();
   await renderAll();
 }
 
