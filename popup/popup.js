@@ -247,7 +247,6 @@ async function addCustomScript() {
 }
 
 let popupResizeObserverPaused = false;
-let popupResizeFrame = null;
 let pendingPopupSize = null;
 let lastAppliedPopupSize = null;
 
@@ -280,19 +279,15 @@ function applyPopupSize(width, height) {
   return size;
 }
 
-function schedulePopupSize(width, height) {
-  pendingPopupSize = { width, height };
-  if (popupResizeFrame !== null) {
-    return;
-  }
-  popupResizeFrame = requestAnimationFrame(() => {
-    popupResizeFrame = null;
-    if (!pendingPopupSize) {
-      return;
-    }
-    applyPopupSize(pendingPopupSize.width, pendingPopupSize.height);
-    pendingPopupSize = null;
-  });
+function updateResizePreview(width, height) {
+  const size = clampPopupSize(width, height);
+  pendingPopupSize = size;
+  document.body.dataset.resizePreview = `${size.width} × ${size.height}`;
+}
+
+function clearResizePreview() {
+  delete document.body.dataset.resizePreview;
+  pendingPopupSize = null;
 }
 
 async function savePopupSize() {
@@ -324,8 +319,10 @@ function initResizeHandle() {
     const startWidth = document.body.offsetWidth;
     const startHeight = document.body.offsetHeight;
 
+    updateResizePreview(startWidth, startHeight);
+
     function onMouseMove(moveEvent) {
-      schedulePopupSize(
+      updateResizePreview(
         startWidth - (moveEvent.clientX - startX),
         startHeight + (moveEvent.clientY - startY)
       );
@@ -337,13 +334,10 @@ function initResizeHandle() {
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
 
-      if (popupResizeFrame !== null) {
-        cancelAnimationFrame(popupResizeFrame);
-        popupResizeFrame = null;
-      }
-      if (pendingPopupSize) {
-        applyPopupSize(pendingPopupSize.width, pendingPopupSize.height);
-        pendingPopupSize = null;
+      const size = pendingPopupSize;
+      clearResizePreview();
+      if (size) {
+        applyPopupSize(size.width, size.height);
       }
 
       savePopupSize();

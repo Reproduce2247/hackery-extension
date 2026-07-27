@@ -91,18 +91,34 @@ body.is-resizing .resize-handle {
 
 body.is-resizing {
   user-select: none;
-  overflow: hidden;
-  contain: layout size style;
+  cursor: nesw-resize;
 }
 
-/* Solid curtain hides link-grid reflow while Firefox resizes the popup chrome. */
 body.is-resizing::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 1;
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 88%, var(--muted));
   pointer-events: none;
+}
+
+body.is-resizing::after {
+  content: attr(data-resize-preview);
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 12%, transparent);
 }
 
 body.is-resizing header {

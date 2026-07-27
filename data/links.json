@@ -14,6 +14,12 @@
         }
       },
       {
+        "name": "Clear mandatory fields",
+        "type": "scriptlet",
+        "searchTags": ["mandatory", "required", "form", "g_form"],
+        "code": "var gFormRef = globalThis.g_form ?? globalThis.gsft_main?.g_form ?? globalThis.GlideForm ?? globalThis.gsft_main?.GlideForm; if (!gFormRef.getTableName || !gFormRef.getTableName()) { var formInput = document.querySelector('input[name=\"sysparm_form\"]'); var formName = formInput && formInput.value; if (!formName) { var formEl = document.querySelector('form[id$=\".form\"]'); formName = formEl && formEl.id.replace(/\\.form$/, ''); } if (formName) gFormRef = new GlideForm(formName); } if (!gFormRef.getTableName || !gFormRef.getTableName()) { console.warn('No g_form found'); } else { var n = 0; gFormRef.elements.forEach(function(element) { gFormRef.setMandatory(element.fieldName, false); n++; }); console.log('Cleared mandatory on ' + n + ' field(s)'); }"
+      },
+      {
         "name": "Show navigator",
         "type": "derived-url",
         "searchTags": ["nav", "navigator"],
@@ -38,6 +44,13 @@
         "searchTags": ["cancel", "txn"],
         "nav": "foreground",
         "path": "/cancel_my_transaction.do"
+      },
+      {
+        "name": "Source control history/logs",
+        "type": "derived-url",
+        "searchTags": ["git", "vcs", "repo"],
+        "nav": "foreground",
+        "path": "/sys_repo_config_list.do"
       },
       {
         "name": "App Log | ServiceNow",
