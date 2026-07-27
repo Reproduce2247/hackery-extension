@@ -57,17 +57,21 @@ export function validateParamValues(parameterDefs, values) {
 }
 
 async function runScriptlet(tabId, code) {
-  const response = await browser.runtime.sendMessage({
-    type: "RUN_SCRIPTLET",
-    tabId,
-    code,
-  });
-  if (!response?.ok) {
-    throw new Error(response?.error || "Script injection failed.");
+  if (!tabId) {
+    throw new Error("No target tab for script injection.");
   }
+  await browser.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    injectImmediately: true,
+    func: (source) => {
+      new Function(source)();
+    },
+    args: [code],
+  });
 }
 
-function resolveNavigationUrl(resolved, tab, origin, hostPattern, paramValues) {
+export function resolveNavigationUrl(resolved, tab, origin, hostPattern, paramValues) {
   if (resolved.type === "derived-url") {
     return resolveDerivedLink(resolved, tab, origin, hostPattern, paramValues);
   }
@@ -124,7 +128,7 @@ export function createActivateLink({ showMessage, hideMessage }) {
           await browser.tabs.update(tab.id, { active: true });
         }
         await runScriptlet(tab.id, resolved.code);
-        window.close();
+        showMessage("Script ran — check the page console.");
         return;
       }
 
@@ -140,6 +144,9 @@ export function createActivateLink({ showMessage, hideMessage }) {
 
       if (url === null) {
         if (resolved.type === "derived-url") {
+          showMessage(
+            "No URL derived from the current tab (pattern may not match, or already on the target page)."
+          );
           return;
         }
         window.close();

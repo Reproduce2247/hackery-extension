@@ -10,6 +10,7 @@
   --folder: #374151;
   --warn-bg: #fef3c7;
   --warn-text: #92400e;
+  --sticky-header-height: 0px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -128,7 +129,7 @@ body.is-resizing header {
 header {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   padding: 12px 14px 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -236,6 +237,9 @@ h1 {
 }
 
 .section-tabs {
+  position: sticky;
+  top: var(--sticky-header-height);
+  z-index: 2;
   display: flex;
   gap: 4px;
   padding: 8px 10px 0;
@@ -529,11 +533,8 @@ h1 {
 }
 
 .link-list-header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 2px 0 4px 14px;
-  background: var(--bg);
+  padding: 4px 0 6px 14px;
+  border-bottom: 1px solid var(--border);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -695,6 +696,37 @@ h1 {
 .param-combobox-toggle:focus-visible {
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  outline: none;
+}
+
+.link-context-menu {
+  position: fixed;
+  z-index: 110;
+  min-width: 120px;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.link-context-menu-item {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-context-menu-item:hover,
+.link-context-menu-item:focus-visible {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   outline: none;
 }
 

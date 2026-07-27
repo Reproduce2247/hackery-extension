@@ -1,10 +1,13 @@
+const { LAST_ORIGINS_KEY } = globalThis.SnLinksStorageKeys;
 const { matchesHostPattern } = globalThis.SnLinksLinkModel;
-
-const LAST_ORIGINS_KEY = "lastOrigins";
 const TAB_LOAD_TIMEOUT_MS = 30000;
 
 export async function getActiveTab() {
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  let [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (tab) {
+    return tab;
+  }
+  [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
   return tab;
 }
 

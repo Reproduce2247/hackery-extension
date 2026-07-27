@@ -35,20 +35,16 @@ const setHeadersEl = document.getElementById("set-headers");
 const ruleRequestScriptEl = document.getElementById("rule-request-script");
 const ruleResponseScriptEl = document.getElementById("rule-response-script");
 const deleteRuleBtn = document.getElementById("delete-rule-btn");
+const ruleTemplateSelectEl = document.getElementById("rule-template-select");
 
 let rulesState = defaultNetworkRulesState();
 let selectedRuleId = null;
 let highlightedRuleId = null;
 let extensionSettings = defaultExtensionSettings();
+let ruleTemplates = [];
+let lastPersistedRulesSnapshot = "";
 
-function showMessage(text) {
-  messageEl.textContent = text;
-  messageEl.classList.remove("hidden");
-}
-
-function hideMessage() {
-  messageEl.classList.add("hidden");
-}
+const { showMessage, hideMessage } = createUiMessage(messageEl);
 
 function summarizeRule(rule) {
   const filters = [];
@@ -303,6 +299,21 @@ function loadRuleIntoForm(rule) {
   updateActionSections();
 }
 
+function createRuleDeleteButton(rule) {
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "rule-item-delete";
+  deleteBtn.title = "Delete rule";
+  deleteBtn.setAttribute("aria-label", `Delete ${rule.name || "rule"}`);
+  deleteBtn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 1h4l1 1h3v2H2V2h3l1-1zM3 5h10l-1 9H4L3 5zm3 2v5h1V7H6zm3 0v5h1V7H9z"/></svg>';
+  deleteBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    deleteRuleById(rule.id);
+  });
+  return deleteBtn;
+}
+
 function renderRulesList() {
   rulesListEl.replaceChildren();
   ruleCountEl.textContent = `${rulesState.rules.length} rule${
@@ -324,7 +335,17 @@ function renderRulesList() {
     (a, b) => (a.priority ?? 100) - (b.priority ?? 100)
   );
 
+  if (selectedRuleId && !sorted.some((rule) => rule.id === selectedRuleId)) {
+    selectedRuleId = sorted[0]?.id || null;
+  }
+
   for (const rule of sorted) {
+    const row = document.createElement("div");
+    row.className = "rule-item-row";
+    if (rule.id === highlightedRuleId) {
+      row.classList.add("matched");
+    }
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "rule-item";
@@ -333,9 +354,6 @@ function renderRulesList() {
     }
     if (rule.id === selectedRuleId) {
       button.classList.add("active");
-    }
-    if (rule.id === highlightedRuleId) {
-      button.classList.add("matched");
     }
 
     const title = document.createElement("span");
@@ -354,7 +372,9 @@ function renderRulesList() {
       loadRuleIntoForm(rule);
     });
 
-    rulesListEl.appendChild(button);
+    row.appendChild(button);
+    row.appendChild(createRuleDeleteButton(rule));
+    rulesListEl.appendChild(row);
   }
 
   if (!selectedRuleId && sorted.length) {
@@ -390,11 +410,12 @@ function renderLog(entries) {
       line.classList.add("log-entry-selected");
     }
     const time = new Date(entry.ts || Date.now()).toLocaleTimeString();
+    const detail = entry.detail ? ` · ${entry.detail}` : "";
     line.textContent = `[${time}] ${entry.ruleName || entry.ruleId || "rule"} · ${
       entry.outcome
     } · ${entry.method || "?"} ${entry.url || ""}${
       entry.resourceType ? ` · ${entry.resourceType}` : ""
-    }${entry.via ? ` · ${entry.via}` : ""}`;
+    }${entry.via ? ` · ${entry.via}` : ""}${detail}`;
     rulesLogEl.appendChild(line);
   }
 }
@@ -406,6 +427,62 @@ async function persistRulesState() {
   });
   if (!response?.ok) {
     throw new Error(response?.error || "Save failed.");
+  }
+  lastPersistedRulesSnapshot = JSON.stringify(rulesState);
+}
+
+async function deleteRuleById(ruleId) {
+  hideMessage();
+  const existing = rulesState.rules.find((rule) => rule.id === ruleId);
+  if (!existing) {
+    return;
+  }
+
+  rulesState.rules = rulesState.rules.filter((rule) => rule.id !== ruleId);
+  if (selectedRuleId === ruleId) {
+    const sorted = [...rulesState.rules].sort(
+      (a, b) => (a.priority ?? 100) - (b.priority ?? 100)
+    );
+    selectedRuleId = sorted[0]?.id || null;
+  }
+
+  renderRulesList();
+  loadRuleIntoForm(getSelectedRule());
+
+  try {
+    await persistRulesState();
+    showMessage(`Deleted "${existing.name}".`);
+  } catch (error) {
+    showMessage(error.message || String(error));
+  }
+}
+
+async function insertRuleFromTemplate(templateId) {
+  if (!templateId) {
+    return;
+  }
+
+  const template = ruleTemplates.find((item) => item.id === templateId);
+  if (!template) {
+    showMessage("Unknown template.");
+    return;
+  }
+
+  hideMessage();
+  try {
+    const rule = instantiateNetworkRuleTemplate(template);
+    rulesState.rules.push(rule);
+    selectedRuleId = rule.id;
+    renderRulesList();
+    loadRuleIntoForm(rule);
+    await persistRulesState();
+    showMessage(`Added "${rule.name}" from template.`);
+  } catch (error) {
+    showMessage(error.message || String(error));
+  } finally {
+    if (ruleTemplateSelectEl) {
+      ruleTemplateSelectEl.value = "";
+    }
   }
 }
 
@@ -471,6 +548,7 @@ async function loadState() {
   const response = await browser.runtime.sendMessage({ type: "GET_NETWORK_RULES" });
   if (response?.ok) {
     rulesState = response.state || defaultNetworkRulesState();
+    lastPersistedRulesSnapshot = JSON.stringify(rulesState);
   }
   rulesEnabledEl.checked = rulesState.enabled !== false;
   renderRulesList();
@@ -481,6 +559,36 @@ async function loadLog() {
   renderLog(stored[NETWORK_RULES_LOG_KEY] || []);
 }
 
+function renderRuleTemplateSelect() {
+  if (!ruleTemplateSelectEl) {
+    return;
+  }
+
+  ruleTemplateSelectEl.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Insert from template…";
+  ruleTemplateSelectEl.appendChild(placeholder);
+
+  for (const template of ruleTemplates) {
+    const option = document.createElement("option");
+    option.value = template.id;
+    option.textContent = template.name;
+    option.title = template.description || "";
+    ruleTemplateSelectEl.appendChild(option);
+  }
+}
+
+async function loadRuleTemplates() {
+  try {
+    ruleTemplates = await loadNetworkRuleTemplates();
+  } catch (error) {
+    ruleTemplates = [];
+    showMessage(error.message || String(error));
+  }
+  renderRuleTemplateSelect();
+}
+
 document.getElementById("add-rule-btn").addEventListener("click", () => {
   hideMessage();
   const rule = createEmptyRule();
@@ -489,6 +597,12 @@ document.getElementById("add-rule-btn").addEventListener("click", () => {
   renderRulesList();
   loadRuleIntoForm(rule);
 });
+
+if (ruleTemplateSelectEl) {
+  ruleTemplateSelectEl.addEventListener("change", () => {
+    insertRuleFromTemplate(ruleTemplateSelectEl.value);
+  });
+}
 
 document.getElementById("reinject-btn").addEventListener("click", async () => {
   hideMessage();
@@ -555,18 +669,12 @@ ruleFormEl.addEventListener("submit", async (event) => {
   }
 });
 
-deleteRuleBtn.addEventListener("click", async () => {
-  hideMessage();
+deleteRuleBtn.addEventListener("click", () => {
   const existing = getSelectedRule();
   if (!existing) {
     return;
   }
-  rulesState.rules = rulesState.rules.filter((rule) => rule.id !== existing.id);
-  selectedRuleId = rulesState.rules[0]?.id || null;
-  await persistRulesState();
-  renderRulesList();
-  loadRuleIntoForm(getSelectedRule());
-  showMessage("Rule deleted.");
+  deleteRuleById(existing.id);
 });
 
 document.getElementById("clear-log-btn").addEventListener("click", async () => {
@@ -601,12 +709,26 @@ browser.storage.onChanged.addListener((changes, area) => {
     renderLog(changes[NETWORK_RULES_LOG_KEY].newValue || []);
   }
   if (area === "local" && changes[NETWORK_RULES_KEY]) {
-    rulesState = changes[NETWORK_RULES_KEY].newValue || defaultNetworkRulesState();
+    const incoming = changes[NETWORK_RULES_KEY].newValue;
+    if (!incoming) {
+      return;
+    }
+    const incomingSnapshot = JSON.stringify(incoming);
+    if (
+      incomingSnapshot === lastPersistedRulesSnapshot ||
+      incomingSnapshot === JSON.stringify(rulesState)
+    ) {
+      return;
+    }
+    rulesState = incoming;
+    lastPersistedRulesSnapshot = incomingSnapshot;
     rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
+    loadRuleIntoForm(getSelectedRule());
   }
 });
 
 loadExtensionSettingsUi();
+loadRuleTemplates();
 loadState();
 loadLog();

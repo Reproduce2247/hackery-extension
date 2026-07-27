@@ -1,8 +1,10 @@
 import { getActiveTab } from "./tab-target.js";
 import { createActivateLink, loadParamValues } from "./activate-link.js";
+import { createCopyLink } from "./copy-link.js";
 import { createSearchController, searchMatchScore } from "./search.js";
 import {
   handleDocumentClickForCombobox,
+  closeOpenContextMenu,
   createLinkUi,
   loadCustomScripts,
   loadInjectOnLoad,
@@ -14,12 +16,14 @@ if (!globalThis.SnLinksLinkModel) {
   throw new Error("sn-links: lib/link-model.js must load before popup.js");
 }
 
+const {
+  SECTION_TAB_KEY,
+  ADD_SCRIPT_EXPANDED_KEY,
+  POPUP_SIZE_KEY,
+} = globalThis.SnLinksStorageKeys;
+
 const { parseLinkSections, normalizeScriptInput, defaultScriptName, flattenLinkNodes } =
   globalThis.SnLinksLinkModel;
-
-const SECTION_TAB_KEY = "activeSectionTab";
-const ADD_SCRIPT_EXPANDED_KEY = "addScriptExpanded";
-const POPUP_SIZE_KEY = "popupSize";
 const POPUP_MIN_WIDTH = 420;
 const POPUP_MIN_HEIGHT = 400;
 const POPUP_MAX_WIDTH = 800;
@@ -47,17 +51,22 @@ const searchInputEl = document.getElementById("search-input");
 let linkSections = null;
 let activeSectionName = null;
 
-function showMessage(text) {
-  messageEl.textContent = text;
-  messageEl.classList.remove("hidden");
+function updateStickyOffsets() {
+  const header = document.querySelector("header");
+  const root = document.documentElement;
+  root.style.setProperty(
+    "--sticky-header-height",
+    `${header?.offsetHeight ?? 0}px`
+  );
 }
 
-function hideMessage() {
-  messageEl.classList.add("hidden");
-}
+const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl, {
+  onChange: updateStickyOffsets,
+});
 
 const activateLink = createActivateLink({ showMessage, hideMessage });
-const linkUi = createLinkUi({ activateLink, setInjectOnLoad });
+const copyLink = createCopyLink({ showMessage, hideMessage });
+const linkUi = createLinkUi({ activateLink, copyLink, setInjectOnLoad });
 
 function getLinkSections() {
   return linkSections;
@@ -203,6 +212,7 @@ async function renderAll() {
 
     linksEl.appendChild(list);
     renderSectionTabs();
+    requestAnimationFrame(updateStickyOffsets);
   } catch (error) {
     showMessage(error.message || String(error));
   }
@@ -362,6 +372,7 @@ async function initPopupSize() {
 
   let saveTimer = null;
   new ResizeObserver(() => {
+    updateStickyOffsets();
     if (popupResizeObserverPaused) {
       return;
     }
@@ -520,6 +531,7 @@ async function init() {
   } else {
     instanceStatusEl.textContent = "No active tab";
   }
+  updateStickyOffsets();
 
   addScriptBtn.addEventListener("click", () => {
     addCustomScript();
@@ -533,6 +545,11 @@ async function init() {
   }
 
   document.addEventListener("click", handleDocumentClickForCombobox);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeOpenContextMenu();
+    }
+  });
 
   scriptCodeInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {

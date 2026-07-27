@@ -22,6 +22,15 @@ const {
 } = globalThis.SnLinksLinkModel;
 
 let openCombobox = null;
+let openContextMenu = null;
+
+export function closeOpenContextMenu() {
+  if (!openContextMenu) {
+    return;
+  }
+  openContextMenu.remove();
+  openContextMenu = null;
+}
 
 export function closeOpenCombobox() {
   if (!openCombobox) {
@@ -38,6 +47,53 @@ export function handleDocumentClickForCombobox(event) {
   if (openCombobox && !openCombobox.root.contains(event.target)) {
     closeOpenCombobox();
   }
+  if (openContextMenu && !openContextMenu.contains(event.target)) {
+    closeOpenContextMenu();
+  }
+}
+
+function showLinkContextMenu(event, node, row, copyLink) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeOpenCombobox();
+  closeOpenContextMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "link-context-menu";
+  menu.setAttribute("role", "menu");
+
+  const copyItem = document.createElement("button");
+  copyItem.type = "button";
+  copyItem.className = "link-context-menu-item";
+  copyItem.setAttribute("role", "menuitem");
+  copyItem.textContent = "Copy";
+  copyItem.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  copyItem.addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    closeOpenContextMenu();
+    copyLink(node, row);
+  });
+
+  menu.appendChild(copyItem);
+  document.body.appendChild(menu);
+
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(
+    8,
+    Math.min(event.clientX, window.innerWidth - menuRect.width - 8)
+  );
+  const top = Math.max(
+    8,
+    Math.min(event.clientY, window.innerHeight - menuRect.height - 8)
+  );
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+
+  openContextMenu = menu;
 }
 
 function buildParameterDef(node, paramName) {
@@ -345,7 +401,7 @@ function createLinkListHeader({
   return header;
 }
 
-export function createLinkUi({ activateLink, setInjectOnLoad }) {
+export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
   function createLinkRow(node, options = {}) {
     const parameterDefs = getUiParameterDefs(node);
     const linkKey = linkStorageKey(node);
@@ -394,6 +450,9 @@ export function createLinkUi({ activateLink, setInjectOnLoad }) {
     button.appendChild(badge);
     button.appendChild(labelWrap);
     button.addEventListener("click", () => activateLink(node, row));
+    row.addEventListener("contextmenu", (event) => {
+      showLinkContextMenu(event, node, row, copyLink);
+    });
     actionCell.appendChild(button);
 
     const paramsCell = document.createElement("div");

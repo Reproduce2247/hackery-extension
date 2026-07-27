@@ -11,6 +11,7 @@
   },
   "permissions": [
     "activeTab",
+    "clipboardWrite",
     "downloads",
     "scripting",
     "storage",
@@ -23,12 +24,15 @@
   "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": [
-      "lib/navigation-shared.js",
+      "lib/storage-keys.js",
       "lib/link-model.js",
+      "lib/network-rule-engine-core.js",
       "lib/network-rules-shared.js",
       "lib/network-hook-install.js",
       "lib/csp-disable.js",
       "lib/network-webrequest.js",
+      "lib/message-router.js",
+      "lib/background-messages.js",
       "background.js"
     ]
   },

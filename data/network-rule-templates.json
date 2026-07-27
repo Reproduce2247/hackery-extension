@@ -1,0 +1,39 @@
+{
+  "templates": [
+    {
+      "id": "decode-basic-auth",
+      "name": "Decode Basic Auth",
+      "description": "Detect Basic credentials in Authorization / Proxy-Authorization headers and user:pass@ URL userinfo. Logs decoded username and password without changing the request.",
+      "rule": {
+        "name": "Decode Basic Auth",
+        "enabled": true,
+        "priority": 50,
+        "hostPattern": "",
+        "pageHostPattern": "",
+        "pageUrlPattern": "",
+        "requestUrlPattern": "",
+        "requestContentTypePattern": "",
+        "requestBodyPattern": "",
+        "methods": [],
+        "resourceTypes": [],
+        "phases": ["request"],
+        "responseStatusMin": null,
+        "responseStatusMax": null,
+        "action": "modify",
+        "redirectUrl": "",
+        "modify": {
+          "urlReplacements": [],
+          "bodyReplacements": [],
+          "headerReplacements": [],
+          "setHeaders": [],
+          "requestScript": "function(ctx, rule, decodeBasicAuth) {\n  var creds = decodeBasicAuth(ctx);\n  if (!creds || !creds.length) return ctx;\n  ctx.logDetail = creds.map(function(c) {\n    return c.source + \": \" + c.username + \":\" + c.password;\n  }).join(\"; \");\n  return ctx;\n}",
+          "responseScript": "",
+          "serveWithoutRequest": false,
+          "mockStatus": 200,
+          "mockStatusText": "OK",
+          "mockBody": ""
+        }
+      }
+    }
+  ]
+}

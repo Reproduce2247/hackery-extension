@@ -66,6 +66,17 @@ body {
   flex-shrink: 0;
 }
 
+.template-select {
+  max-width: 220px;
+  min-width: 160px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 280px minmax(420px, 1fr);
@@ -113,12 +124,22 @@ body {
   overflow: auto;
 }
 
+.rule-item-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+
+.rule-item-row.matched {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .rule-item {
   display: block;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 10px 12px;
   border: 0;
-  border-bottom: 1px solid var(--border);
   background: transparent;
   color: inherit;
   text-align: left;
@@ -128,6 +149,27 @@ body {
 .rule-item:hover,
 .rule-item.active {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.rule-item-delete {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rule-item-delete:hover,
+.rule-item-delete:focus-visible {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  outline: none;
 }
 
 .rule-item-title {
@@ -144,10 +186,6 @@ body {
 
 .rule-item.disabled .rule-item-title {
   opacity: 0.55;
-}
-
-.rule-item.matched {
-  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .rule-form {

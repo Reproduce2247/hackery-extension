@@ -2,19 +2,10 @@ if (!globalThis.SnLinksLinkModel) {
   throw new Error("sn-links: lib/link-model.js must load before background.js");
 }
 
-const {
-  INJECT_ON_LOAD_KEY,
-  PARAM_VALUES_KEY,
-  CUSTOM_SCRIPTS_KEY,
-  extractNavigationPath,
-  getParameterDefs,
-  applyParameters,
-  resolveParamValues,
-  matchesHostPattern,
-  collectScriptlets,
-} = globalThis.SnLinksLinkModel;
+const LM = globalThis.SnLinksLinkModel;
 
 const INJECT_SCRIPT_ID = "sn-links-on-load";
+const REFRESH_DEBOUNCE_MS = 100;
 
 let linksCache = null;
 /** @type {{ hostPattern: string | null, code: string }[]} */
@@ -25,6 +16,9 @@ let networkHookVersion = "";
 let networkLogToken = "";
 let networkSharedState = {};
 let networkTabState = {};
+let injectRefreshTimer = null;
+let networkRefreshTimer = null;
+let networkNavigationHookRegistered = false;
 
 async function getLinkSections() {
   if (!linksCache) {
@@ -40,7 +34,7 @@ function codesForUrl(url) {
   }
 
   return injectEntries
-    .filter((entry) => matchesHostPattern(url, entry.hostPattern))
+    .filter((entry) => LM.matchesHostPattern(url, entry.hostPattern))
     .map((entry) => entry.code);
 }
 
@@ -107,7 +101,7 @@ async function rebuildInjectCache() {
   const scriptlets = [];
 
   for (const [name, section] of Object.entries(sections)) {
-    collectScriptlets(section.children || [], section.hostPattern ?? null, name, scriptlets);
+    LM.collectScriptlets(section.children || [], section.hostPattern ?? null, name, scriptlets);
   }
 
   for (const script of customScripts) {
@@ -127,14 +121,14 @@ async function rebuildInjectCache() {
   for (const { linkKey, node } of scriptlets) {
     if (!injectOnLoad[linkKey]) continue;
     if (node.nav) continue;
-    if (extractNavigationPath(node.code)) continue;
+    if (LM.extractNavigationPath(node.code)) continue;
 
-    const parameterDefs = getParameterDefs(node);
+    const parameterDefs = LM.getParameterDefs(node);
     const rawValues = paramValues[linkKey] || {};
-    const values = resolveParamValues(parameterDefs, rawValues);
+    const values = LM.resolveParamValues(parameterDefs, rawValues);
     injectEntries.push({
       hostPattern: node.hostPattern ?? null,
-      code: applyParameters(node.code, values, { scriptlet: true }),
+      code: LM.applyParameters(node.code, values, { scriptlet: true }),
     });
   }
 }
@@ -289,17 +283,7 @@ async function syncNetworkHookRegistration() {
       matches,
       runAt: "document_start",
       allFrames: true,
-      world: "MAIN",
-      js: [
-        {
-          code: buildMainHookBootstrap(
-            rules,
-            networkHookVersion,
-            networkLogToken,
-            getSharedStateBundleForTab(null)
-          ),
-        },
-      ],
+      js: [{ file: "inject/network-hook-bootstrap.js" }],
     },
     {
       id: NETWORK_LOG_BRIDGE_SCRIPT_ID,
@@ -370,8 +354,6 @@ async function reinjectNetworkHookAllTabs() {
   }
 }
 
-let networkNavigationHookRegistered = false;
-
 async function onNavigationCommitted(details) {
   if (details.tabId < 0) {
     return;
@@ -419,148 +401,58 @@ async function executeScriptletInTab(tabId, code, frameId) {
   });
 }
 
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "RUN_SCRIPTLET") {
-    (async () => {
-      await executeScriptletInTab(message.tabId, message.code, message.frameId);
-      sendResponse({ ok: true });
-    })().catch((error) =>
-      sendResponse({ ok: false, error: error.message || String(error) })
-    );
-    return true;
-  }
-  if (message?.type === "RUN_INJECT_CODES") {
-    const tabId = sender.tab?.id;
-    const frameId = sender.frameId;
-    if (!tabId) {
-      sendResponse({ ok: false, error: "Missing tab id." });
-      return false;
-    }
-    if (!extensionSettings.injectOnLoadEnabled) {
-      sendResponse({ ok: true });
-      return false;
-    }
-    const codes = codesForUrl(message.url || "");
-    (async () => {
-      for (const code of codes) {
-        await executeScriptletInTab(tabId, code, frameId);
-      }
-      sendResponse({ ok: true });
-    })().catch((error) =>
-      sendResponse({ ok: false, error: error.message || String(error) })
-    );
-    return true;
-  }
-  if (message?.type === "REFRESH_INJECT") {
-    refreshInjectState().then(() => sendResponse({ ok: true }));
-    return true;
-  }
-  if (message?.type === "GET_EXTENSION_SETTINGS") {
-    loadExtensionSettings().then((settings) =>
-      sendResponse({ ok: true, settings })
-    );
-    return true;
-  }
-  if (message?.type === "SET_EXTENSION_SETTINGS") {
-    const next = message.settings || {};
-    const payload = {};
-    if (typeof next.networkHooksEnabled === "boolean") {
-      payload[NETWORK_HOOKS_ENABLED_KEY] = next.networkHooksEnabled;
-    }
-    if (typeof next.injectOnLoadEnabled === "boolean") {
-      payload[INJECT_ON_LOAD_ENABLED_KEY] = next.injectOnLoadEnabled;
-    }
-    browser.storage.local
-      .set(payload)
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) =>
-        sendResponse({ ok: false, error: error.message || String(error) })
-      );
-    return true;
-  }
-  if (message?.type === "INSTALL_NETWORK_HOOK") {
-    const tabId = sender.tab?.id;
-    const frameId = sender.frameId;
-    if (!tabId) {
-      sendResponse({ ok: false, error: "Missing tab id." });
-      return false;
-    }
-    if (!pageHookRules().length) {
-      sendResponse({ ok: true });
-      return false;
-    }
-    installNetworkHookInTab(tabId, frameId)
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) =>
-        sendResponse({ ok: false, error: error.message || String(error) })
-      );
-    return true;
-  }
-  if (message?.type === "REFRESH_NETWORK_RULES") {
+function scheduleRefreshInjectState() {
+  clearTimeout(injectRefreshTimer);
+  injectRefreshTimer = setTimeout(() => {
+    refreshInjectState().catch(() => {});
+  }, REFRESH_DEBOUNCE_MS);
+}
+
+function scheduleRefreshNetworkRulesState() {
+  clearTimeout(networkRefreshTimer);
+  networkRefreshTimer = setTimeout(() => {
     refreshNetworkRulesState()
       .then(() => reinjectNetworkHookAllTabs())
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) =>
-        sendResponse({ ok: false, error: error.message || String(error) })
-      );
-    return true;
+      .catch(() => {});
+  }, REFRESH_DEBOUNCE_MS);
+}
+
+async function initExtension({ clearLinksCache = false } = {}) {
+  if (clearLinksCache) {
+    linksCache = null;
   }
-  if (message?.type === "GET_NETWORK_RULES") {
-    loadNetworkRulesState().then((state) => sendResponse({ ok: true, state }));
-    return true;
-  }
-  if (message?.type === "SAVE_NETWORK_RULES") {
-    const nextState = message.state || defaultNetworkRulesState();
-    if (!Array.isArray(nextState.rules)) {
-      nextState.rules = [];
-    }
-    browser.storage.local
-      .set({ [NETWORK_RULES_KEY]: nextState })
-      .then(() => sendResponse({ ok: true }))
-      .catch((error) =>
-        sendResponse({ ok: false, error: error.message || String(error) })
-      );
-    return true;
-  }
-  if (message?.type === "NETWORK_RULE_LOG") {
-    appendNetworkRuleLog(message.entry, sender.tab?.id)
-      .then(() => sendResponse({ ok: true }))
-      .catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-  if (message?.type === "NETWORK_SHARED_STATE") {
-    const tabId = sender.tab?.id;
-    persistSharedState(message.persistent, message.tab, tabId)
-      .then(async () => {
-        if (tabId != null) {
-          await loadNetworkTabState();
-          await installNetworkHookInTab(tabId);
-        }
-        sendResponse({ ok: true });
-      })
-      .catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-  if (message?.type === "CLEAR_NETWORK_RULE_LOG") {
-    browser.storage.session
-      .set({ [NETWORK_RULES_LOG_KEY]: [] })
-      .then(() => sendResponse({ ok: true }));
-    return true;
-  }
-  if (message?.type === "GET_CSP_DISABLED") {
-    sendResponse({
-      ok: true,
-      disabled: isCspDisabledForTab(message.tabId),
-    });
-    return false;
-  }
-  if (message?.type === "SET_CSP_DISABLED") {
-    setCspDisabledForTab(message.tabId, Boolean(message.disabled));
-    sendResponse({ ok: true });
-    return false;
-  }
-  return false;
+  initCspDisable();
+  initNetworkNavigationHook();
+  await Promise.all([refreshInjectState(), refreshNetworkRulesState()]);
+}
+
+const messageHandlers = createBackgroundMessageHandlers({
+  INJECT_ON_LOAD_KEY,
+  PARAM_VALUES_KEY,
+  CUSTOM_SCRIPTS_KEY,
+  NETWORK_RULES_KEY,
+  NETWORK_RULES_LOG_KEY,
+  NETWORK_HOOKS_ENABLED_KEY,
+  INJECT_ON_LOAD_ENABLED_KEY,
+  extensionSettings: () => extensionSettings,
+  codesForUrl,
+  executeScriptletInTab,
+  refreshInjectState,
+  loadExtensionSettings,
+  loadNetworkTabState,
+  installNetworkHookInTab,
+  refreshNetworkRulesState,
+  reinjectNetworkHookAllTabs,
+  loadNetworkRulesState,
+  appendNetworkRuleLog,
+  persistSharedState,
+  pageHookRules,
+  defaultNetworkRulesState,
+  isCspDisabledForTab,
+  setCspDisabledForTab,
 });
+
+browser.runtime.onMessage.addListener(createMessageRouter(messageHandlers));
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "local") {
@@ -570,14 +462,14 @@ browser.storage.onChanged.addListener((changes, area) => {
       changes[CUSTOM_SCRIPTS_KEY] ||
       changes[INJECT_ON_LOAD_ENABLED_KEY]
     ) {
-      refreshInjectState();
+      scheduleRefreshInjectState();
     }
     if (
       changes[NETWORK_RULES_KEY] ||
       changes[NETWORK_HOOKS_ENABLED_KEY] ||
       changes[NETWORK_SHARED_STATE_KEY]
     ) {
-      refreshNetworkRulesState().then(() => reinjectNetworkHookAllTabs());
+      scheduleRefreshNetworkRulesState();
     }
     if (changes[NETWORK_HOOKS_ENABLED_KEY] || changes[INJECT_ON_LOAD_ENABLED_KEY]) {
       loadExtensionSettings();
@@ -599,21 +491,11 @@ browser.tabs.onRemoved.addListener((tabId) => {
 });
 
 browser.runtime.onInstalled.addListener(() => {
-  linksCache = null;
-  refreshInjectState();
-  refreshNetworkRulesState();
-  initCspDisable();
-  initNetworkNavigationHook();
+  initExtension({ clearLinksCache: true });
 });
 
 browser.runtime.onStartup.addListener(() => {
-  refreshInjectState();
-  refreshNetworkRulesState();
-  initCspDisable();
-  initNetworkNavigationHook();
+  initExtension();
 });
 
-refreshInjectState();
-refreshNetworkRulesState();
-initCspDisable();
-initNetworkNavigationHook();
+initExtension();

@@ -1,0 +1,7 @@
+{
+  "name": "sn-links-extension",
+  "private": true,
+  "scripts": {
+    "build:network-hook": "node scripts/build-network-hook.js"
+  }
+}

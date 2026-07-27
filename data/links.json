@@ -283,7 +283,8 @@
         "parameter": {
           "name": "selector",
           "placeholder": "selector (blank = pick)",
-          "default": ""
+          "default": "",
+          "optional": true
         }
       },
       {
@@ -300,6 +301,41 @@
         "name": "Hook addEventListener",
         "type": "scriptlet",
         "code": "(function(){var orig=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(type,fn,opts){console.log('addEventListener',type,this,fn);return orig.call(this,type,fn,opts)};console.log('addEventListener hooked')})();"
+      },
+      {
+        "name": "Remove fixed overlays",
+        "type": "scriptlet",
+        "searchTags": ["overlay", "modal", "fixed", "z-index"],
+        "code": "(function(){if(!document.body){console.warn('No document.body');return}var minZ=Math.max(0,parseInt('$minZ',10)||1000);var vw=window.innerWidth,vh=window.innerHeight,n=0,found=[];document.querySelectorAll('*').forEach(function(el){var cs=getComputedStyle(el);if(cs.position!=='fixed'&&cs.position!=='sticky')return;var z=parseInt(cs.zIndex,10);if(isNaN(z)||z<minZ)return;var r=el.getBoundingClientRect();if(r.width<vw*0.75||r.height<vh*0.75)return;el.style.setProperty('display','none','important');found.push({tag:el.tagName,id:el.id||undefined,class:el.className||undefined,zIndex:z,w:Math.round(r.width),h:Math.round(r.height)});n++});console.log('Removed '+n+' fixed overlay(s) (minZ='+minZ+')',found);if(found.length)console.table(found)})();",
+        "parameter": {
+          "name": "minZ",
+          "placeholder": "min z-index",
+          "default": "1000"
+        }
+      },
+      {
+        "name": "Log iframe inventory",
+        "type": "scriptlet",
+        "searchTags": ["iframe", "frame", "embed"],
+        "code": "(function(){var list=Array.from(document.querySelectorAll('iframe')).map(function(f,i){var o={index:i,id:f.id||undefined,name:f.name||undefined,src:f.src||f.getAttribute('src')||'',sandbox:f.getAttribute('sandbox'),allow:f.getAttribute('allow'),referrerPolicy:f.referrerPolicy||f.getAttribute('referrerpolicy'),title:f.title||undefined};try{o.accessible=!!f.contentDocument}catch(e){o.accessible=false;o.crossOrigin='blocked'}return o});console.log('iframes ('+list.length+')',list);if(list.length)console.table(list)})();"
+      },
+      {
+        "name": "Bypass anti-debug",
+        "type": "scriptlet",
+        "searchTags": ["debugger", "devtools", "anti-debug"],
+        "code": "(function(){if(window.__SN_ANTI_DEBUG__)return;window.__SN_ANTI_DEBUG__=1;var noop=function(){};var OrigFn=Function;Function=function(){var a=Array.from(arguments);if(a.length){var b=a[a.length-1];if(typeof b==='string'&&/\\bdebugger\\b/.test(b)){a[a.length-1]=b.replace(/\\bdebugger\\s*;?/g,'');console.log('Function: stripped debugger')}}return OrigFn.apply(this,a)};Function.prototype=OrigFn.prototype;var _eval=window.eval;window.eval=function(s){if(typeof s==='string'&&/\\bdebugger\\b/.test(s)){s=s.replace(/\\bdebugger\\s*;?/g,'');console.log('eval: stripped debugger')}return _eval.call(window,s)};try{Object.defineProperty(window,'outerWidth',{get:function(){return window.innerWidth},configurable:1});Object.defineProperty(window,'outerHeight',{get:function(){return window.innerHeight},configurable:1})}catch(e1){}window.Firebug={chrome:{isInitialized:false}};['log','debug','info','warn','error'].forEach(function(m){var o=console[m];if(!o)return;var w=function(){return o.apply(console,arguments)};try{w.toString=function(){return'function '+m+'() { [native code] }'}}catch(e2){}console[m]=w});var _si=setInterval,_st=setTimeout;function stripDbg(fn){if(typeof fn!=='function')return fn;var s=fn.toString();if(/\\bdebugger\\b/.test(s)&&s.length<120){console.log('blocked debugger timer');return noop}return fn}window.setInterval=function(fn,t){return _si(stripDbg(fn),t)};window.setTimeout=function(fn,t){return _st(stripDbg(fn),t)};console.log('Anti-debug bypass installed')})();"
+      },
+      {
+        "name": "Hook crypto.subtle",
+        "type": "scriptlet",
+        "searchTags": ["crypto", "webcrypto", "subtle"],
+        "code": "(function(){if(window.__SN_CRYPTO_HOOK__)return;window.__SN_CRYPTO_HOOK__=1;if(!window.crypto||!crypto.subtle){console.warn('crypto.subtle unavailable');return}var subtle=crypto.subtle;['encrypt','decrypt','sign','verify','digest','generateKey','deriveKey','deriveBits','importKey','exportKey','wrapKey','unwrapKey'].forEach(function(m){if(typeof subtle[m]!=='function')return;var orig=subtle[m].bind(subtle);subtle[m]=function(){console.log('crypto.subtle.'+m,arguments);return orig.apply(subtle,arguments)}});console.log('crypto.subtle hooked')})();"
+      },
+      {
+        "name": "Log dispatchEvent",
+        "type": "scriptlet",
+        "searchTags": ["dispatch", "event", "synthetic"],
+        "code": "(function(){if(window.__SN_DISPATCH_HOOK__)return;window.__SN_DISPATCH_HOOK__=1;var orig=EventTarget.prototype.dispatchEvent;EventTarget.prototype.dispatchEvent=function(ev){console.log('dispatchEvent',ev&&ev.type,this,ev);return orig.call(this,ev)};console.log('dispatchEvent hooked')})();"
       }
     ]
   },

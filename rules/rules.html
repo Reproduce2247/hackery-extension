@@ -23,6 +23,9 @@
           <input id="rules-enabled" type="checkbox" checked />
           <span>Enabled</span>
         </label>
+        <select id="rule-template-select" class="template-select" title="Insert a preset rule from data/network-rule-templates.json">
+          <option value="">Insert from template…</option>
+        </select>
         <button id="add-rule-btn" type="button">Add rule</button>
         <button id="reinject-btn" type="button" class="secondary">Re-inject active tabs</button>
       </div>
@@ -306,7 +309,11 @@
               <code>pageUrl</code>, <code>headers</code>, <code>body</code>,
               <code>status</code>, plus <code>ctx.sharedState</code> (persisted
               across navigations) and <code>ctx.tabState</code> (per tab).
-              Return modified <code>ctx</code> or <code>null</code> to block.
+              Set <code>ctx.logDetail</code> to surface text in Recent matches.
+              Request scripts also receive
+              <code>decodeBasicAuth(ctx)</code>, which returns decoded Basic
+              credentials from headers or URL userinfo. Return modified
+              <code>ctx</code> or <code>null</code> to block.
             </p>
           </fieldset>
 
@@ -346,7 +353,11 @@
       </section>
     </main>
 
+    <script src="../lib/storage-keys.js"></script>
+    <script src="../lib/network-rule-engine-core.js"></script>
     <script src="../lib/network-rules-shared.js"></script>
+    <script src="../lib/ui-message.js"></script>
+    <script src="../lib/network-rule-templates.js"></script>
     <script src="rules.js"></script>
   </body>
 </html>
