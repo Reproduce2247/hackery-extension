@@ -1,5 +1,5 @@
 {
-  "name": "sn-links-extension",
+  "name": "complex-linker",
   "private": true,
   "scripts": {
     "build:network-hook": "node scripts/build-network-hook.js"

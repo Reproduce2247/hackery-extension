@@ -146,11 +146,13 @@ Or multiple:
 "parameters": { "sys_id": { "default": "…", "choices": ["a", "b"] } }
 ```
 
-Set `"optional": true` to allow running without a value (e.g. filled from the tab URL instead). For `derived-url`, when extract finds no match and the param is optional, the action is a no-op (e.g. already on a navigator URL).
+Set `"optional": true` to allow running without a value (e.g. filled from the tab URL or page DOM instead). For `derived-url`, when all extract attempts fail and every failed parameter is optional, the action is a no-op (e.g. already on a navigator URL).
+
+`extract` maps parameter names to `{ "url": "<regex>" }` (capture group 1 from the tab URL) or `{ "selector": "<css>", "stringSource": "textContent"|"innerHTML"|"id"|"attribute", "attribute": "<name>" }` (first matching DOM element).
 
 `derived-url` templates support `{paramName}` placeholders and `{encode:paramName}` for `encodeURIComponent`. `{origin}` is filled from the target tab origin.
 
-Scriptlets may set `"nav"` so `code` returns a URL string when given a `location` object (evaluated in the background from the tab URL). Relative returns are resolved against the target origin; ServiceNow sections still apply navigator wrapping when `hostPattern` is set.
+Scriptlets may set `"nav"` so `code` returns a URL string when given a `location` object (evaluated in the background from the tab URL). Relative returns are resolved against the target tab origin.
 
 Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key** derived from section + type + name + template.
 
@@ -184,12 +186,12 @@ Originally populated from the **SN links** Firefox bookmarks folder via `scripts
 
 ## User-added actions
 
-Popup **Add action** panel stores scripts in `customScripts` (local storage):
+Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). **Advanced…** opens `builder/builder.html` for full link editing, import, and export.
 
-- Paste raw JS or a `javascript:` bookmarklet (normalized by `normalizeScriptInput`)
-- Optional name; defaults from navigation path or "Custom script N"
-- Same Run / On load / parameter behavior as built-in scriptlets
-- Removable from the Custom scripts folder in the popup
+- Quick-add: JavaScript/bookmarklet → scriptlet; `http(s)://…` or `/path` → navigate link
+- Advanced window: all link types, parameters, extract, host patterns, JSON import/export
+- Right-click custom links → **Edit in builder** opens the advanced window
+- Custom links stored in `linksJsonOverlay` (links.json format); export for source control
 
 ## Storage keys (`browser.storage.local`)
 
@@ -202,7 +204,8 @@ Popup **Add action** panel stores scripts in `customScripts` (local storage):
 | `networkRules` | Network rules editor state (`enabled` + `rules[]`) |
 | `networkHooksEnabled` | Master switch for network hooks + webRequest rules (default true) |
 | `networkSharedState` | Persistent key/value for network rule scripts (`ctx.sharedState`) |
-| `customScripts` | User-added scriptlet array |
+| `linksJsonOverlay` | Custom section links in `links.json` format (merged at load) |
+| `customScripts` | Legacy user scripts (migrated to `linksJsonOverlay`) |
 | `activeSectionTab` | Last selected section tab |
 | `addScriptExpanded` | Add-action panel collapsed state |
 | `popupSize` | Persisted popup dimensions |

@@ -24,7 +24,11 @@
         "type": "derived-url",
         "searchTags": ["nav", "navigator"],
         "nav": "same-tab",
-        "extract": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$",
+        "extract": {
+          "target": {
+            "url": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
+          }
+        },
         "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}",
         "parameter": {
           "name": "target",
@@ -54,16 +58,11 @@
       },
       {
         "name": "App Log | ServiceNow",
+        "displayName": "App Log (current hour)",
         "type": "derived-url",
         "searchTags": ["syslog", "system log", "log"],
         "nav": "foreground",
         "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
-      },
-      {
-        "name": "App Log | ServiceNow",
-        "type": "derived-url",
-        "nav": "foreground",
-        "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONLast%20hour@javascript:gs.beginningOfLastHour()@javascript:gs.endOfLastHour()%5Esys_scope%3Djavascript:gs.getCurrentApplicationId()&sysparm_first_row=1&sysparm_view="
       },
       {
         "name": "Custom Layout for sp-model/spModel ( Istanbul ) - ServiceNow Community",
@@ -339,6 +338,9 @@
       }
     ]
   },
+  "Custom": {
+    "children": []
+  },
   "Misc": {
     "children": [
       {
@@ -346,7 +348,11 @@
         "name": "Download Chrome extension",
         "type": "derived-url",
         "nav": "fetch",
-        "extract": "\\/detail\\/(?:[^/]+\\/)*([a-p]{32})(?:[/?#]|$)",
+        "extract": {
+          "id": {
+            "url": "\\/detail\\/(?:[^/]+\\/)*([a-p]{32})(?:[/?#]|$)"
+          }
+        },
         "url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=999.0&acceptformat=crx2,crx3&x=id%3D{id}%26uc",
         "parameter": {
           "name": "id",

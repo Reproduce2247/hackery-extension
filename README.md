@@ -107,14 +107,29 @@ Two forms:
 
 Relative `path` values inherit the section `hostPattern`, resolve the tab origin, and wrap in the ServiceNow classic navigator URL when applicable.
 
-**Extract + URL template** (values parsed from the current tab URL):
+**Extract + URL template** (values parsed from the current tab URL and/or page DOM):
+
+`extract` is an object whose keys are parameter names. Each value is either a **URL regex** spec or a **DOM selector** spec:
+
+| Spec | Shape | Source |
+|---|---|---|
+| URL regex | `{ "url": "<regex>" }` | Capture group 1 from the tab URL |
+| DOM selector | `{ "selector": "<css>", "stringSource": "<source>" }` | First matching element in the page |
+
+`stringSource` for DOM specs: `textContent` (default), `innerHTML`, `id`, or `attribute` (requires `"attribute": "<name>"`).
+
+Single parameter from the tab URL:
 
 ```json
 {
   "name": "Show navigator",
   "type": "derived-url",
   "nav": "same-tab",
-  "extract": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$",
+  "extract": {
+    "target": {
+      "url": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
+    }
+  },
   "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}",
   "parameter": {
     "name": "target",
@@ -122,6 +137,32 @@ Relative `path` values inherit the section `hostPattern`, resolve the tab origin
   }
 }
 ```
+
+Multiple parameters (URL + DOM):
+
+```json
+{
+  "type": "derived-url",
+  "nav": "foreground",
+  "extract": {
+    "sys_id": {
+      "url": "\\/([a-f0-9]{32})"
+    },
+    "table": {
+      "selector": "input[name=\"sysparm_table\"]",
+      "stringSource": "attribute",
+      "attribute": "value"
+    }
+  },
+  "url": "{origin}/incident.do?sys_id={sys_id}&sysparm_table={table}",
+  "parameters": {
+    "sys_id": { "optional": true },
+    "table": { "optional": true }
+  }
+}
+```
+
+Parameter names in `extract` appear as popup inputs when not declared under `parameter` / `parameters`. User-provided values override extraction.
 
 Template placeholders:
 
@@ -131,7 +172,7 @@ Template placeholders:
 | `{paramName}` | Parameter value (see below) |
 | `{encode:paramName}` | `encodeURIComponent` of the parameter value |
 
-When `extract` is set, capture group 1 fills the named parameter if the user did not provide a value. If `optional: true` and extract does not match, the action is a no-op (e.g. already on a navigator URL).
+When `extract` is set, capture group 1 (URL regex) or the DOM value fills the named parameter if the user did not provide a value. If all extract attempts fail and every failed parameter is `optional: true`, the action is a no-op (e.g. already on a navigator URL). Required parameters that fail extraction throw an error.
 
 Absolute paths with `"hostPattern": null` open fixed external URLs:
 

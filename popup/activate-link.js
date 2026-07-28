@@ -1,20 +1,14 @@
 import { getTargetTab } from "./tab-target.js";
 
 const {
-  toNavigatorPath,
-  toNavigatorUrl,
-  resolvePathOnTab,
-  resolvePathUrl,
   resolveDerivedLink,
-  evaluateNavScript,
-  resolveAbsoluteUrl,
+  coerceScriptletNavigationUrl,
   resolveNav,
   performNavigation,
 } = globalThis.SnLinksNav;
 
 const {
   PARAM_VALUES_KEY,
-  extractNavigationPath,
   getParameterDefs,
   linkStorageKey,
   resolveNode,
@@ -60,27 +54,22 @@ async function runScriptlet(tabId, code) {
   if (!tabId) {
     throw new Error("No target tab for script injection.");
   }
-  await browser.scripting.executeScript({
+  const [{ result }] = await browser.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
     injectImmediately: true,
-    func: (source) => {
-      new Function(source)();
-    },
+    func: (source) => new Function(source)(),
     args: [code],
   });
+  return result;
 }
 
-export function resolveNavigationUrl(resolved, tab, origin, hostPattern, paramValues) {
+export async function resolveNavigationUrl(resolved, tab, origin, paramValues) {
   if (resolved.type === "derived-url") {
-    return resolveDerivedLink(resolved, tab, origin, hostPattern, paramValues);
+    return resolveDerivedLink(resolved, tab, origin, paramValues);
   }
   if (resolved.type === "navigate") {
-    return resolvePathUrl(resolved.path, tab, origin, hostPattern);
-  }
-  if (resolved.type === "scriptlet" && resolved.nav) {
-    const result = evaluateNavScript(resolved.code, tab.url);
-    return resolveAbsoluteUrl(result, tab, origin, hostPattern);
+    return globalThis.SnLinksNav.resolvePathUrl(resolved.path, tab, origin);
   }
   return null;
 }
@@ -109,24 +98,24 @@ export function createActivateLink({ showMessage, hideMessage }) {
 
       const resolved = resolveNode(node, paramValues);
 
-      if (resolved.type === "scriptlet" && !resolved.nav) {
-        const navPath = extractNavigationPath(resolved.code);
-        if (navPath) {
-          const hostPattern = resolved.hostPattern ?? null;
-          const { tab, origin } = await getTargetTab(hostPattern);
-          const url = hostPattern
-            ? toNavigatorUrl(origin, navPath)
-            : resolvePathOnTab(tab, navPath);
-          await performNavigation("same-tab", url, tab, hostPattern);
+      if (resolved.type === "scriptlet") {
+        const hostPattern = resolved.hostPattern ?? null;
+        const { tab, origin } = await getTargetTab(hostPattern);
+        if (hostPattern) {
+          await browser.tabs.update(tab.id, { active: true });
+        }
+
+        if (resolved.nav) {
+          const returnValue = await runScriptlet(tab.id, resolved.code);
+          const url = coerceScriptletNavigationUrl(returnValue, tab, origin);
+          if (!url) {
+            throw new Error("Navigation script did not resolve to a URL.");
+          }
+          await performNavigation(resolveNav(resolved), url, tab, hostPattern);
           window.close();
           return;
         }
 
-        const hostPattern = resolved.hostPattern ?? null;
-        const { tab } = await getTargetTab(hostPattern);
-        if (hostPattern) {
-          await browser.tabs.update(tab.id, { active: true });
-        }
         await runScriptlet(tab.id, resolved.code);
         showMessage("Script ran — check the page console.");
         return;
@@ -134,11 +123,10 @@ export function createActivateLink({ showMessage, hideMessage }) {
 
       const hostPattern = resolved.hostPattern ?? null;
       const { tab, origin } = await getTargetTab(hostPattern);
-      const url = resolveNavigationUrl(
+      const url = await resolveNavigationUrl(
         resolved,
         tab,
         origin,
-        hostPattern,
         paramValues
       );
 

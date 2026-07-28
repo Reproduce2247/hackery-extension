@@ -1,20 +1,45 @@
+#!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
 
-const html = fs.readFileSync(
-  path.join(__dirname, "..", "..", "bookmarks.html"),
-  "utf8"
-);
+function usage() {
+  console.error(`Usage: node parse-bookmarks.js [options] [input.html]
 
-const snLinksHeader = html.match(/<DT><H3[^>]*>SN links<\/H3>/i);
-if (!snLinksHeader) {
-  console.error("SN links folder not found");
-  process.exit(1);
+Options:
+  --input <path>   Netscape bookmarks export (default: ../../bookmarks.html)
+  --folder <name>  Import one folder as a single section (default: each top-level folder)
+  --out <path>     Output links.json path (default: ../data/links.json)
+  -h, --help       Show this help
+`);
 }
-const snLinksSection = extractDlInner(html, snLinksHeader.index);
-if (!snLinksSection) {
-  console.error("SN links DL block not found");
-  process.exit(1);
+
+function parseArgs(argv) {
+  const args = {
+    input: path.join(__dirname, "..", "..", "bookmarks.html"),
+    folder: null,
+    out: path.join(__dirname, "..", "data", "links.json"),
+    help: false,
+  };
+
+  for (let i = 2; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "-h" || arg === "--help") {
+      args.help = true;
+    } else if (arg === "--input") {
+      args.input = argv[++i];
+    } else if (arg === "--folder") {
+      args.folder = argv[++i];
+    } else if (arg === "--out") {
+      args.out = argv[++i];
+    } else if (!arg.startsWith("-")) {
+      args.input = arg;
+    } else {
+      console.error(`Unknown option: ${arg}`);
+      process.exit(1);
+    }
+  }
+
+  return args;
 }
 
 function decodeHref(href) {
@@ -24,45 +49,19 @@ function decodeHref(href) {
     .replace(/%22/g, '"');
 }
 
-function makeItem(folderPath, title, rawHref) {
-  const href = decodeHref(rawHref);
-  const item = { title: title.trim(), folder: folderPath };
-
-  if (href.startsWith("javascript:")) {
-    item.type = "scriptlet";
-    let code = href.slice("javascript:".length);
-    if (code.startsWith("void(") && code.endsWith(")")) {
-      code = code.slice(5, -1);
-    }
-    item.code = code;
-  } else if (/^https?:\/\//.test(href)) {
-    const url = new URL(href);
-    item.type = "derived-url";
-    item.nav = "foreground";
-    if (/\.service-now\.com$/i.test(url.hostname)) {
-      item.path = url.pathname + url.search + url.hash;
-    } else {
-      item.path = href;
-      item.hostPattern = null;
-    }
-  } else {
-    item.type = "derived-url";
-    item.nav = "foreground";
-    item.path = href.startsWith("/") ? href : `/${href}`;
-  }
-
-  return item;
-}
-
 function extractDlInner(content, startIdx) {
   const open = content.indexOf("<DL><p>", startIdx);
-  if (open === -1) return null;
+  if (open === -1) {
+    return null;
+  }
   let depth = 1;
   let i = open + "<DL><p>".length;
   while (i < content.length && depth > 0) {
     const nextOpen = content.indexOf("<DL><p>", i);
     const nextClose = content.indexOf("</DL><p>", i);
-    if (nextClose === -1) return null;
+    if (nextClose === -1) {
+      return null;
+    }
     if (nextOpen !== -1 && nextOpen < nextClose) {
       depth += 1;
       i = nextOpen + "<DL><p>".length;
@@ -80,72 +79,298 @@ function extractDlInner(content, startIdx) {
   return null;
 }
 
-function parseBlock(block, folderPath) {
-  const items = [];
+function parseFolderBlock(block) {
+  const links = [];
+  const folders = [];
   let i = 0;
+
   while (i < block.length) {
     const dtIdx = block.indexOf("<DT>", i);
-    if (dtIdx === -1) break;
+    if (dtIdx === -1) {
+      break;
+    }
 
-    const h3Match = block.slice(dtIdx).match(/^<DT><H3[^>]*>([^<]+)<\/H3>/);
+    const h3Match = block.slice(dtIdx).match(/^<DT><H3[^>]*>([^<]+)<\/H3>/i);
     if (h3Match) {
       const folderName = h3Match[1].trim();
       const dl = extractDlInner(block, dtIdx + h3Match[0].length);
-      if (!dl) break;
-      items.push(...parseBlock(dl.inner, folderPath.concat(folderName)));
+      if (!dl) {
+        break;
+      }
+      folders.push({
+        name: folderName,
+        ...parseFolderBlock(dl.inner),
+      });
       i = dl.end;
       continue;
     }
 
-    const linkMatch = block.slice(dtIdx).match(/^<DT><A HREF="([^"]*)"[^>]*>([^<]*)<\/A>/);
+    const linkMatch = block
+      .slice(dtIdx)
+      .match(/^<DT><A HREF="([^"]*)"[^>]*>([^<]*)<\/A>/i);
     if (linkMatch) {
-      items.push(makeItem(folderPath, linkMatch[2], linkMatch[1]));
+      links.push({
+        title: linkMatch[2].trim(),
+        href: decodeHref(linkMatch[1]),
+      });
       i = dtIdx + linkMatch[0].length;
       continue;
     }
 
     i = dtIdx + 4;
   }
-  return items;
+
+  return { links, folders };
 }
 
-function buildTree(items) {
-  const root = {
-    ServiceNow: {
-      hostPattern: String.raw`\.service-now\.com$`,
-      children: [],
-    },
+function findFolderByName(html, folderName) {
+  const pattern = new RegExp(
+    `<DT><H3[^>]*>${folderName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<\\/H3>`,
+    "i"
+  );
+  const match = html.match(pattern);
+  if (!match) {
+    return null;
+  }
+  const dl = extractDlInner(html, match.index);
+  if (!dl) {
+    return null;
+  }
+  return {
+    name: folderName,
+    ...parseFolderBlock(dl.inner),
   };
+}
 
-  for (const item of items) {
-    let node = root.ServiceNow;
-    for (const part of item.folder) {
-      let child = node.children.find(
-        (c) => c.name === part && Array.isArray(c.children)
-      );
-      if (!child) {
-        child = { name: part, children: [] };
-        node.children.push(child);
+function findBookmarkRoot(html) {
+  const idx = html.indexOf("<DL><p>");
+  if (idx === -1) {
+    return null;
+  }
+  const dl = extractDlInner(html, idx);
+  if (!dl) {
+    return null;
+  }
+  return parseFolderBlock(dl.inner);
+}
+
+function collectAbsoluteHostnames(node) {
+  const hostnames = [];
+  for (const link of node.links) {
+    if (/^https?:\/\//i.test(link.href)) {
+      try {
+        hostnames.push(new URL(link.href).hostname);
+      } catch {
+        // skip malformed URLs
       }
-      node = child;
     }
-    const link = {
-      name: item.title,
-      type: item.type,
-      nav: item.nav,
-    };
-    if (item.type === "scriptlet") link.code = item.code;
-    else link.path = item.path;
-    if (item.hostPattern === null) link.hostPattern = null;
-    node.children.push(link);
+  }
+  for (const folder of node.folders) {
+    hostnames.push(...collectAbsoluteHostnames(folder));
+  }
+  return hostnames;
+}
+
+function longestCommonHostSuffix(hostnames) {
+  if (hostnames.length === 0) {
+    return null;
+  }
+  const reversed = hostnames.map((hostname) => hostname.split(".").reverse());
+  const minLen = Math.min(...reversed.map((parts) => parts.length));
+  const common = [];
+  for (let i = 0; i < minLen; i += 1) {
+    const label = reversed[0][i];
+    if (reversed.every((parts) => parts[i] === label)) {
+      common.push(label);
+    } else {
+      break;
+    }
+  }
+  return common.length > 0 ? common.reverse().join(".") : null;
+}
+
+function inferHostPattern(hostnames) {
+  const unique = [...new Set(hostnames.filter(Boolean))];
+  if (unique.length === 0) {
+    return null;
+  }
+  if (unique.length === 1) {
+    const hostname = unique[0];
+    return `^${hostname.replace(/\./g, "\\.")}$`;
   }
 
-  return root;
+  const suffix = longestCommonHostSuffix(unique);
+  if (
+    suffix &&
+    unique.every(
+      (hostname) => hostname === suffix || hostname.endsWith(`.${suffix}`)
+    )
+  ) {
+    return `\\.${suffix.replace(/\./g, "\\.")}$`;
+  }
+
+  return null;
 }
 
-const items = parseBlock(snLinksSection.inner, []);
-const tree = buildTree(items);
-const outPath = path.join(__dirname, "..", "data", "links.json");
-fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, JSON.stringify(tree, null, 2));
-console.log(`Wrote ${items.length} links to ${outPath}`);
+function matchesHostPattern(urlString, pattern) {
+  if (!pattern) {
+    return false;
+  }
+  try {
+    const url = new URL(urlString);
+    const re = new RegExp(pattern, "i");
+    return re.test(url.hostname) || re.test(url.href);
+  } catch {
+    return false;
+  }
+}
+
+function hrefToLinkFields(href, sectionHostPattern) {
+  if (href.startsWith("javascript:")) {
+    let code = href.slice("javascript:".length);
+    if (code.startsWith("void(") && code.endsWith(")")) {
+      code = code.slice(5, -1);
+    }
+    return { type: "scriptlet", code: code.trim() };
+  }
+
+  if (/^https?:\/\//i.test(href)) {
+    const url = new URL(href);
+    const absolute = url.href;
+    if (sectionHostPattern && matchesHostPattern(absolute, sectionHostPattern)) {
+      return {
+        type: "derived-url",
+        nav: "foreground",
+        path: `${url.pathname}${url.search}${url.hash}`,
+      };
+    }
+    return {
+      type: "derived-url",
+      nav: "foreground",
+      path: absolute,
+      hostPattern: null,
+    };
+  }
+
+  return {
+    type: "derived-url",
+    nav: "foreground",
+    path: href.startsWith("/") ? href : `/${href}`,
+  };
+}
+
+function folderNodeToChildren(node, sectionHostPattern) {
+  const children = [];
+
+  for (const folder of node.folders) {
+    children.push({
+      name: folder.name,
+      children: folderNodeToChildren(folder, sectionHostPattern),
+    });
+  }
+
+  for (const link of node.links) {
+    const fields = hrefToLinkFields(link.href, sectionHostPattern);
+    const entry = {
+      name: link.title,
+      ...fields,
+    };
+    if (fields.hostPattern === null) {
+      entry.hostPattern = null;
+    }
+    children.push(entry);
+  }
+
+  return children;
+}
+
+function sectionFromFolderNode(node) {
+  const hostPattern = inferHostPattern(collectAbsoluteHostnames(node));
+  return {
+    hostPattern,
+    children: folderNodeToChildren(node, hostPattern),
+  };
+}
+
+function buildCatalog(rootNode, folderFilter) {
+  if (folderFilter) {
+    const folder = findFolderByName(
+      typeof rootNode === "string" ? rootNode : "",
+      folderFilter
+    );
+    if (!folder) {
+      throw new Error(`Folder not found: ${folderFilter}`);
+    }
+    return { [folder.name]: sectionFromFolderNode(folder) };
+  }
+
+  const parsed =
+    typeof rootNode === "string" ? findBookmarkRoot(rootNode) : rootNode;
+  if (!parsed) {
+    throw new Error("Bookmark root not found.");
+  }
+
+  const catalog = {};
+  for (const folder of parsed.folders) {
+    catalog[folder.name] = sectionFromFolderNode(folder);
+  }
+
+  if (parsed.links.length > 0) {
+    catalog.Imported = sectionFromFolderNode({
+      name: "Imported",
+      links: parsed.links,
+      folders: [],
+    });
+  }
+
+  return catalog;
+}
+
+function main() {
+  const args = parseArgs(process.argv);
+  if (args.help) {
+    usage();
+    process.exit(0);
+  }
+
+  if (!fs.existsSync(args.input)) {
+    console.error(`Input not found: ${args.input}`);
+    process.exit(1);
+  }
+
+  const html = fs.readFileSync(args.input, "utf8");
+  let catalog;
+
+  try {
+    catalog = args.folder
+      ? buildCatalog(html, args.folder)
+      : buildCatalog(html, null);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+
+  const sectionCount = Object.keys(catalog).length;
+  const linkCount = Object.values(catalog).reduce((total, section) => {
+    function countNodes(nodes) {
+      let count = 0;
+      for (const node of nodes) {
+        if (node.children) {
+          count += countNodes(node.children);
+        } else {
+          count += 1;
+        }
+      }
+      return count;
+    }
+    return total + countNodes(section.children || []);
+  }, 0);
+
+  fs.mkdirSync(path.dirname(args.out), { recursive: true });
+  fs.writeFileSync(args.out, JSON.stringify(catalog, null, 2));
+  console.log(
+    `Wrote ${linkCount} link(s) in ${sectionCount} section(s) to ${args.out}`
+  );
+}
+
+main();

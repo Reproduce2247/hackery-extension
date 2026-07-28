@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "ServiceNow Links",
+  "name": "Complex Linker",
   "version": "1.0.0",
-  "description": "Instance-independent quick links from the SN links bookmarks folder.",
+  "description": "Links, scriptlets, and network rules.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "sn-links@local.dev",
+      "id": "punk@local.dev",
       "strict_min_version": "128.0"
     }
   },
@@ -25,6 +25,7 @@
   "background": {
     "scripts": [
       "lib/storage-keys.js",
+      "lib/link-catalog.js",
       "lib/link-model.js",
       "lib/network-rule-engine-core.js",
       "lib/network-rules-shared.js",
@@ -38,7 +39,7 @@
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "ServiceNow Links",
+    "default_title": "Complex Linker",
     "default_icon": {
       "16": "icon.png",
       "32": "icon.png",

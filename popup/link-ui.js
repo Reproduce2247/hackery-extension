@@ -3,16 +3,15 @@ import {
   saveParamValue,
   readParamValuesFromRow,
 } from "./activate-link.js";
+import { getTargetTab } from "./tab-target.js";
 
 const {
-  toNavigatorPath,
   isAbsoluteUrl,
+  resolveNavScriptletUrl,
 } = globalThis.SnLinksNav;
 
 const {
   INJECT_ON_LOAD_KEY,
-  CUSTOM_SCRIPTS_KEY,
-  extractNavigationPath,
   getParameterConfig,
   getParameterDefs,
   linkStorageKey,
@@ -52,7 +51,7 @@ export function handleDocumentClickForCombobox(event) {
   }
 }
 
-function showLinkContextMenu(event, node, row, copyLink) {
+function showLinkContextMenu(event, node, row, { copyLink, exportLinkJson, editCustomLink }) {
   event.preventDefault();
   event.stopPropagation();
   closeOpenCombobox();
@@ -67,9 +66,9 @@ function showLinkContextMenu(event, node, row, copyLink) {
   copyItem.className = "link-context-menu-item";
   copyItem.setAttribute("role", "menuitem");
   copyItem.textContent = "Copy";
-  copyItem.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+  copyItem.addEventListener("mousedown", (mousedownEvent) => {
+    mousedownEvent.preventDefault();
+    mousedownEvent.stopPropagation();
   });
   copyItem.addEventListener("click", (clickEvent) => {
     clickEvent.preventDefault();
@@ -77,8 +76,43 @@ function showLinkContextMenu(event, node, row, copyLink) {
     closeOpenContextMenu();
     copyLink(node, row);
   });
-
   menu.appendChild(copyItem);
+
+  const exportItem = document.createElement("button");
+  exportItem.type = "button";
+  exportItem.className = "link-context-menu-item";
+  exportItem.setAttribute("role", "menuitem");
+  exportItem.textContent = "Export JSON";
+  exportItem.addEventListener("mousedown", (mousedownEvent) => {
+    mousedownEvent.preventDefault();
+    mousedownEvent.stopPropagation();
+  });
+  exportItem.addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    closeOpenContextMenu();
+    exportLinkJson(node);
+  });
+  menu.appendChild(exportItem);
+
+  if (editCustomLink && node.id) {
+    const editItem = document.createElement("button");
+    editItem.type = "button";
+    editItem.className = "link-context-menu-item";
+    editItem.setAttribute("role", "menuitem");
+    editItem.textContent = "Edit in builder";
+    editItem.addEventListener("mousedown", (mousedownEvent) => {
+      mousedownEvent.preventDefault();
+      mousedownEvent.stopPropagation();
+    });
+    editItem.addEventListener("click", (clickEvent) => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      closeOpenContextMenu();
+      editCustomLink(node);
+    });
+    menu.appendChild(editItem);
+  }
   document.body.appendChild(menu);
 
   const menuRect = menu.getBoundingClientRect();
@@ -116,15 +150,13 @@ function getUiParameterDefs(node) {
 }
 
 function displayLabel(node) {
-  if (node.name === "App Log | ServiceNow") {
-    if (node.path?.includes("Last%20hour")) return "App Log (last hour)";
-    return "App Log (current hour)";
-  }
-  return node.name;
+  return node.displayName || node.name;
 }
 
 function linkBadgeLabel(node) {
-  if (node.type === "scriptlet") return "Run";
+  if (node.type === "scriptlet") {
+    return node.nav ? "Open" : "Run";
+  }
   if (node.type === "derived-url") return "Derive";
   if (node.type === "navigate") {
     return isAbsoluteUrl(node.path || "") ? "Web" : "Open";
@@ -135,6 +167,7 @@ function linkBadgeLabel(node) {
 function linkBadgeClass(node) {
   let classes = "link-badge";
   if (node.type === "derived-url") classes += " derived-url";
+  if (node.type === "scriptlet" && node.nav) classes += " nav-scriptlet";
   if (node.type === "navigate" && isAbsoluteUrl(node.path || "")) {
     classes += " absolute-url";
   }
@@ -146,22 +179,15 @@ function displayHint(node, paramValues = {}) {
   const resolved = resolveNode(node, paramValues);
   if (resolved.type === "scriptlet") {
     if (resolved.nav) {
-      return "Navigates via extension";
+      return null;
     }
-    const path = extractNavigationPath(resolved.code);
-    if (path) {
-      return node.hostPattern ? toNavigatorPath(path) : path;
-    }
-    return node.hostPattern ? "Runs on the matched instance tab" : "Runs on the active tab";
+    return resolved.hostPattern
+      ? "Runs on the matched host tab"
+      : "Runs on the active tab";
   }
   if (resolved.type === "derived-url") {
     if (resolved.path) {
-      if (isAbsoluteUrl(resolved.path)) {
-        return resolved.path;
-      }
-      return resolved.hostPattern
-        ? toNavigatorPath(resolved.path)
-        : resolved.path;
+      return resolved.path;
     }
     return resolved.url
       ? resolved.url
@@ -170,13 +196,23 @@ function displayHint(node, paramValues = {}) {
       : "";
   }
   if (resolved.type === "navigate") {
-    const path = resolved.path || "";
-    if (isAbsoluteUrl(path)) {
-      return path;
-    }
-    return resolved.hostPattern ? toNavigatorPath(path) : path;
+    return resolved.path || "";
   }
   return "";
+}
+
+async function resolveNavScriptletHint(node, row, parameterDefs) {
+  const { resolveNode } = globalThis.SnLinksLinkModel;
+  const resolved = resolveNode(
+    node,
+    resolveParamValues(parameterDefs, readParamValuesFromRow(row, parameterDefs))
+  );
+  const hostPattern = resolved.hostPattern ?? null;
+  const { tab, origin } = await getTargetTab(hostPattern);
+  return (
+    resolveNavScriptletUrl(resolved.code, tab.url, origin, tab) ||
+    "Navigation script"
+  );
 }
 
 function bindParamInput(input, def, linkKey, onEnter) {
@@ -401,7 +437,7 @@ function createLinkListHeader({
   return header;
 }
 
-export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
+export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCustomLink, setInjectOnLoad }) {
   function createLinkRow(node, options = {}) {
     const parameterDefs = getUiParameterDefs(node);
     const linkKey = linkStorageKey(node);
@@ -439,6 +475,17 @@ export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
     const hint = document.createElement("span");
     hint.className = "link-hint";
     const updateHint = () => {
+      if (node.type === "scriptlet" && node.nav) {
+        hint.textContent = "…";
+        resolveNavScriptletHint(node, row, parameterDefs)
+          .then((text) => {
+            hint.textContent = text;
+          })
+          .catch(() => {
+            hint.textContent = "Navigation script";
+          });
+        return;
+      }
       hint.textContent = displayHint(
         node,
         resolveParamValues(parameterDefs, readParamValuesFromRow(row, parameterDefs))
@@ -451,7 +498,11 @@ export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
     button.appendChild(labelWrap);
     button.addEventListener("click", () => activateLink(node, row));
     row.addEventListener("contextmenu", (event) => {
-      showLinkContextMenu(event, node, row, copyLink);
+      showLinkContextMenu(event, node, row, {
+        copyLink,
+        exportLinkJson,
+        editCustomLink: options.isCustom ? editCustomLink : null,
+      });
     });
     actionCell.appendChild(button);
 
@@ -533,6 +584,9 @@ export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
     injectOnLoad = {},
     options = {}
   ) {
+    const isCustomSection =
+      sectionName === globalThis.SnLinksLinkCatalog.CUSTOM_SECTION_NAME;
+
     for (const node of nodes) {
       const hostPattern = resolveHostPattern(node, inheritedHostPattern);
       if (node.children) {
@@ -560,60 +614,22 @@ export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
       container.appendChild(
         createLinkRow(
           { ...node, hostPattern, sectionName },
-          { savedParamValues, injectOnLoad, showRemove: options.showRemove }
+          {
+            savedParamValues,
+            injectOnLoad,
+            showRemove: isCustomSection,
+            isCustom: isCustomSection,
+            onDelete:
+              isCustomSection && node.id && options.onDeleteCustom
+                ? async (event) => {
+                    event.stopPropagation();
+                    await options.onDeleteCustom(node.id);
+                  }
+                : null,
+          }
         )
       );
     }
-  }
-
-  function renderCustomScripts(
-    scripts,
-    container,
-    savedParamValues,
-    injectOnLoad,
-    query,
-    { sortNodesBySearchScore, getScriptSearchRowHighlight, searchMatchScore, onDeleteScript }
-  ) {
-    const sortedScripts = sortNodesBySearchScore(scripts, (script, activeQuery) =>
-      searchMatchScore(script.name, activeQuery)
-    );
-    if (sortedScripts.length === 0) {
-      return;
-    }
-
-    const folder = document.createElement("section");
-    folder.className = "folder";
-
-    const title = document.createElement("div");
-    title.className = "folder-title";
-    title.textContent = "Custom scripts";
-    folder.appendChild(title);
-
-    for (const script of sortedScripts) {
-      const node = {
-        id: script.id,
-        name: script.name,
-        type: "scriptlet",
-        code: script.code,
-        parameter: script.parameter,
-        parameters: script.parameters,
-      };
-
-      folder.appendChild(
-        createLinkRow(node, {
-          savedParamValues,
-          injectOnLoad,
-          showRemove: true,
-          ...getScriptSearchRowHighlight(script, query),
-          onDelete: async (event) => {
-            event.stopPropagation();
-            await onDeleteScript(script.id);
-          },
-        })
-      );
-    }
-
-    container.appendChild(folder);
   }
 
   return {
@@ -621,7 +637,6 @@ export function createLinkUi({ activateLink, copyLink, setInjectOnLoad }) {
     createLinkListHeader,
     createLinkRow,
     renderNodes,
-    renderCustomScripts,
     nodeHasParams,
     treeHasParams,
     treeHasOnLoad,
@@ -642,13 +657,4 @@ export async function setInjectOnLoad(linkKey, enabled) {
   }
   await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: injectOnLoad });
   await browser.runtime.sendMessage({ type: "REFRESH_INJECT" }).catch(() => {});
-}
-
-export async function loadCustomScripts() {
-  const stored = await browser.storage.local.get(CUSTOM_SCRIPTS_KEY);
-  return stored[CUSTOM_SCRIPTS_KEY] || [];
-}
-
-export async function saveCustomScripts(scripts) {
-  await browser.storage.local.set({ [CUSTOM_SCRIPTS_KEY]: scripts });
 }

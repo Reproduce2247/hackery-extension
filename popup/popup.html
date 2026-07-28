@@ -2,19 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>ServiceNow Links</title>
+    <title>Complex Linker</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header>
       <div class="header-row">
-        <h1>SN Links</h1>
+        <h1>Complex Linker</h1>
         <button id="network-rules-btn" type="button" class="header-btn">
           Network rules
         </button>
       </div>
       <div class="header-meta">
-        <p id="instance-status" class="instance-status"></p>
+        <p id="active-tab-status" class="active-tab-status"></p>
         <div class="header-toggles">
           <label
             id="inject-on-load-enabled-label"
@@ -51,16 +51,22 @@
       aria-label="Link sections"
     ></nav>
     <div id="links" class="links" role="tabpanel"></div>
-    <section class="add-script is-collapsed" aria-label="Add custom script">
-      <button
-        id="add-script-toggle"
-        type="button"
-        class="add-script-toggle"
-        aria-expanded="false"
-        aria-controls="add-script-panel"
-      >
-        Add action
-      </button>
+    <section class="add-script is-collapsed" aria-label="Add action">
+      <div class="add-script-header">
+        <button
+          id="add-script-toggle"
+          type="button"
+          class="add-script-toggle"
+          aria-expanded="false"
+          aria-controls="add-script-panel"
+        >
+          Add action
+        </button>
+        <button id="link-builder-btn" type="button" class="add-script-advanced-btn">
+          Advanced…
+        </button>
+        <span class="add-script-chevron" aria-hidden="true">▾</span>
+      </div>
       <div id="add-script-panel" class="add-script-panel" hidden>
         <label class="field">
           <span class="field-label">Name</span>
@@ -72,11 +78,11 @@
           />
         </label>
         <label class="field">
-          <span class="field-label">Script</span>
+          <span class="field-label">Script or URL</span>
           <textarea
             id="script-code"
             rows="4"
-            placeholder="Paste JavaScript or a javascript: bookmarklet. Use {value} for an input."
+            placeholder="Paste JavaScript, a bookmarklet, or a URL/path"
             spellcheck="false"
           ></textarea>
         </label>
@@ -105,6 +111,7 @@
       tabindex="-1"
     ></div>
     <script src="../lib/storage-keys.js"></script>
+    <script src="../lib/link-catalog.js"></script>
     <script src="../lib/link-model.js"></script>
     <script src="../lib/navigation-shared.js"></script>
     <script src="../lib/ui-message.js"></script>

@@ -39,7 +39,6 @@ export function createSearchController({
   getActiveSection,
   setActiveSectionName,
   sectionTabKey,
-  loadCustomScripts,
   renderAll,
 }) {
   let searchQuery = "";
@@ -105,18 +104,14 @@ export function createSearchController({
     );
   }
 
-  function currentViewHasExactMatch(query, customScripts) {
+  function currentViewHasExactMatch(query) {
     const section = getActiveSection();
-    if (section && sectionHasExactMatch(section, query)) {
-      return true;
-    }
-
-    return customScripts.some((script) => isExactSearchMatch(script.name, query));
+    return Boolean(section && sectionHasExactMatch(section, query));
   }
 
-  async function maybeSwitchSectionForExactMatch(customScripts) {
+  async function maybeSwitchSectionForExactMatch() {
     const query = normalizeSearchQuery(searchQuery);
-    if (!query || currentViewHasExactMatch(query, customScripts)) {
+    if (!query || currentViewHasExactMatch(query)) {
       return false;
     }
 
@@ -161,15 +156,8 @@ export function createSearchController({
     };
   }
 
-  function getScriptSearchRowHighlight(script, query) {
-    if (!query || searchMatchScore(script.name, query) <= 0) {
-      return {};
-    }
-
-    return {
-      searchMatch: true,
-      searchExactMatch: isExactSearchMatch(script.name, query),
-    };
+  function getScriptSearchRowHighlight(node, query) {
+    return getSearchRowHighlight(node, query);
   }
 
   function focusSearchInput() {
@@ -247,8 +235,7 @@ export function createSearchController({
   }
 
   async function applySearchQueryChange() {
-    const customScripts = await loadCustomScripts();
-    await maybeSwitchSectionForExactMatch(customScripts);
+    await maybeSwitchSectionForExactMatch();
     await renderAll();
   }
 

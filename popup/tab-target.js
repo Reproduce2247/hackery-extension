@@ -42,6 +42,10 @@ export async function findMatchingTab(hostPattern, preferredOrigin, activeTab) {
 
   function nearestTab(candidates) {
     return [...candidates].sort((a, b) => {
+      const loadRank = (a.status === "complete" ? 0 : 1) - (b.status === "complete" ? 0 : 1);
+      if (loadRank !== 0) {
+        return loadRank;
+      }
       const dist = distanceFromActive(a) - distanceFromActive(b);
       if (dist !== 0) {
         return dist;
@@ -115,13 +119,13 @@ export async function getTargetTab(hostPattern) {
   }
 
   const activeTab = await getActiveTab();
+  let preferredOrigin = null;
   if (activeTab?.url && matchesHostPattern(activeTab.url, hostPattern)) {
-    const origin = new URL(activeTab.url).origin;
-    await rememberOrigin(hostPattern, origin);
-    return { tab: activeTab, origin };
+    preferredOrigin = new URL(activeTab.url).origin;
   }
 
-  const rememberedOrigin = await getRememberedOrigin(hostPattern);
+  const rememberedOrigin =
+    preferredOrigin ?? (await getRememberedOrigin(hostPattern));
   const tab = await ensureMatchingTab(hostPattern, rememberedOrigin, activeTab);
   const loadedTab =
     tab.status === "complete" ? tab : await waitForTabLoad(tab.id);

@@ -1,29 +1,41 @@
 import { getActiveTab } from "./tab-target.js";
 import { createActivateLink, loadParamValues } from "./activate-link.js";
 import { createCopyLink } from "./copy-link.js";
-import { createSearchController, searchMatchScore } from "./search.js";
+import { createSearchController } from "./search.js";
 import {
   handleDocumentClickForCombobox,
   closeOpenContextMenu,
   createLinkUi,
-  loadCustomScripts,
   loadInjectOnLoad,
-  saveCustomScripts,
   setInjectOnLoad,
 } from "./link-ui.js";
+import {
+  loadMergedLinkCatalog,
+  addCustomLinks,
+  removeCustomLinkById,
+  getCustomSectionChildren,
+} from "./link-storage.js";
+import { buildQuickLinkNode } from "./link-builder.js";
+import { copyLinkNodeJson } from "./link-export.js";
+import { openLinkBuilderWindow } from "./open-builder-window.js";
 
 if (!globalThis.SnLinksLinkModel) {
   throw new Error("sn-links: lib/link-model.js must load before popup.js");
+}
+if (!globalThis.SnLinksLinkCatalog) {
+  throw new Error("sn-links: lib/link-catalog.js must load before popup.js");
 }
 
 const {
   SECTION_TAB_KEY,
   ADD_SCRIPT_EXPANDED_KEY,
   POPUP_SIZE_KEY,
+  LINKS_OVERLAY_KEY,
 } = globalThis.SnLinksStorageKeys;
 
-const { parseLinkSections, normalizeScriptInput, defaultScriptName, flattenLinkNodes } =
-  globalThis.SnLinksLinkModel;
+const { parseLinkSections, flattenLinkNodes } = globalThis.SnLinksLinkModel;
+const { CUSTOM_SECTION_NAME } = globalThis.SnLinksLinkCatalog;
+
 const POPUP_MIN_WIDTH = 420;
 const POPUP_MIN_HEIGHT = 400;
 const POPUP_MAX_WIDTH = 800;
@@ -33,18 +45,20 @@ const POPUP_DEFAULT_HEIGHT = 560;
 
 const sectionTabsEl = document.getElementById("section-tabs");
 const linksEl = document.getElementById("links");
-const instanceStatusEl = document.getElementById("instance-status");
+const activeTabStatusEl = document.getElementById("active-tab-status");
 const cspDisableLabel = document.getElementById("csp-disable-label");
 const cspDisableCheckbox = document.getElementById("csp-disable-checkbox");
 const injectOnLoadEnabledEl = document.getElementById("inject-on-load-enabled");
 const networkHooksEnabledEl = document.getElementById("network-hooks-enabled");
 const messageEl = document.getElementById("message");
-const scriptNameInput = document.getElementById("script-name");
-const scriptCodeInput = document.getElementById("script-code");
 const addScriptBtn = document.getElementById("add-script-btn");
+const linkBuilderBtn = document.getElementById("link-builder-btn");
 const addScriptSection = document.querySelector(".add-script");
 const addScriptToggle = document.getElementById("add-script-toggle");
+const addScriptChevron = document.querySelector(".add-script-chevron");
 const addScriptPanel = document.getElementById("add-script-panel");
+const scriptNameInput = document.getElementById("script-name");
+const scriptCodeInput = document.getElementById("script-code");
 const searchOverlayEl = document.getElementById("search-overlay");
 const searchInputEl = document.getElementById("search-input");
 
@@ -66,7 +80,28 @@ const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl, {
 
 const activateLink = createActivateLink({ showMessage, hideMessage });
 const copyLink = createCopyLink({ showMessage, hideMessage });
-const linkUi = createLinkUi({ activateLink, copyLink, setInjectOnLoad });
+
+async function exportLinkJson(node) {
+  hideMessage();
+  try {
+    await copyLinkNodeJson(node);
+    showMessage("Link JSON copied to clipboard.");
+  } catch (error) {
+    showMessage(error.message || String(error));
+  }
+}
+
+function editCustomLink(node) {
+  openLinkBuilderWindow({ editId: node.id });
+}
+
+const linkUi = createLinkUi({
+  activateLink,
+  copyLink,
+  exportLinkJson,
+  editCustomLink,
+  setInjectOnLoad,
+});
 
 function getLinkSections() {
   return linkSections;
@@ -78,6 +113,11 @@ function getActiveSection() {
 
 function setActiveSectionName(name) {
   activeSectionName = name;
+}
+
+async function reloadLinkSections() {
+  const merged = await loadMergedLinkCatalog();
+  linkSections = parseLinkSections(merged);
 }
 
 function renderSectionTabs() {
@@ -117,28 +157,14 @@ async function renderAll() {
   }
 
   try {
+    await reloadLinkSections();
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
     const injectOnLoad = await loadInjectOnLoad();
-    const customScripts = await loadCustomScripts();
-    const showRemove = customScripts.length > 0;
+    const showRemove = getActiveSection()?.name === CUSTOM_SECTION_NAME;
     const section = getActiveSection();
-    const showParams =
-      customScripts.some((script) =>
-        linkUi.nodeHasParams({
-          type: "scriptlet",
-          code: script.code,
-          parameter: script.parameter,
-          parameters: script.parameters,
-        })
-      ) || (section ? linkUi.treeHasParams(section.children) : false);
-    const showOnLoad =
-      customScripts.some((script) =>
-        globalThis.SnLinksLinkModel.nodeHasOnLoad({
-          type: "scriptlet",
-          code: script.code,
-        })
-      ) || (section ? linkUi.treeHasOnLoad(section.children) : false);
+    const showParams = section ? linkUi.treeHasParams(section.children) : false;
+    const showOnLoad = section ? linkUi.treeHasOnLoad(section.children) : false;
     const query = search.normalizeSearchQuery(search.getSearchQuery());
 
     const list = document.createElement("div");
@@ -160,7 +186,11 @@ async function renderAll() {
     if (section) {
       if (query) {
         const sortedNodes = search.sortNodesBySearchScore(
-          flattenLinkNodes(section.children, section.hostPattern, section.name),
+          flattenLinkNodes(
+            section.children,
+            section.hostPattern,
+            section.name
+          ),
           (node, activeQuery) => search.nodeSearchScore(node, activeQuery)
         );
         for (const node of sortedNodes) {
@@ -168,7 +198,21 @@ async function renderAll() {
             linkUi.createLinkRow(node, {
               savedParamValues,
               injectOnLoad,
-              showRemove,
+              showRemove: section.name === CUSTOM_SECTION_NAME,
+              isCustom: section.name === CUSTOM_SECTION_NAME,
+              onDelete:
+                section.name === CUSTOM_SECTION_NAME && node.id
+                  ? async (event) => {
+                      event.stopPropagation();
+                      await removeCustomLinkById(node.id);
+                      const nextInject = await loadInjectOnLoad();
+                      delete nextInject[node.id];
+                      await browser.storage.local.set({
+                        [globalThis.SnLinksLinkModel.INJECT_ON_LOAD_KEY]: nextInject,
+                      });
+                      await renderAll();
+                    }
+                  : null,
               ...search.getSearchRowHighlight(node, query),
             })
           );
@@ -181,34 +225,20 @@ async function renderAll() {
           section.hostPattern,
           section.name,
           injectOnLoad,
-          { showRemove }
+          {
+            onDeleteCustom: async (linkId) => {
+              await removeCustomLinkById(linkId);
+              const nextInject = await loadInjectOnLoad();
+              delete nextInject[linkId];
+              await browser.storage.local.set({
+                [globalThis.SnLinksLinkModel.INJECT_ON_LOAD_KEY]: nextInject,
+              });
+              await renderAll();
+            },
+          }
         );
       }
     }
-
-    linkUi.renderCustomScripts(
-      customScripts,
-      list,
-      savedParamValues,
-      injectOnLoad,
-      query,
-      {
-        sortNodesBySearchScore: search.sortNodesBySearchScore,
-        getScriptSearchRowHighlight: search.getScriptSearchRowHighlight,
-        searchMatchScore,
-        onDeleteScript: async (scriptId) => {
-          const scripts = await loadCustomScripts();
-          const nextScripts = scripts.filter((item) => item.id !== scriptId);
-          await saveCustomScripts(nextScripts);
-          const nextInject = await loadInjectOnLoad();
-          delete nextInject[scriptId];
-          await browser.storage.local.set({
-            [globalThis.SnLinksLinkModel.INJECT_ON_LOAD_KEY]: nextInject,
-          });
-          await renderAll();
-        },
-      }
-    );
 
     linksEl.appendChild(list);
     renderSectionTabs();
@@ -226,34 +256,32 @@ const search = createSearchController({
   getActiveSection,
   setActiveSectionName,
   sectionTabKey: SECTION_TAB_KEY,
-  loadCustomScripts,
   renderAll,
 });
 
-async function addCustomScript() {
+async function addQuickAction() {
   hideMessage();
 
-  const code = normalizeScriptInput(scriptCodeInput.value);
-  if (!code) {
-    showMessage("Paste a script before adding an action.");
+  try {
+    const existing = await getCustomSectionChildren();
+    const node = buildQuickLinkNode(
+      scriptCodeInput.value,
+      scriptNameInput.value,
+      existing
+    );
+    await addCustomLinks([node]);
+    scriptNameInput.value = "";
+    scriptCodeInput.value = "";
+    if (activeSectionName !== CUSTOM_SECTION_NAME) {
+      activeSectionName = CUSTOM_SECTION_NAME;
+      await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
+    }
+    await renderAll();
+    showMessage(`Added "${node.name}".`);
+  } catch (error) {
+    showMessage(error.message || String(error));
     scriptCodeInput.focus();
-    return;
   }
-
-  const scripts = await loadCustomScripts();
-  const name = scriptNameInput.value.trim() || defaultScriptName(code, scripts);
-  const nextScripts = scripts.concat({
-    id: crypto.randomUUID(),
-    name,
-    code,
-    createdAt: Date.now(),
-  });
-
-  await saveCustomScripts(nextScripts);
-  scriptNameInput.value = "";
-  scriptCodeInput.value = "";
-  await renderAll();
-  showMessage(`Added "${name}".`);
 }
 
 let popupResizeObserverPaused = false;
@@ -390,6 +418,12 @@ async function initAddScriptCollapse() {
     setAddScriptExpanded(expanded);
     await browser.storage.local.set({ [ADD_SCRIPT_EXPANDED_KEY]: expanded });
   });
+
+  if (addScriptChevron) {
+    addScriptChevron.addEventListener("click", () => {
+      addScriptToggle.click();
+    });
+  }
 }
 
 function setAddScriptExpanded(expanded) {
@@ -514,27 +548,29 @@ async function openNetworkRulesWindow() {
 }
 
 async function init() {
-  const raw = await fetch(browser.runtime.getURL("data/links.json")).then(
-    (response) => response.json()
-  );
-  linkSections = parseLinkSections(raw);
+  await reloadLinkSections();
   const stored = await browser.storage.local.get(SECTION_TAB_KEY);
   activeSectionName =
     stored[SECTION_TAB_KEY] ||
-    linkSections.find((section) => section.name === "ServiceNow")?.name ||
+    linkSections.find((section) => section.name === CUSTOM_SECTION_NAME)?.name ||
+    linkSections.find((section) => section.name === "Reverse-engineering tools")
+      ?.name ||
     linkSections[0]?.name ||
     null;
 
   const activeTab = await getActiveTab();
   if (activeTab?.url) {
-    instanceStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
+    activeTabStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
   } else {
-    instanceStatusEl.textContent = "No active tab";
+    activeTabStatusEl.textContent = "No active tab";
   }
   updateStickyOffsets();
 
   addScriptBtn.addEventListener("click", () => {
-    addCustomScript();
+    addQuickAction();
+  });
+  linkBuilderBtn.addEventListener("click", () => {
+    openLinkBuilderWindow();
   });
 
   const networkRulesBtn = document.getElementById("network-rules-btn");
@@ -554,7 +590,13 @@ async function init() {
   scriptCodeInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
-      addCustomScript();
+      addQuickAction();
+    }
+  });
+
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes[LINKS_OVERLAY_KEY]) {
+      renderAll();
     }
   });
 

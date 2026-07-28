@@ -214,7 +214,7 @@ h1 {
   cursor: default;
 }
 
-.instance-status {
+.active-tab-status {
   margin: 0;
   min-width: 0;
   flex: 1 1 auto;
@@ -392,11 +392,15 @@ h1 {
   padding-bottom: 10px;
 }
 
-.add-script-toggle {
+.add-script-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   width: 100%;
+}
+
+.add-script-toggle {
+  flex: 0 0 auto;
   margin: 0;
   padding: 0;
   border: 0;
@@ -408,18 +412,44 @@ h1 {
   color: var(--folder);
   cursor: pointer;
   text-align: left;
+  white-space: nowrap;
 }
 
-.add-script-toggle::after {
-  content: "▾";
+.add-script-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
   font-size: 12px;
   line-height: 1;
   color: var(--muted);
   transition: transform 0.15s ease;
+  cursor: pointer;
+  user-select: none;
 }
 
-.add-script.is-collapsed .add-script-toggle::after {
+.add-script.is-collapsed .add-script-chevron {
   transform: rotate(-90deg);
+}
+
+.add-script-advanced-btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.add-script-advanced-btn:hover,
+.add-script-advanced-btn:focus-visible {
+  color: var(--text);
+  border-color: var(--muted);
+  outline: none;
 }
 
 .add-script-toggle:hover,
@@ -449,7 +479,8 @@ h1 {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -476,10 +507,39 @@ h1 {
   cursor: pointer;
 }
 
+.builder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.secondary-btn {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondary-btn:hover,
+.secondary-btn:focus-visible,
+#add-script-btn:hover,
+#add-script-btn:focus-visible {
+  outline: none;
+}
+
+.secondary-btn:hover,
+.secondary-btn:focus-visible {
+  border-color: var(--muted);
+}
+
 #add-script-btn:hover,
 #add-script-btn:focus-visible {
   background: var(--accent-hover);
-  outline: none;
 }
 
 .link-list {

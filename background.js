@@ -23,7 +23,9 @@ let networkNavigationHookRegistered = false;
 async function getLinkSections() {
   if (!linksCache) {
     const response = await fetch(browser.runtime.getURL("data/links.json"));
-    linksCache = await response.json();
+    const bundled = await response.json();
+    const overlay = await globalThis.SnLinksLinkCatalog.ensureLinksOverlayInStorage();
+    linksCache = globalThis.SnLinksLinkCatalog.mergeLinksCatalog(bundled, overlay);
   }
   return linksCache;
 }
@@ -92,36 +94,25 @@ async function rebuildInjectCache() {
   const stored = await browser.storage.local.get([
     INJECT_ON_LOAD_KEY,
     PARAM_VALUES_KEY,
-    CUSTOM_SCRIPTS_KEY,
   ]);
   const injectOnLoad = stored[INJECT_ON_LOAD_KEY] || {};
   const paramValues = stored[PARAM_VALUES_KEY] || {};
-  const customScripts = stored[CUSTOM_SCRIPTS_KEY] || [];
   const sections = await getLinkSections();
   const scriptlets = [];
 
   for (const [name, section] of Object.entries(sections)) {
-    LM.collectScriptlets(section.children || [], section.hostPattern ?? null, name, scriptlets);
-  }
-
-  for (const script of customScripts) {
-    scriptlets.push({
-      linkKey: script.id,
-      node: {
-        id: script.id,
-        name: script.name,
-        type: "scriptlet",
-        code: script.code,
-        hostPattern: null,
-      },
-    });
+    LM.collectScriptlets(
+      section.children || [],
+      section.hostPattern ?? null,
+      name,
+      scriptlets
+    );
   }
 
   injectEntries = [];
   for (const { linkKey, node } of scriptlets) {
     if (!injectOnLoad[linkKey]) continue;
     if (node.nav) continue;
-    if (LM.extractNavigationPath(node.code)) continue;
 
     const parameterDefs = LM.getParameterDefs(node);
     const rawValues = paramValues[linkKey] || {};
@@ -459,9 +450,13 @@ browser.storage.onChanged.addListener((changes, area) => {
     if (
       changes[INJECT_ON_LOAD_KEY] ||
       changes[PARAM_VALUES_KEY] ||
+      changes[LINKS_OVERLAY_KEY] ||
       changes[CUSTOM_SCRIPTS_KEY] ||
       changes[INJECT_ON_LOAD_ENABLED_KEY]
     ) {
+      if (changes[LINKS_OVERLAY_KEY] || changes[CUSTOM_SCRIPTS_KEY]) {
+        linksCache = null;
+      }
       scheduleRefreshInjectState();
     }
     if (

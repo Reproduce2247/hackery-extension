@@ -6,10 +6,7 @@ import {
   validateParamValues,
 } from "./activate-link.js";
 
-const {
-  evaluateNavScript,
-  resolveAbsoluteUrl,
-} = globalThis.SnLinksNav;
+const { resolveNavScriptletUrl } = globalThis.SnLinksNav;
 
 const {
   getParameterDefs,
@@ -41,8 +38,12 @@ async function resolveCopyText(node, row) {
     if (resolved.nav) {
       const hostPattern = resolved.hostPattern ?? null;
       const { tab, origin } = await getTargetTab(hostPattern);
-      const result = evaluateNavScript(resolved.code, tab.url);
-      const url = resolveAbsoluteUrl(result, tab, origin, hostPattern);
+      const url = resolveNavScriptletUrl(
+        resolved.code,
+        tab.url,
+        origin,
+        tab
+      );
       if (!url) {
         throw new Error("Navigation script did not resolve to a URL.");
       }
@@ -53,11 +54,10 @@ async function resolveCopyText(node, row) {
 
   const hostPattern = resolved.hostPattern ?? null;
   const { tab, origin } = await getTargetTab(hostPattern);
-  const url = resolveNavigationUrl(
+  const url = await resolveNavigationUrl(
     resolved,
     tab,
     origin,
-    hostPattern,
     paramValues
   );
 
