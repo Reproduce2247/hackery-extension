@@ -39,7 +39,7 @@ const {
 } = globalThis.SnLinksStorageKeys;
 
 const { parseLinkSections, flattenLinkNodes } = globalThis.SnLinksLinkModel;
-const { isHiddenSectionTab, isCustomLink } = globalThis.SnLinksLinkCatalog;
+const { isCustomLink } = globalThis.SnLinksLinkCatalog;
 
 const POPUP_MIN_WIDTH = 420;
 const POPUP_MIN_HEIGHT = 400;
@@ -126,7 +126,7 @@ function getLinkSections() {
 }
 
 function getVisibleSections() {
-  return linkSections?.filter((section) => !isHiddenSectionTab(section.name)) || [];
+  return linkSections || [];
 }
 
 function sectionHasCustomLinks(section) {

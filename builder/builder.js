@@ -7,6 +7,7 @@ import {
   updateCustomLink,
   getCatalogSectionNames,
   getLinksOverlayForExport,
+  importLinksOverlay,
 } from "../popup/link-storage.js";
 import {
   buildLinkNodeFromForm,
@@ -18,17 +19,10 @@ import {
   applyTabPrefill,
   initBuilderForm,
   updateBuilderFieldVisibility,
-  readTargetSection,
 } from "../popup/link-builder.js";
 import { downloadOverlayJson } from "../popup/link-export.js";
 
-const {
-  parseImportedLinkNodes,
-  validateImportNode,
-  normalizeImportedNodes,
-  overlayExport,
-  isHiddenSectionTab,
-} = globalThis.SnLinksLinkCatalog;
+const { overlayExport } = globalThis.SnLinksLinkCatalog;
 
 const { LINKS_OVERLAY_KEY, LINK_BUILDER_SECTION_KEY } = globalThis.SnLinksStorageKeys;
 
@@ -241,30 +235,6 @@ async function startNewLink(sectionName = defaultSectionName) {
   renderLinksList();
 }
 
-function isSectionOverlay(data) {
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return false;
-  }
-  if (data.type || data.code || data.path || data.url) {
-    return false;
-  }
-  if (Array.isArray(data.children)) {
-    return false;
-  }
-
-  const entries = Object.entries(data);
-  if (!entries.length) {
-    return false;
-  }
-
-  return entries.every(
-    ([, section]) =>
-      section &&
-      typeof section === "object" &&
-      Array.isArray(section.children)
-  );
-}
-
 async function importLinksFromJson(raw) {
   hideMessage();
 
@@ -275,53 +245,11 @@ async function importLinksFromJson(raw) {
   }
 
   try {
-    const data = JSON.parse(trimmed);
-
-    if (isSectionOverlay(data)) {
-      let total = 0;
-      const importedSections = [];
-
-      for (const [sectionName, section] of Object.entries(data)) {
-        if (isHiddenSectionTab(sectionName)) {
-          continue;
-        }
-
-        const nodes = normalizeImportedNodes(section.children || []);
-        nodes.forEach((node, index) =>
-          validateImportNode(node, `${sectionName}.${index}`)
-        );
-
-        if (!nodes.length) {
-          continue;
-        }
-
-        await addLinksToSection(sectionName, nodes);
-        total += nodes.length;
-        importedSections.push(sectionName);
-      }
-
-      if (!total) {
-        showMessage("No links found in file.");
-        return;
-      }
-
-      await reloadLinks();
-      showMessage(
-        `Imported ${total} link(s) into ${importedSections.join(", ")}.`
-      );
-      return;
-    }
-
-    const targetSection = readTargetSection(builderElements);
-    const parsed = parseImportedLinkNodes(data);
-    parsed.forEach((node, index) => validateImportNode(node, String(index)));
-    const nodes = normalizeImportedNodes(parsed);
-    await addLinksToSection(targetSection, nodes);
+    const { importedLeafCount, sectionNames } = await importLinksOverlay(trimmed);
     await reloadLinks();
-    if (nodes.length === 1 && nodes[0].id) {
-      selectLink(nodes[0].id);
-    }
-    showMessage(`Imported ${nodes.length} link(s) into ${targetSection}.`);
+    showMessage(
+      `Imported ${importedLeafCount} link(s) into ${sectionNames.join(", ")}.`
+    );
   } catch (error) {
     showMessage(error.message || String(error));
   }

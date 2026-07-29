@@ -1,7 +1,7 @@
 const {
-  CUSTOM_SECTION_NAME,
-  isHiddenSectionTab,
+  LEGACY_CUSTOM_MIGRATION_SECTION,
   mergeLinksCatalog,
+  importOverlayIntoExisting,
   ensureLinksOverlayInStorage,
 } = globalThis.SnLinksLinkCatalog;
 
@@ -27,6 +27,12 @@ export async function getSectionOverlayChildren(sectionName) {
   return overlay[sectionName]?.children || [];
 }
 
+export async function saveSectionOverlay(sectionName, section) {
+  const overlay = await ensureLinksOverlay();
+  overlay[sectionName] = section;
+  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+}
+
 export async function saveSectionOverlayChildren(sectionName, children) {
   const overlay = await ensureLinksOverlay();
   overlay[sectionName] = {
@@ -45,10 +51,17 @@ export async function addLinksToSection(sectionName, nodes) {
   );
 }
 
+export async function importLinksOverlay(raw) {
+  const overlay = await ensureLinksOverlay();
+  const result = importOverlayIntoExisting(overlay, raw);
+  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: result.overlay });
+  return result;
+}
+
 export async function findCustomLinkById(linkId) {
   const overlay = await ensureLinksOverlay();
   for (const [sectionName, section] of Object.entries(overlay)) {
-    if (isHiddenSectionTab(sectionName) || !Array.isArray(section?.children)) {
+    if (!Array.isArray(section?.children)) {
       continue;
     }
     const index = section.children.findIndex((node) => node.id === linkId);
@@ -114,7 +127,7 @@ export async function getAllCustomLinks() {
   const results = [];
 
   for (const [sectionName, section] of Object.entries(overlay)) {
-    if (isHiddenSectionTab(sectionName) || !Array.isArray(section?.children)) {
+    if (!Array.isArray(section?.children)) {
       continue;
     }
     for (const node of section.children) {
@@ -131,19 +144,17 @@ export async function getAllCustomLinks() {
 
 export async function getCatalogSectionNames() {
   const catalog = await loadMergedLinkCatalog();
-  return Object.keys(catalog).filter((name) => !isHiddenSectionTab(name));
+  return Object.keys(catalog);
 }
 
 export async function getLinksOverlayForExport() {
   return ensureLinksOverlay();
 }
 
-/** @deprecated use getSectionOverlayChildren */
-export async function getCustomSectionChildren() {
-  return getSectionOverlayChildren(CUSTOM_SECTION_NAME);
-}
-
 /** @deprecated use addLinksToSection */
-export async function addCustomLinks(nodes, sectionName = CUSTOM_SECTION_NAME) {
+export async function addCustomLinks(
+  nodes,
+  sectionName = LEGACY_CUSTOM_MIGRATION_SECTION
+) {
   await addLinksToSection(sectionName, nodes);
 }

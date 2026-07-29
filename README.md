@@ -53,7 +53,7 @@ Nested menus use `{ "name": "…", "children": [ … ] }` with no `type`. Folder
 
 ### `hostPattern`
 
-Optional regex, inherited from the section or parent folder unless overridden on a link. Matched against the tab hostname and full href (case-insensitive).
+Optional regex, inherited from the section or parent folder unless overridden on a folder or link. A link-level `hostPattern` always wins over its section or folder. Matched against the tab hostname and full href (case-insensitive).
 
 | Value | Tab selection |
 |---|---|

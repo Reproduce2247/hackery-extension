@@ -1,4 +1,4 @@
-const { serializeLinkNode, customSectionExport } = globalThis.SnLinksLinkCatalog;
+const { serializeLinkNode, overlayExport } = globalThis.SnLinksLinkCatalog;
 
 function writeClipboardText(text) {
   if (navigator.clipboard?.writeText) {
@@ -41,10 +41,6 @@ export function downloadJson(filename, data) {
   URL.revokeObjectURL(url);
 }
 
-export function downloadCustomSectionJson(overlay) {
-  downloadJson("custom-links.json", customSectionExport(overlay));
-}
-
 export function downloadOverlayJson(overlay) {
-  downloadJson("custom-links.json", customSectionExport(overlay));
+  downloadJson("custom-links.json", overlayExport(overlay));
 }
