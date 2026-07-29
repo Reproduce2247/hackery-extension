@@ -4,21 +4,15 @@
     <meta charset="utf-8" />
     <title>Network Rules</title>
     <link rel="stylesheet" href="rules.css" />
+    <link rel="stylesheet" href="../lib/codemirror-fields.css" />
   </head>
   <body>
     <header class="page-header">
-      <div class="page-header-main">
-        <h1>Network rules</h1>
-        <p class="page-subtitle">
-          fetch/XHR hooks install at document start in the page (MAIN world).
-          Other requests use webRequest. Rules re-inject on save when tabs are open.
-        </p>
-      </div>
+      <h1>Network rules</h1>
+      <p class="page-header-desc">
+        fetch/XHR + webRequest; re-injects on save. Global on/off: popup Network toggle.
+      </p>
       <div class="page-header-actions">
-        <label class="toggle-field" title="Master switch for fetch/XHR hooks and webRequest rules">
-          <input id="network-hooks-enabled" type="checkbox" checked />
-          <span>Network hooks</span>
-        </label>
         <label class="toggle-field">
           <input id="rules-enabled" type="checkbox" checked />
           <span>Enabled</span>
@@ -27,7 +21,7 @@
           <option value="">Insert from template…</option>
         </select>
         <button id="add-rule-btn" type="button">Add rule</button>
-        <button id="reinject-btn" type="button" class="secondary">Re-inject active tabs</button>
+        <button id="reinject-btn" type="button" class="secondary">Re-inject</button>
       </div>
     </header>
 
@@ -358,6 +352,6 @@
     <script src="../lib/network-rules-shared.js"></script>
     <script src="../lib/ui-message.js"></script>
     <script src="../lib/network-rule-templates.js"></script>
-    <script src="rules.js"></script>
+    <script type="module" src="rules.js"></script>
   </body>
 </html>

@@ -11,13 +11,18 @@ import {
 } from "./link-ui.js";
 import {
   loadMergedLinkCatalog,
-  addCustomLinks,
+  addLinksToSection,
   removeCustomLinkById,
-  getCustomSectionChildren,
 } from "./link-storage.js";
 import { buildQuickLinkNode } from "./link-builder.js";
 import { copyLinkNodeJson } from "./link-export.js";
 import { openLinkBuilderWindow } from "./open-builder-window.js";
+import {
+  attachCodeMirror,
+  getFieldValue,
+  setFieldValue,
+  focusField,
+} from "../lib/codemirror-fields.bundle.js";
 
 if (!globalThis.SnLinksLinkModel) {
   throw new Error("sn-links: lib/link-model.js must load before popup.js");
@@ -34,7 +39,7 @@ const {
 } = globalThis.SnLinksStorageKeys;
 
 const { parseLinkSections, flattenLinkNodes } = globalThis.SnLinksLinkModel;
-const { CUSTOM_SECTION_NAME } = globalThis.SnLinksLinkCatalog;
+const { isHiddenSectionTab, isCustomLink } = globalThis.SnLinksLinkCatalog;
 
 const POPUP_MIN_WIDTH = 420;
 const POPUP_MIN_HEIGHT = 400;
@@ -59,6 +64,19 @@ const addScriptChevron = document.querySelector(".add-script-chevron");
 const addScriptPanel = document.getElementById("add-script-panel");
 const scriptNameInput = document.getElementById("script-name");
 const scriptCodeInput = document.getElementById("script-code");
+
+const scriptCodeEditor = attachCodeMirror(scriptCodeInput, {
+  language: "javascript",
+  minHeight: 80,
+  placeholder: "Paste JS or a URL/path",
+});
+scriptCodeEditor.view.dom.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    addQuickAction();
+  }
+});
+const quickAddModeSelect = document.getElementById("quick-add-mode");
 const searchOverlayEl = document.getElementById("search-overlay");
 const searchInputEl = document.getElementById("search-input");
 
@@ -92,7 +110,7 @@ async function exportLinkJson(node) {
 }
 
 function editCustomLink(node) {
-  openLinkBuilderWindow({ editId: node.id });
+  openLinkBuilderWindow({ editId: node.id, sectionName: node.sectionName });
 }
 
 const linkUi = createLinkUi({
@@ -104,7 +122,17 @@ const linkUi = createLinkUi({
 });
 
 function getLinkSections() {
-  return linkSections;
+  return getVisibleSections();
+}
+
+function getVisibleSections() {
+  return linkSections?.filter((section) => !isHiddenSectionTab(section.name)) || [];
+}
+
+function sectionHasCustomLinks(section) {
+  return flattenLinkNodes(section.children, section.hostPattern, section.name).some(
+    (node) => isCustomLink(node)
+  );
 }
 
 function getActiveSection() {
@@ -127,7 +155,7 @@ function renderSectionTabs() {
 
   const query = search.normalizeSearchQuery(search.getSearchQuery());
   sectionTabsEl.replaceChildren();
-  for (const section of linkSections) {
+  for (const section of getVisibleSections()) {
     const tab = document.createElement("button");
     tab.type = "button";
     tab.className = "section-tab";
@@ -161,8 +189,8 @@ async function renderAll() {
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
     const injectOnLoad = await loadInjectOnLoad();
-    const showRemove = getActiveSection()?.name === CUSTOM_SECTION_NAME;
     const section = getActiveSection();
+    const showRemove = section ? sectionHasCustomLinks(section) : false;
     const showParams = section ? linkUi.treeHasParams(section.children) : false;
     const showOnLoad = section ? linkUi.treeHasOnLoad(section.children) : false;
     const query = search.normalizeSearchQuery(search.getSearchQuery());
@@ -198,10 +226,10 @@ async function renderAll() {
             linkUi.createLinkRow(node, {
               savedParamValues,
               injectOnLoad,
-              showRemove: section.name === CUSTOM_SECTION_NAME,
-              isCustom: section.name === CUSTOM_SECTION_NAME,
+              showRemove: showRemove,
+              isCustom: isCustomLink(node),
               onDelete:
-                section.name === CUSTOM_SECTION_NAME && node.id
+                isCustomLink(node) && node.id
                   ? async (event) => {
                       event.stopPropagation();
                       await removeCustomLinkById(node.id);
@@ -226,6 +254,7 @@ async function renderAll() {
           section.name,
           injectOnLoad,
           {
+            showRemoveColumn: showRemove,
             onDeleteCustom: async (linkId) => {
               await removeCustomLinkById(linkId);
               const nextInject = await loadInjectOnLoad();
@@ -262,25 +291,32 @@ const search = createSearchController({
 async function addQuickAction() {
   hideMessage();
 
+  const section = getActiveSection();
+  if (!section) {
+    showMessage("Select a section tab before adding an action.");
+    return;
+  }
+
   try {
-    const existing = await getCustomSectionChildren();
-    const node = buildQuickLinkNode(
-      scriptCodeInput.value,
-      scriptNameInput.value,
-      existing
+    const leafNodes = flattenLinkNodes(
+      section.children,
+      section.hostPattern,
+      section.name
     );
-    await addCustomLinks([node]);
+    const node = buildQuickLinkNode(
+      getFieldValue(scriptCodeInput),
+      scriptNameInput.value,
+      leafNodes,
+      quickAddModeSelect?.value || "link"
+    );
+    await addLinksToSection(section.name, [node]);
     scriptNameInput.value = "";
-    scriptCodeInput.value = "";
-    if (activeSectionName !== CUSTOM_SECTION_NAME) {
-      activeSectionName = CUSTOM_SECTION_NAME;
-      await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
-    }
+    setFieldValue(scriptCodeInput, "");
     await renderAll();
-    showMessage(`Added "${node.name}".`);
+    showMessage(`Added "${node.name}" to ${section.name}.`);
   } catch (error) {
     showMessage(error.message || String(error));
-    scriptCodeInput.focus();
+    focusField(scriptCodeInput);
   }
 }
 
@@ -524,38 +560,18 @@ async function initCspDisableControl() {
   });
 }
 
-async function openNetworkRulesWindow() {
-  const rulesUrl = browser.runtime.getURL("rules/rules.html");
-  const windows = await browser.windows.getAll({ populate: true });
-  for (const win of windows) {
-    for (const tab of win.tabs || []) {
-      if (tab.url === rulesUrl && win.id != null) {
-        await browser.windows.update(win.id, { focused: true });
-        if (tab.id != null) {
-          await browser.tabs.update(tab.id, { active: true });
-        }
-        return;
-      }
-    }
-  }
-
-  await browser.windows.create({
-    url: rulesUrl,
-    type: "popup",
-    width: 960,
-    height: 760,
-  });
-}
-
 async function init() {
   await reloadLinkSections();
   const stored = await browser.storage.local.get(SECTION_TAB_KEY);
+  const visibleSections = getVisibleSections();
+  const storedTab = stored[SECTION_TAB_KEY];
   activeSectionName =
-    stored[SECTION_TAB_KEY] ||
-    linkSections.find((section) => section.name === CUSTOM_SECTION_NAME)?.name ||
-    linkSections.find((section) => section.name === "Reverse-engineering tools")
+    (storedTab && visibleSections.some((section) => section.name === storedTab)
+      ? storedTab
+      : null) ||
+    visibleSections.find((section) => section.name === "Reverse-engineering tools")
       ?.name ||
-    linkSections[0]?.name ||
+    visibleSections[0]?.name ||
     null;
 
   const activeTab = await getActiveTab();
@@ -570,27 +586,13 @@ async function init() {
     addQuickAction();
   });
   linkBuilderBtn.addEventListener("click", () => {
-    openLinkBuilderWindow();
+    openLinkBuilderWindow({ sectionName: activeSectionName });
   });
-
-  const networkRulesBtn = document.getElementById("network-rules-btn");
-  if (networkRulesBtn) {
-    networkRulesBtn.addEventListener("click", () => {
-      openNetworkRulesWindow();
-    });
-  }
 
   document.addEventListener("click", handleDocumentClickForCombobox);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeOpenContextMenu();
-    }
-  });
-
-  scriptCodeInput.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      addQuickAction();
     }
   });
 

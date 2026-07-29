@@ -13,6 +13,7 @@ import {
   getBuilderFieldElements,
   setFieldVisible,
 } from "./link-builder-fields.js";
+import { getFieldValue, setFieldValue } from "../lib/codemirror-fields.bundle.js";
 
 const { ensureLinkId } = globalThis.SnLinksLinkCatalog;
 const { normalizeScriptInput, defaultScriptName } = globalThis.SnLinksLinkModel;
@@ -53,33 +54,24 @@ function defaultUrlName(path, existingCount) {
   }
 }
 
-function isQuickAddUrl(input) {
-  if (/^https?:\/\//i.test(input)) {
-    return true;
-  }
-  return (
-    input.startsWith("/") &&
-    !input.includes("\n") &&
-    !input.includes(";") &&
-    !/^javascript:/i.test(input)
-  );
-}
-
-export function buildQuickLinkNode(rawInput, nameInput, existingNodes = []) {
+export function buildQuickLinkNode(
+  rawInput,
+  nameInput,
+  existingNodes = [],
+  mode = "link"
+) {
   const input = String(rawInput ?? "").trim();
   if (!input) {
     throw new Error("Paste a script or URL before adding an action.");
   }
 
-  if (isQuickAddUrl(input)) {
+  if (mode === "link") {
     const node = {
       name: nameInput.trim() || defaultUrlName(input, existingNodes.length),
       type: "navigate",
       path: input,
+      nav: input.startsWith("/") ? "same-tab" : "foreground",
     };
-    if (/^https?:\/\//i.test(input)) {
-      node.nav = "foreground";
-    }
     return ensureLinkId(node);
   }
 
@@ -242,6 +234,9 @@ export async function getTabPrefill() {
 export function getBuilderFormElements(root = document) {
   return {
     editIdInput: root.getElementById("link-edit-id"),
+    sectionSelect: root.getElementById("link-section"),
+    sectionNewInput: root.getElementById("link-section-new"),
+    sectionNewField: root.getElementById("link-section-new-field"),
     typeSelect: root.getElementById("link-type"),
     nameInput: root.getElementById("link-name"),
     displayNameInput: root.getElementById("link-display-name"),
@@ -365,6 +360,60 @@ export function buildLinkNodeFromForm(form) {
   return form.editId ? node : ensureLinkId(node);
 }
 
+export function readTargetSection(elements) {
+  const selected = elements.sectionSelect?.value || "";
+  if (selected === "__new__") {
+    const name = elements.sectionNewInput?.value.trim() || "";
+    if (!name) {
+      throw new Error("New section name is required.");
+    }
+    return name;
+  }
+  if (!selected) {
+    throw new Error("Section is required.");
+  }
+  return selected;
+}
+
+export function populateSectionSelect(elements, sectionNames, selectedSection) {
+  if (!elements.sectionSelect) {
+    return;
+  }
+
+  elements.sectionSelect.replaceChildren();
+  for (const name of sectionNames) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    elements.sectionSelect.appendChild(option);
+  }
+
+  const newOption = document.createElement("option");
+  newOption.value = "__new__";
+  newOption.textContent = "Create new section…";
+  elements.sectionSelect.appendChild(newOption);
+
+  const hasSelected =
+    selectedSection && sectionNames.includes(selectedSection);
+  if (hasSelected) {
+    elements.sectionSelect.value = selectedSection;
+    elements.sectionNewInput.value = "";
+    setFieldVisible(elements.sectionNewField, false);
+    return;
+  }
+
+  if (selectedSection) {
+    elements.sectionSelect.value = "__new__";
+    elements.sectionNewInput.value = selectedSection;
+    setFieldVisible(elements.sectionNewField, true);
+    return;
+  }
+
+  elements.sectionSelect.value = sectionNames[0] || "__new__";
+  elements.sectionNewInput.value = "";
+  setFieldVisible(elements.sectionNewField, elements.sectionSelect.value === "__new__");
+}
+
 export function readBuilderForm(elements) {
   const parameterFields = readParameterFields(elements.fieldElements);
   const extract = readExtractFields(elements.fieldElements);
@@ -372,12 +421,13 @@ export function readBuilderForm(elements) {
 
   return {
     editId: elements.editIdInput.value.trim() || null,
+    sectionName: readTargetSection(elements),
     type: elements.typeSelect.value,
     name: elements.nameInput.value,
     displayName: elements.displayNameInput.value,
     hostPattern,
     searchTags: elements.searchTagsInput.value,
-    code: elements.codeInput.value,
+    code: getFieldValue(elements.codeInput),
     path: elements.pathInput.value,
     url: elements.urlInput.value,
     nav: elements.navSelect.value,
@@ -386,8 +436,9 @@ export function readBuilderForm(elements) {
   };
 }
 
-export function populateBuilderForm(elements, node) {
+export function populateBuilderForm(elements, node, sectionName, sectionNames) {
   elements.editIdInput.value = node.id || "";
+  populateSectionSelect(elements, sectionNames, sectionName);
   elements.typeSelect.value = node.type || "scriptlet";
   elements.nameInput.value = node.name || "";
   elements.displayNameInput.value = node.displayName || "";
@@ -395,7 +446,7 @@ export function populateBuilderForm(elements, node) {
   elements.searchTagsInput.value = Array.isArray(node.searchTags)
     ? node.searchTags.join(", ")
     : "";
-  elements.codeInput.value = node.code || "";
+  setFieldValue(elements.codeInput, node.code || "");
   elements.pathInput.value = node.path || "";
   elements.urlInput.value = node.url || "";
   populateParameterFields(elements.fieldElements, node);
@@ -404,14 +455,15 @@ export function populateBuilderForm(elements, node) {
   updateBuilderFieldVisibility(elements);
 }
 
-export function clearBuilderForm(elements) {
+export function clearBuilderForm(elements, sectionNames, defaultSection) {
   elements.editIdInput.value = "";
+  populateSectionSelect(elements, sectionNames, defaultSection);
   elements.typeSelect.value = "scriptlet";
   elements.nameInput.value = "";
   elements.displayNameInput.value = "";
   populateHostPattern(elements.fieldElements, undefined);
   elements.searchTagsInput.value = "";
-  elements.codeInput.value = "";
+  setFieldValue(elements.codeInput, "");
   elements.pathInput.value = "";
   elements.urlInput.value = "";
   clearParameterFields(elements.fieldElements);
@@ -511,8 +563,16 @@ export function updateBuilderFieldVisibility(elements) {
   updateParameterModeVisibility(elements.fieldElements);
 }
 
-export function initBuilderForm(elements) {
+export function initBuilderForm(elements, { sectionNames = [], defaultSection } = {}) {
   wireBuilderFieldUi(elements.fieldElements);
+  populateSectionSelect(elements, sectionNames, defaultSection);
+
+  elements.sectionSelect?.addEventListener("change", () => {
+    setFieldVisible(
+      elements.sectionNewField,
+      elements.sectionSelect.value === "__new__"
+    );
+  });
 
   elements.typeSelect.addEventListener("change", async () => {
     const type = elements.typeSelect.value;

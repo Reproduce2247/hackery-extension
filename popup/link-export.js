@@ -44,3 +44,7 @@ export function downloadJson(filename, data) {
 export function downloadCustomSectionJson(overlay) {
   downloadJson("custom-links.json", customSectionExport(overlay));
 }
+
+export function downloadOverlayJson(overlay) {
+  downloadJson("custom-links.json", customSectionExport(overlay));
+}

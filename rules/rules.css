@@ -31,9 +31,17 @@
   box-sizing: border-box;
 }
 
+html,
 body {
+  height: 100%;
   margin: 0;
-  min-height: 100vh;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   font: 13px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -41,22 +49,33 @@ body {
 
 .page-header {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  line-height: 1.2;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 
-.page-header-main h1 {
+.page-header h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.page-subtitle {
-  margin: 4px 0 0;
+.page-header-desc {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1;
   color: var(--muted);
-  max-width: 52rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .page-header-actions {
@@ -66,38 +85,71 @@ body {
   flex-shrink: 0;
 }
 
+.page-header .toggle-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.page-header button {
+  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .template-select {
-  max-width: 220px;
-  min-width: 160px;
-  padding: 6px 8px;
+  box-sizing: border-box;
+  width: auto;
+  field-sizing: content;
+  padding: 2px 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--panel);
   color: var(--text);
   font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .layout {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 280px minmax(420px, 1fr);
-  grid-template-rows: auto auto;
-  gap: 12px;
-  padding: 12px;
+  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(120px, 0.45fr);
+  gap: 8px;
+  padding: 8px;
+  overflow: hidden;
 }
 
 .rules-panel {
   grid-row: 1 / span 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .log-panel {
   grid-column: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-panel {
+  grid-column: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  min-height: 120px;
+  border-radius: 6px;
+  min-height: 0;
 }
 
 .panel-header {
@@ -105,13 +157,13 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
 }
 
 .panel-header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .panel-meta {
@@ -120,7 +172,8 @@ body {
 }
 
 .rules-list {
-  max-height: calc(100vh - 120px);
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -138,7 +191,7 @@ body {
   display: block;
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -189,7 +242,10 @@ body {
 }
 
 .rule-form {
-  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
 }
 
 .form-grid {
@@ -223,7 +279,7 @@ body {
 .field input[type="text"],
 .field input[type="number"],
 .field select,
-.field textarea {
+.field textarea:not([aria-hidden="true"]) {
   width: 100%;
   padding: 7px 8px;
   border: 1px solid var(--border);
@@ -233,7 +289,7 @@ body {
   font: inherit;
 }
 
-.field textarea {
+.field textarea:not([aria-hidden="true"]) {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
@@ -370,11 +426,13 @@ button.icon-btn {
 }
 
 .message {
-  margin: 0 12px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
   background: var(--warn-bg);
   color: var(--warn-text);
+  font-size: 12px;
 }
 
 .message.hidden {
@@ -382,9 +440,10 @@ button.icon-btn {
 }
 
 .rules-log {
-  max-height: 220px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 8px 12px 12px;
+  padding: 6px 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
 }

@@ -78,23 +78,6 @@ body {
   display: none;
 }
 
-.import-panel {
-  margin: 12px 18px 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-}
-
-.import-panel.hidden {
-  display: none;
-}
-
-.import-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .layout {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
@@ -137,15 +120,28 @@ body {
   padding: 6px;
 }
 
+.link-item-row {
+  display: flex;
+  align-items: stretch;
+  margin: 0 0 4px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.link-item-row:has(.link-item.active) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+
 .link-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  margin: 0 0 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
   padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -160,8 +156,28 @@ body {
 }
 
 .link-item.active {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
   background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.link-item-delete {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.link-item-delete:hover,
+.link-item-delete:focus-visible {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  outline: none;
 }
 
 .link-item-badge {
@@ -174,9 +190,24 @@ body {
   background: color-mix(in srgb, var(--accent) 25%, var(--panel));
 }
 
-.link-item-label {
+.link-item-label-wrap {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.link-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-item-section {
+  font-size: 10px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -222,9 +253,13 @@ body {
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.field textarea {
+.field textarea:not([aria-hidden="true"]) {
   resize: vertical;
   min-height: 72px;
+}
+
+.extract-url-field textarea:not([aria-hidden="true"]) {
+  min-height: auto;
 }
 
 .field select {

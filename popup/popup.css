@@ -140,6 +140,7 @@ header {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .header-btn {
@@ -160,21 +161,14 @@ header {
 
 h1 {
   margin: 0;
+  flex: 0 0 auto;
   font-size: 15px;
   font-weight: 600;
 }
 
-.header-meta {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 4px;
-}
-
 .header-toggles {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -215,12 +209,13 @@ h1 {
 }
 
 .active-tab-status {
-  margin: 0;
+  margin: 4px 0 0;
   min-width: 0;
-  flex: 1 1 auto;
   font-size: 11px;
   color: var(--muted);
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .message {
@@ -478,6 +473,25 @@ h1 {
   color: var(--muted);
 }
 
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-inline .field-label {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.field-inline input,
+.field-inline select {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
 .field input,
 .field textarea,
 .field select {
@@ -490,7 +504,7 @@ h1 {
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
-.field textarea {
+.field textarea:not([aria-hidden="true"]) {
   resize: vertical;
   min-height: 72px;
 }
@@ -871,6 +885,29 @@ h1 {
 
 .link-list-header + .folder-title {
   padding-top: 4px;
+}
+
+.link-item.is-custom {
+  background-color: transparent;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 5px,
+    color-mix(in srgb, var(--muted) 10%, transparent) 5px,
+    color-mix(in srgb, var(--muted) 10%, transparent) 6px
+  );
+}
+
+.link-item.is-custom:hover,
+.link-item.is-custom:focus-visible {
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 5px,
+    color-mix(in srgb, var(--muted) 14%, transparent) 5px,
+    color-mix(in srgb, var(--muted) 14%, transparent) 6px
+  );
 }
 
 .link-item {

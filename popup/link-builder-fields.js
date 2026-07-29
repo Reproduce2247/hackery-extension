@@ -1,3 +1,5 @@
+import { attachCodeMirror, getFieldValue, setFieldValue } from "../lib/codemirror-fields.bundle.js";
+
 export function setFieldVisible(el, visible) {
   if (!el) {
     return;
@@ -89,7 +91,9 @@ function readExtractList(listEl) {
     }
     const kind = row.querySelector('[data-field="extract-kind"]')?.value || "url";
     if (kind === "url") {
-      const pattern = row.querySelector('[data-field="extract-url"]')?.value.trim();
+      const pattern = getFieldValue(
+        row.querySelector('[data-field="extract-url"]')
+      ).trim();
       if (pattern) {
         extract[paramName] = { url: pattern };
       }
@@ -175,7 +179,7 @@ function createExtractRow(values = {}) {
       <option value="dom">DOM selector</option>
     </select>
     <div class="extract-url-field">
-      <input data-field="extract-url" type="text" placeholder="regex (capture group 1)" />
+      <textarea data-field="extract-url" rows="1" spellcheck="false" placeholder="regex (capture group 1)"></textarea>
     </div>
     <div class="extract-dom-fields is-hidden">
       <input data-field="extract-selector" type="text" placeholder="CSS selector" />
@@ -200,7 +204,7 @@ function createExtractRow(values = {}) {
 
   if (values.url) {
     kindSelect.value = "url";
-    row.querySelector('[data-field="extract-url"]').value = values.url;
+    setFieldValue(row.querySelector('[data-field="extract-url"]'), values.url);
   } else if (values.selector) {
     kindSelect.value = "dom";
     row.querySelector('[data-field="extract-selector"]').value = values.selector;
@@ -212,6 +216,11 @@ function createExtractRow(values = {}) {
   }
 
   updateExtractRowVisibility(row);
+  attachCodeMirror(row.querySelector('[data-field="extract-url"]'), {
+    language: "regex",
+    compact: true,
+    placeholder: "regex (capture group 1)",
+  });
   return row;
 }
 
@@ -249,7 +258,7 @@ export function readHostPattern(fieldElements) {
   if (mode === "none") {
     return null;
   }
-  const custom = fieldElements.hostPatternCustomInput.value.trim();
+  const custom = getFieldValue(fieldElements.hostPatternCustomInput).trim();
   if (!custom) {
     throw new Error("Enter a host pattern regex or choose inherit/none.");
   }
@@ -261,10 +270,10 @@ export function populateHostPattern(fieldElements, hostPattern) {
     fieldElements.hostPatternModeSelect.value = "none";
   } else if (hostPattern === undefined) {
     fieldElements.hostPatternModeSelect.value = "inherit";
-    fieldElements.hostPatternCustomInput.value = "";
+    setFieldValue(fieldElements.hostPatternCustomInput, "");
   } else {
     fieldElements.hostPatternModeSelect.value = "custom";
-    fieldElements.hostPatternCustomInput.value = hostPattern;
+    setFieldValue(fieldElements.hostPatternCustomInput, hostPattern);
   }
   updateHostPatternFieldVisibility(fieldElements);
 }

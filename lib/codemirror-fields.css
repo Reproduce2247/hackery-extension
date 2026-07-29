@@ -1,0 +1,28 @@
+.cm-field {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.cm-field .cm-editor {
+  outline: none;
+}
+
+.cm-field .cm-editor.cm-focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.cm-field-compact .cm-editor {
+  max-height: 2.6em;
+}
+
+.cm-field-compact .cm-scroller {
+  overflow: auto;
+}
+
+.cm-field:not(.cm-field-compact) .cm-scroller {
+  min-height: 72px;
+}

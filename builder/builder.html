@@ -4,45 +4,36 @@
     <meta charset="utf-8" />
     <title>Link builder</title>
     <link rel="stylesheet" href="builder.css" />
+    <link rel="stylesheet" href="../lib/codemirror-fields.css" />
   </head>
   <body>
     <header class="page-header">
       <div class="page-header-main">
         <h1>Link builder</h1>
         <p class="page-subtitle">
-          Edit Custom section links in links.json format. Changes save to extension
+          Edit user-added links in links.json format. Changes save to extension
           storage and appear in the popup after reload or when the popup is open.
         </p>
       </div>
       <div class="page-header-actions">
         <button id="new-link-btn" type="button">New link</button>
         <button id="export-custom-btn" type="button" class="secondary">Export</button>
-        <button id="import-toggle-btn" type="button" class="secondary">Import</button>
+        <button id="import-btn" type="button" class="secondary">Import</button>
+        <input
+          id="import-file-input"
+          type="file"
+          accept=".json,application/json"
+          hidden
+        />
       </div>
     </header>
 
     <div id="message" class="message hidden" role="status"></div>
 
-    <section id="import-panel" class="import-panel hidden" aria-label="Import links">
-      <label class="field">
-        <span class="field-label">Import JSON</span>
-        <textarea
-          id="link-import-json"
-          rows="4"
-          placeholder='Paste a link node, array, or { "Custom": { "children": [...] } }'
-          spellcheck="false"
-        ></textarea>
-      </label>
-      <div class="import-actions">
-        <button id="link-import-btn" type="button">Import into Custom</button>
-        <button id="import-cancel-btn" type="button" class="secondary">Cancel</button>
-      </div>
-    </section>
-
     <main class="layout">
-      <section class="panel links-panel" aria-label="Custom links">
+      <section class="panel links-panel" aria-label="User-added links">
         <div class="panel-header">
-          <h2>Custom links</h2>
+          <h2>User-added links</h2>
           <span id="link-count" class="panel-meta"></span>
         </div>
         <div id="links-list" class="links-list"></div>
@@ -54,6 +45,14 @@
         </div>
         <form id="link-form" class="link-form">
           <input id="link-edit-id" type="hidden" value="" />
+          <label class="field" id="link-section-field">
+            <span class="field-label">Section</span>
+            <select id="link-section"></select>
+          </label>
+          <label class="field is-hidden" id="link-section-new-field">
+            <span class="field-label">New section name</span>
+            <input id="link-section-new" type="text" autocomplete="off" />
+          </label>
           <label class="field">
             <span class="field-label">Type</span>
             <select id="link-type">

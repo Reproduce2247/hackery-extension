@@ -462,6 +462,9 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     const button = document.createElement("button");
     button.type = "button";
     button.className = "link-item";
+    if (options.isCustom) {
+      button.classList.add("is-custom");
+    }
     button.dataset.type = node.type;
 
     const badge = document.createElement("span");
@@ -584,8 +587,7 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     injectOnLoad = {},
     options = {}
   ) {
-    const isCustomSection =
-      sectionName === globalThis.SnLinksLinkCatalog.CUSTOM_SECTION_NAME;
+    const { isCustomLink } = globalThis.SnLinksLinkCatalog;
 
     for (const node of nodes) {
       const hostPattern = resolveHostPattern(node, inheritedHostPattern);
@@ -617,10 +619,10 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
           {
             savedParamValues,
             injectOnLoad,
-            showRemove: isCustomSection,
-            isCustom: isCustomSection,
+            showRemove: options.showRemoveColumn,
+            isCustom: isCustomLink(node),
             onDelete:
-              isCustomSection && node.id && options.onDeleteCustom
+              isCustomLink(node) && node.id && options.onDeleteCustom
                 ? async (event) => {
                     event.stopPropagation();
                     await options.onDeleteCustom(node.id);

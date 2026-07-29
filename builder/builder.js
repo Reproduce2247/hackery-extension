@@ -1,8 +1,11 @@
+import { attachCodeMirrorAll } from "../lib/codemirror-fields.bundle.js";
 import {
-  addCustomLinks,
-  getCustomSectionChildren,
+  addLinksToSection,
+  getAllCustomLinks,
+  findCustomLinkById,
   removeCustomLinkById,
   updateCustomLink,
+  getCatalogSectionNames,
   getLinksOverlayForExport,
 } from "../popup/link-storage.js";
 import {
@@ -15,30 +18,48 @@ import {
   applyTabPrefill,
   initBuilderForm,
   updateBuilderFieldVisibility,
+  readTargetSection,
 } from "../popup/link-builder.js";
-import { downloadCustomSectionJson } from "../popup/link-export.js";
+import { downloadOverlayJson } from "../popup/link-export.js";
 
 const {
   parseImportedLinkNodes,
   validateImportNode,
   normalizeImportedNodes,
+  overlayExport,
+  isHiddenSectionTab,
 } = globalThis.SnLinksLinkCatalog;
 
-const { LINKS_OVERLAY_KEY } = globalThis.SnLinksStorageKeys;
+const { LINKS_OVERLAY_KEY, LINK_BUILDER_SECTION_KEY } = globalThis.SnLinksStorageKeys;
 
 const linksListEl = document.getElementById("links-list");
 const linkCountEl = document.getElementById("link-count");
 const messageEl = document.getElementById("message");
 const linkFormEl = document.getElementById("link-form");
 const editorTitleEl = document.getElementById("editor-title");
-const importPanelEl = document.getElementById("import-panel");
-const importJsonInput = document.getElementById("link-import-json");
+const importFileInput = document.getElementById("import-file-input");
 const deleteLinkBtn = document.getElementById("delete-link-btn");
 
 const builderElements = getBuilderFormElements();
 
+attachCodeMirrorAll({
+  linkCode: {
+    element: builderElements.codeInput,
+    language: "javascript",
+    minHeight: 120,
+  },
+  hostPattern: {
+    element: builderElements.fieldElements.hostPatternCustomInput,
+    language: "regex",
+    compact: true,
+    placeholder: "e.g. \\.service-now\\.com$",
+  },
+});
+
 let customLinks = [];
+let sectionNames = [];
 let selectedLinkId = null;
+let defaultSectionName = null;
 
 const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl);
 
@@ -63,10 +84,25 @@ function selectLink(linkId) {
     return;
   }
 
-  populateBuilderForm(builderElements, link);
+  populateBuilderForm(builderElements, link, link.sectionName, sectionNames);
   editorTitleEl.textContent = link.displayName || link.name;
   deleteLinkBtn.disabled = false;
   renderLinksList();
+}
+
+function createLinkDeleteButton(link) {
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "link-item-delete";
+  deleteBtn.title = "Delete link";
+  deleteBtn.setAttribute("aria-label", `Delete ${link.displayName || link.name}`);
+  deleteBtn.innerHTML =
+    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 1h4l1 1h3v2H2V2h3l1-1zM3 5h10l-1 9H4L3 5zm3 2v5h1V7H6zm3 0v5h1V7H9z"/></svg>';
+  deleteBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    deleteLinkById(link.id);
+  });
+  return deleteBtn;
 }
 
 function renderLinksList() {
@@ -78,12 +114,15 @@ function renderLinksList() {
   if (customLinks.length === 0) {
     const empty = document.createElement("p");
     empty.className = "editor-empty";
-    empty.textContent = "No custom links yet.";
+    empty.textContent = "No user-added links yet.";
     linksListEl.appendChild(empty);
     return;
   }
 
   for (const link of customLinks) {
+    const row = document.createElement("div");
+    row.className = "link-item-row";
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "link-item";
@@ -93,25 +132,42 @@ function renderLinksList() {
     badge.className = "link-item-badge";
     badge.textContent = typeBadge(link.type);
 
+    const labelWrap = document.createElement("span");
+    labelWrap.className = "link-item-label-wrap";
+
     const label = document.createElement("span");
     label.className = "link-item-label";
     label.textContent = link.displayName || link.name;
 
+    const sectionHint = document.createElement("span");
+    sectionHint.className = "link-item-section";
+    sectionHint.textContent = link.sectionName;
+
+    labelWrap.appendChild(label);
+    labelWrap.appendChild(sectionHint);
+
     button.appendChild(badge);
-    button.appendChild(label);
+    button.appendChild(labelWrap);
     button.addEventListener("click", () => selectLink(link.id));
-    linksListEl.appendChild(button);
+
+    row.appendChild(button);
+    row.appendChild(createLinkDeleteButton(link));
+    linksListEl.appendChild(row);
   }
 }
 
 async function reloadLinks() {
-  customLinks = await getCustomSectionChildren();
+  customLinks = await getAllCustomLinks();
+  sectionNames = await getCatalogSectionNames();
+
   if (selectedLinkId && !customLinks.some((link) => link.id === selectedLinkId)) {
     selectedLinkId = null;
     await startNewLink();
   } else if (selectedLinkId) {
-    populateBuilderForm(builderElements, getSelectedLink());
+    const link = getSelectedLink();
+    populateBuilderForm(builderElements, link, link.sectionName, sectionNames);
   }
+
   renderLinksList();
 }
 
@@ -124,14 +180,14 @@ async function saveCurrentLink(event) {
     const node = buildLinkNodeFromForm(form);
 
     if (form.editId) {
-      await updateCustomLink(form.editId, node);
+      await updateCustomLink(form.editId, node, form.sectionName);
       selectedLinkId = form.editId;
-      showMessage(`Saved "${node.name}".`);
+      showMessage(`Saved "${node.name}" in ${form.sectionName}.`);
     } else {
-      await addCustomLinks([node]);
+      await addLinksToSection(form.sectionName, [node]);
       selectedLinkId = node.id;
       builderElements.editIdInput.value = node.id;
-      showMessage(`Added "${node.name}".`);
+      showMessage(`Added "${node.name}" to ${form.sectionName}.`);
     }
 
     await reloadLinks();
@@ -141,24 +197,36 @@ async function saveCurrentLink(event) {
   }
 }
 
-async function deleteCurrentLink() {
-  const link = getSelectedLink();
+async function deleteLinkById(linkId) {
+  const link = customLinks.find((entry) => entry.id === linkId);
   if (!link?.id) {
     return;
   }
 
   hideMessage();
   await removeCustomLinkById(link.id);
-  selectedLinkId = null;
-  await startNewLink();
+
+  if (selectedLinkId === linkId) {
+    selectedLinkId = null;
+    await startNewLink();
+  }
+
   await reloadLinks();
   showMessage(`Deleted "${link.name}".`);
 }
 
-async function startNewLink() {
+async function deleteCurrentLink() {
+  const link = getSelectedLink();
+  if (!link?.id) {
+    return;
+  }
+  await deleteLinkById(link.id);
+}
+
+async function startNewLink(sectionName = defaultSectionName) {
   hideMessage();
   selectedLinkId = null;
-  clearBuilderForm(builderElements);
+  clearBuilderForm(builderElements, sectionNames, sectionName);
   editorTitleEl.textContent = "New link";
   deleteLinkBtn.disabled = true;
 
@@ -173,27 +241,99 @@ async function startNewLink() {
   renderLinksList();
 }
 
-async function importLinks() {
+function isSectionOverlay(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return false;
+  }
+  if (data.type || data.code || data.path || data.url) {
+    return false;
+  }
+  if (Array.isArray(data.children)) {
+    return false;
+  }
+
+  const entries = Object.entries(data);
+  if (!entries.length) {
+    return false;
+  }
+
+  return entries.every(
+    ([, section]) =>
+      section &&
+      typeof section === "object" &&
+      Array.isArray(section.children)
+  );
+}
+
+async function importLinksFromJson(raw) {
   hideMessage();
-  const raw = importJsonInput.value.trim();
-  if (!raw) {
-    showMessage("Paste JSON to import.");
-    importJsonInput.focus();
+
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) {
+    showMessage("Choose a JSON file to import.");
     return;
   }
 
   try {
-    const parsed = parseImportedLinkNodes(raw);
+    const data = JSON.parse(trimmed);
+
+    if (isSectionOverlay(data)) {
+      let total = 0;
+      const importedSections = [];
+
+      for (const [sectionName, section] of Object.entries(data)) {
+        if (isHiddenSectionTab(sectionName)) {
+          continue;
+        }
+
+        const nodes = normalizeImportedNodes(section.children || []);
+        nodes.forEach((node, index) =>
+          validateImportNode(node, `${sectionName}.${index}`)
+        );
+
+        if (!nodes.length) {
+          continue;
+        }
+
+        await addLinksToSection(sectionName, nodes);
+        total += nodes.length;
+        importedSections.push(sectionName);
+      }
+
+      if (!total) {
+        showMessage("No links found in file.");
+        return;
+      }
+
+      await reloadLinks();
+      showMessage(
+        `Imported ${total} link(s) into ${importedSections.join(", ")}.`
+      );
+      return;
+    }
+
+    const targetSection = readTargetSection(builderElements);
+    const parsed = parseImportedLinkNodes(data);
     parsed.forEach((node, index) => validateImportNode(node, String(index)));
     const nodes = normalizeImportedNodes(parsed);
-    await addCustomLinks(nodes);
-    importJsonInput.value = "";
-    importPanelEl.classList.add("hidden");
+    await addLinksToSection(targetSection, nodes);
     await reloadLinks();
     if (nodes.length === 1 && nodes[0].id) {
       selectLink(nodes[0].id);
     }
-    showMessage(`Imported ${nodes.length} link(s).`);
+    showMessage(`Imported ${nodes.length} link(s) into ${targetSection}.`);
+  } catch (error) {
+    showMessage(error.message || String(error));
+  }
+}
+
+async function importLinksFromFile(file) {
+  if (!file) {
+    return;
+  }
+
+  try {
+    await importLinksFromJson(await file.text());
   } catch (error) {
     showMessage(error.message || String(error));
   }
@@ -203,11 +343,12 @@ async function exportCustomLinks() {
   hideMessage();
   try {
     const overlay = await getLinksOverlayForExport();
-    if (!overlay.Custom?.children?.length) {
-      showMessage("No custom links to export.");
+    const exported = overlayExport(overlay);
+    if (!Object.keys(exported).length) {
+      showMessage("No user-added links to export.");
       return;
     }
-    downloadCustomSectionJson(overlay);
+    downloadOverlayJson(overlay);
     showMessage("Downloaded custom-links.json.");
   } catch (error) {
     showMessage(error.message || String(error));
@@ -218,8 +359,39 @@ function readEditIdFromQuery() {
   return new URLSearchParams(window.location.search).get("edit");
 }
 
+function readSectionFromQuery() {
+  return new URLSearchParams(window.location.search).get("section");
+}
+
+async function readDefaultSectionName() {
+  const fromQuery = readSectionFromQuery();
+  if (fromQuery) {
+    return fromQuery;
+  }
+
+  const stored = await browser.storage.session.get(LINK_BUILDER_SECTION_KEY);
+  const fromSession = stored[LINK_BUILDER_SECTION_KEY];
+  if (fromSession) {
+    await browser.storage.session.remove(LINK_BUILDER_SECTION_KEY);
+    return fromSession;
+  }
+
+  return sectionNames[0] || "Misc";
+}
+
 async function init() {
-  initBuilderForm(builderElements);
+  sectionNames = await getCatalogSectionNames();
+  defaultSectionName = await readDefaultSectionName();
+  if (!sectionNames.includes(defaultSectionName)) {
+    sectionNames = [...sectionNames, defaultSectionName].sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }
+
+  initBuilderForm(builderElements, {
+    sectionNames,
+    defaultSection: defaultSectionName,
+  });
 
   linkFormEl.addEventListener("submit", saveCurrentLink);
   deleteLinkBtn.addEventListener("click", deleteCurrentLink);
@@ -228,22 +400,20 @@ async function init() {
       selectLink(selectedLinkId);
       return;
     }
-    await startNewLink();
+    await startNewLink(defaultSectionName);
   });
   document.getElementById("new-link-btn").addEventListener("click", () => {
-    startNewLink();
+    startNewLink(defaultSectionName);
   });
   document.getElementById("export-custom-btn").addEventListener("click", exportCustomLinks);
-  document.getElementById("import-toggle-btn").addEventListener("click", () => {
-    importPanelEl.classList.toggle("hidden");
-    if (!importPanelEl.classList.contains("hidden")) {
-      importJsonInput.focus();
-    }
+  document.getElementById("import-btn").addEventListener("click", () => {
+    importFileInput.click();
   });
-  document.getElementById("import-cancel-btn").addEventListener("click", () => {
-    importPanelEl.classList.add("hidden");
+  importFileInput.addEventListener("change", async () => {
+    const file = importFileInput.files?.[0];
+    importFileInput.value = "";
+    await importLinksFromFile(file);
   });
-  document.getElementById("link-import-btn").addEventListener("click", importLinks);
 
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes[LINKS_OVERLAY_KEY]) {
@@ -256,11 +426,16 @@ async function init() {
   await reloadLinks();
 
   const editId = readEditIdFromQuery();
-  if (editId && customLinks.some((link) => link.id === editId)) {
-    selectLink(editId);
-  } else {
-    await startNewLink();
+  if (editId) {
+    const found = await findCustomLinkById(editId);
+    if (found) {
+      selectedLinkId = editId;
+      selectLink(editId);
+      return;
+    }
   }
+
+  await startNewLink(defaultSectionName);
 }
 
 init().catch((error) => {

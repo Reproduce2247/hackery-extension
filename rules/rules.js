@@ -1,9 +1,14 @@
+import {
+  attachCodeMirrorAll,
+  getFieldValue,
+  setFieldValue,
+} from "../lib/codemirror-fields.bundle.js";
+
 const rulesListEl = document.getElementById("rules-list");
 const rulesLogEl = document.getElementById("rules-log");
 const ruleCountEl = document.getElementById("rule-count");
 const messageEl = document.getElementById("message");
 const rulesEnabledEl = document.getElementById("rules-enabled");
-const networkHooksEnabledEl = document.getElementById("network-hooks-enabled");
 const ruleFormEl = document.getElementById("rule-form");
 const editorTitleEl = document.getElementById("editor-title");
 
@@ -37,10 +42,53 @@ const ruleResponseScriptEl = document.getElementById("rule-response-script");
 const deleteRuleBtn = document.getElementById("delete-rule-btn");
 const ruleTemplateSelectEl = document.getElementById("rule-template-select");
 
+attachCodeMirrorAll({
+  hostPattern: { element: ruleHostPatternEl, language: "regex", compact: true },
+  pageHostPattern: {
+    element: rulePageHostPatternEl,
+    language: "regex",
+    compact: true,
+  },
+  pageUrlPattern: {
+    element: rulePageUrlPatternEl,
+    language: "regex",
+    compact: true,
+  },
+  requestUrlPattern: {
+    element: ruleRequestUrlPatternEl,
+    language: "regex",
+    compact: true,
+  },
+  bodyPattern: { element: ruleBodyPatternEl, language: "regex", compact: true },
+  contentTypePattern: {
+    element: ruleContentTypePatternEl,
+    language: "regex",
+    compact: true,
+  },
+  mockBody: {
+    element: ruleMockBodyEl,
+    language: "json",
+    minHeight: 96,
+    placeholder: '{"result":[]}',
+  },
+  requestScript: {
+    element: ruleRequestScriptEl,
+    language: "javascript",
+    minHeight: 120,
+    placeholder:
+      "function(ctx, rule) { console.log(ctx.url, ctx.body); return ctx; }",
+  },
+  responseScript: {
+    element: ruleResponseScriptEl,
+    language: "javascript",
+    minHeight: 120,
+    placeholder: "function(ctx, rule) { return ctx; }",
+  },
+});
+
 let rulesState = defaultNetworkRulesState();
 let selectedRuleId = null;
 let highlightedRuleId = null;
-let extensionSettings = defaultExtensionSettings();
 let ruleTemplates = [];
 let lastPersistedRulesSnapshot = "";
 
@@ -268,12 +316,12 @@ function loadRuleIntoForm(rule) {
   ruleNameEl.value = rule.name || "";
   rulePriorityEl.value = String(rule.priority ?? 100);
   ruleEnabledEl.checked = Boolean(rule.enabled);
-  ruleHostPatternEl.value = rule.hostPattern || "";
-  rulePageHostPatternEl.value = rule.pageHostPattern || "";
-  rulePageUrlPatternEl.value = rule.pageUrlPattern || "";
-  ruleRequestUrlPatternEl.value = rule.requestUrlPattern || "";
-  ruleBodyPatternEl.value = rule.requestBodyPattern || "";
-  ruleContentTypePatternEl.value = rule.requestContentTypePattern || "";
+  setFieldValue(ruleHostPatternEl, rule.hostPattern || "");
+  setFieldValue(rulePageHostPatternEl, rule.pageHostPattern || "");
+  setFieldValue(rulePageUrlPatternEl, rule.pageUrlPattern || "");
+  setFieldValue(ruleRequestUrlPatternEl, rule.requestUrlPattern || "");
+  setFieldValue(ruleBodyPatternEl, rule.requestBodyPattern || "");
+  setFieldValue(ruleContentTypePatternEl, rule.requestContentTypePattern || "");
   renderMethodChecks(rule.methods);
   renderResourceTypeChecks(rule.resourceTypes);
   phaseRequestEl.checked = (rule.phases || ["request"]).includes("request");
@@ -287,15 +335,15 @@ function loadRuleIntoForm(rule) {
   ruleServeWithoutRequestEl.checked = Boolean(rule.modify?.serveWithoutRequest);
   ruleMockStatusEl.value = String(rule.modify?.mockStatus ?? 200);
   ruleMockStatusTextEl.value = rule.modify?.mockStatusText || "OK";
-  ruleMockBodyEl.value = rule.modify?.mockBody || "";
+  setFieldValue(ruleMockBodyEl, rule.modify?.mockBody || "");
   renderReplacementList(urlReplacementsEl, rule.modify?.urlReplacements);
   renderReplacementList(bodyReplacementsEl, rule.modify?.bodyReplacements);
   renderReplacementList(headerReplacementsEl, rule.modify?.headerReplacements, {
     header: true,
   });
   renderSetHeaders(setHeadersEl, rule.modify?.setHeaders);
-  ruleRequestScriptEl.value = rule.modify?.requestScript || "";
-  ruleResponseScriptEl.value = rule.modify?.responseScript || "";
+  setFieldValue(ruleRequestScriptEl, rule.modify?.requestScript || "");
+  setFieldValue(ruleResponseScriptEl, rule.modify?.responseScript || "");
   updateActionSections();
 }
 
@@ -502,12 +550,12 @@ function readRuleFromForm(existingRule) {
     name: ruleNameEl.value.trim() || "Untitled rule",
     enabled: ruleEnabledEl.checked,
     priority: Number(rulePriorityEl.value) || 100,
-    hostPattern: ruleHostPatternEl.value.trim(),
-    pageHostPattern: rulePageHostPatternEl.value.trim(),
-    pageUrlPattern: rulePageUrlPatternEl.value.trim(),
-    requestUrlPattern: ruleRequestUrlPatternEl.value.trim(),
-    requestBodyPattern: ruleBodyPatternEl.value.trim(),
-    requestContentTypePattern: ruleContentTypePatternEl.value.trim(),
+    hostPattern: getFieldValue(ruleHostPatternEl).trim(),
+    pageHostPattern: getFieldValue(rulePageHostPatternEl).trim(),
+    pageUrlPattern: getFieldValue(rulePageUrlPatternEl).trim(),
+    requestUrlPattern: getFieldValue(ruleRequestUrlPatternEl).trim(),
+    requestBodyPattern: getFieldValue(ruleBodyPatternEl).trim(),
+    requestContentTypePattern: getFieldValue(ruleContentTypePatternEl).trim(),
     methods: readSelectedMethods(),
     resourceTypes: readSelectedResourceTypes(),
     phases,
@@ -522,26 +570,14 @@ function readRuleFromForm(existingRule) {
         header: true,
       }),
       setHeaders: readSetHeaders(setHeadersEl),
-      requestScript: ruleRequestScriptEl.value,
-      responseScript: ruleResponseScriptEl.value,
+      requestScript: getFieldValue(ruleRequestScriptEl),
+      responseScript: getFieldValue(ruleResponseScriptEl),
       serveWithoutRequest: ruleServeWithoutRequestEl.checked,
       mockStatus: Number(ruleMockStatusEl.value) || 200,
       mockStatusText: ruleMockStatusTextEl.value.trim() || "OK",
-      mockBody: ruleMockBodyEl.value,
+      mockBody: getFieldValue(ruleMockBodyEl),
     },
   };
-}
-
-async function loadExtensionSettingsUi() {
-  const response = await browser.runtime.sendMessage({
-    type: "GET_EXTENSION_SETTINGS",
-  });
-  if (response?.ok) {
-    extensionSettings = response.settings || defaultExtensionSettings();
-  }
-  if (networkHooksEnabledEl) {
-    networkHooksEnabledEl.checked = extensionSettings.networkHooksEnabled !== false;
-  }
 }
 
 async function loadState() {
@@ -557,6 +593,35 @@ async function loadState() {
 async function loadLog() {
   const stored = await browser.storage.session.get(NETWORK_RULES_LOG_KEY);
   renderLog(stored[NETWORK_RULES_LOG_KEY] || []);
+}
+
+function syncTemplateSelectWidth() {
+  if (!ruleTemplateSelectEl) {
+    return;
+  }
+
+  const select = ruleTemplateSelectEl;
+  const style = getComputedStyle(select);
+  const measure = document.createElement("span");
+  measure.style.position = "absolute";
+  measure.style.visibility = "hidden";
+  measure.style.whiteSpace = "nowrap";
+  measure.style.font = style.font;
+  document.body.appendChild(measure);
+
+  let maxWidth = 0;
+  for (const option of select.options) {
+    measure.textContent = option.text;
+    maxWidth = Math.max(maxWidth, measure.offsetWidth);
+  }
+  measure.remove();
+
+  const horizontalPadding =
+    (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const border =
+    (parseFloat(style.borderLeftWidth) || 0) +
+    (parseFloat(style.borderRightWidth) || 0);
+  select.style.width = `${Math.ceil(maxWidth + horizontalPadding + border + 22)}px`;
 }
 
 function renderRuleTemplateSelect() {
@@ -577,6 +642,8 @@ function renderRuleTemplateSelect() {
     option.title = template.description || "";
     ruleTemplateSelectEl.appendChild(option);
   }
+
+  syncTemplateSelectWidth();
 }
 
 async function loadRuleTemplates() {
@@ -622,25 +689,6 @@ rulesEnabledEl.addEventListener("change", async () => {
   await persistRulesState();
   showMessage(rulesState.enabled ? "Rules enabled." : "Rules disabled.");
 });
-
-if (networkHooksEnabledEl) {
-  networkHooksEnabledEl.addEventListener("change", async () => {
-    hideMessage();
-    const response = await browser.runtime.sendMessage({
-      type: "SET_EXTENSION_SETTINGS",
-      settings: { networkHooksEnabled: networkHooksEnabledEl.checked },
-    });
-    if (response?.ok) {
-      showMessage(
-        networkHooksEnabledEl.checked
-          ? "Network hooks enabled."
-          : "Network hooks disabled."
-      );
-    } else {
-      showMessage(response?.error || "Failed to update setting.");
-    }
-  });
-}
 
 ruleActionEl.addEventListener("change", updateActionSections);
 
@@ -728,7 +776,6 @@ browser.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-loadExtensionSettingsUi();
 loadRuleTemplates();
 loadState();
 loadLog();

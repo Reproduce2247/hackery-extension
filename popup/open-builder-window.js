@@ -1,21 +1,32 @@
 import { captureTabPrefillForBuilder } from "./link-builder.js";
 
 const BUILDER_PAGE = "builder/builder.html";
-const { LINK_BUILDER_PREFILL_KEY } = globalThis.SnLinksStorageKeys;
+const { LINK_BUILDER_PREFILL_KEY, LINK_BUILDER_SECTION_KEY } =
+  globalThis.SnLinksStorageKeys;
 
-async function stashBuilderPrefill() {
+async function stashBuilderPrefill(sectionName) {
   const prefill = await captureTabPrefillForBuilder();
   await browser.storage.session.set({ [LINK_BUILDER_PREFILL_KEY]: prefill });
+  if (sectionName) {
+    await browser.storage.session.set({ [LINK_BUILDER_SECTION_KEY]: sectionName });
+  }
 }
 
-export async function openLinkBuilderWindow({ editId } = {}) {
+export async function openLinkBuilderWindow({ editId, sectionName } = {}) {
   const baseUrl = browser.runtime.getURL(BUILDER_PAGE);
-  const targetUrl = editId
-    ? `${baseUrl}?edit=${encodeURIComponent(editId)}`
-    : `${baseUrl}?new=1`;
+  const params = new URLSearchParams();
+  if (editId) {
+    params.set("edit", editId);
+  } else {
+    params.set("new", "1");
+    if (sectionName) {
+      params.set("section", sectionName);
+    }
+  }
+  const targetUrl = `${baseUrl}?${params.toString()}`;
 
   if (!editId) {
-    await stashBuilderPrefill();
+    await stashBuilderPrefill(sectionName);
   }
 
   const windows = await browser.windows.getAll({ populate: true });
