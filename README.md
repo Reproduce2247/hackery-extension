@@ -1,8 +1,6 @@
-# ServiceNow Links (Firefox)
+# ServiceNow Links (Firefox extension)
 
-Firefox extension for quick links, bookmarklets, and page-interaction tools. Link definitions live in `data/links.json`; the popup renders them as section tabs with badges for each action type.
-
-ServiceNow instance URLs are stored as paths and resolved against whichever `*.service-now.com` tab matches (active tab first, then nearest match in the window). Scriptlets run in the page MAIN world on the target tab.
+Firefox extension for reusable page actions: run JavaScript in the page MAIN world, open derived or declared URLs, and optionally inject scriptlets at document start. Includes a large **ServiceNow** section and a **Reverse-engineering tools** section for general site debugging.
 
 ## Install (temporary)
 
@@ -22,23 +20,25 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 1. Open a tab on the site the action targets (for ServiceNow sections, any `*.service-now.com` instance tab).
 2. Click the extension toolbar button.
 3. Choose an action (badge indicates type):
-   - **Run** — scriptlet injected into the target tab
-   - **Derive** — URL built from the tab (extract/template or path + origin)
-   - **Open** — navigate to a declared relative path on the target tab
-   - **Web** — absolute URL (`navigate` type only)
+   - **Run** — script injected into the target tab
+   - **Derive** — URL built from the tab (`navParams` / template)
+   - **Open** — relative path on the target tab
+   - **Web** — absolute URL
 
-The popup shows the active tab origin. When a link has a `hostPattern`, the extension prefers the active tab if it matches, otherwise the nearest matching tab in the current window.
+The popup shows the active tab origin. When a link has a `match` pattern, the extension prefers the active tab if it matches, otherwise the nearest matching tab in the current window.
 
 Reload the extension in `about:debugging` after editing `data/links.json`.
 
+**Schema v3 note:** updating to the `params` / `navParams` split clears saved parameter values and on-load preferences once. Re-enable on-load checkboxes and re-enter saved values after reload.
+
 ## Link catalog (`data/links.json`)
 
-`data/links.json` is the canonical link catalog. Top-level keys are **section names** (popup tabs). Each section is an object with optional `hostPattern` and a `children` array (folders and leaf actions).
+Top-level keys are **section names** (popup tabs). Each section has optional `match` and a `children` array (folders and leaf actions). Leaves have **no `type` field** — behavior is inferred from properties.
 
 ```json
 {
   "ServiceNow": {
-    "hostPattern": "\\.service-now\\.com$",
+    "match": "\\.service-now\\.com$",
     "children": [ ]
   },
   "Reverse-engineering tools": {
@@ -49,197 +49,127 @@ Reload the extension in `about:debugging` after editing `data/links.json`.
 
 ### Folders
 
-Nested menus use `{ "name": "…", "children": [ … ] }` with no `type`. Folders may override `hostPattern` for everything inside.
+`{ "name": "…", "children": [ … ] }` — may override `match` for descendants.
 
-### `hostPattern`
+### `match`
 
-Optional regex, inherited from the section or parent folder unless overridden on a folder or link. A link-level `hostPattern` always wins over its section or folder. Matched against the tab hostname and full href (case-insensitive).
+Optional regex inherited from section or parent unless overridden. Matched against tab hostname and full href (case-insensitive).
 
 | Value | Tab selection |
 |---|---|
-| Set (e.g. `\\.service-now\\.com$`) | Active tab if it matches; else nearest matching tab; else create/remember instance from `lastOrigins` |
-| `"hostPattern": null` on a link | Overrides section inheritance — use the active tab only (for docs on non-instance hosts) |
+| Set (e.g. `\\.service-now\\.com$`) | Active tab if it matches; else nearest match; else remembered origin |
+| `"match": null` on a link | Active tab only (overrides section inheritance) |
 | Absent on section | Active tab in the current window |
 
-### Leaf types
+### Leaf actions
 
-| `type` | Badge | Purpose |
+| Shape | Badge | Fields |
 |---|---|---|
-| `scriptlet` | Run | JavaScript run in the page MAIN world |
-| `derived-url` | Derive | URL derived from tab context; requires `nav` |
-| `navigate` | Open / Web | Explicit `path` (relative or absolute); optional `nav` |
+| `code` only | Run | Script runs in MAIN world; optional on-load |
+| `code` + `open` | Open | Script returns URL; extension navigates |
+| `url` + `open` | Open / Web / Derive | Optional `navParams`, `{…}` templates |
 
-#### `scriptlet`
+#### Run (`code`)
 
 ```json
 {
   "name": "Set list item limit",
-  "type": "scriptlet",
-  "code": "glideListClassRef.setRowsPerPage({limit});",
-  "parameter": {
-    "name": "limit",
-    "placeholder": "limit",
-    "default": "100"
+  "code": "glideListClassRef.setRowsPerPage(limit);",
+  "params": {
+    "limit": { "placeholder": "limit", "default": "100" }
   }
 }
 ```
 
-- **`code`** — injected into the target tab.
-- **`nav`** (optional) — if set, `code` is evaluated in the background against a synthetic `location` object and must return a URL string; the extension performs navigation instead of injecting into the page.
-- **On load** — non-navigation scriptlets can be enabled in the popup to inject at `document_start` on matching pages.
+Script `params` are **lexical bindings** — use bare names in `code` (`limit`), not `{limit}` or `$limit`.
 
-#### `derived-url`
-
-Builds a URL from the target tab. **`nav` is required.**
-
-Two forms:
-
-**Path + origin** (typical for instance-independent ServiceNow links — opens on whichever instance tab matches):
+#### Open URL (`url` + `open`)
 
 ```json
 {
   "name": "Cancel transactions",
-  "type": "derived-url",
-  "nav": "foreground",
-  "path": "/cancel_my_transaction.do"
+  "open": "tab",
+  "url": "/cancel_my_transaction.do"
 }
 ```
 
-Relative `path` values inherit the section `hostPattern`, resolve the tab origin, and wrap in the ServiceNow classic navigator URL when applicable.
-
-**Extract + URL template** (values parsed from the current tab URL and/or page DOM):
-
-`extract` is an object whose keys are parameter names. Each value is either a **URL regex** spec or a **DOM selector** spec:
-
-| Spec | Shape | Source |
-|---|---|---|
-| URL regex | `{ "url": "<regex>" }` | Capture group 1 from the tab URL |
-| DOM selector | `{ "selector": "<css>", "stringSource": "<source>" }` | First matching element in the page |
-
-`stringSource` for DOM specs: `textContent` (default), `innerHTML`, `id`, or `attribute` (requires `"attribute": "<name>"`).
-
-Single parameter from the tab URL:
+Derived URL with `navParams` + template:
 
 ```json
 {
   "name": "Show navigator",
-  "type": "derived-url",
-  "nav": "same-tab",
-  "extract": {
+  "open": "same-tab",
+  "navParams": {
     "target": {
-      "url": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
+      "fromUrl": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
     }
   },
-  "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}",
-  "parameter": {
-    "name": "target",
-    "optional": true
-  }
+  "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}"
 }
 ```
 
-Multiple parameters (URL + DOM):
+URL templates support `{paramName}`, `{encode:paramName}`, and `{origin}`. Resolve order for each navParam: non-empty manual input → `fromUrl`/`fromSelector` → `default`. Blank input means no manual value. When a required navParam cannot be filled, the action is a **no-op**. Set `"optional": true` only when the action should still run with that value empty. Presence of `placeholder` (including `""`) shows a popup input; `placeholder` is never a value source.
 
-```json
-{
-  "type": "derived-url",
-  "nav": "foreground",
-  "extract": {
-    "sys_id": {
-      "url": "\\/([a-f0-9]{32})"
-    },
-    "table": {
-      "selector": "input[name=\"sysparm_table\"]",
-      "stringSource": "attribute",
-      "attribute": "value"
-    }
-  },
-  "url": "{origin}/incident.do?sys_id={sys_id}&sysparm_table={table}",
-  "parameters": {
-    "sys_id": { "optional": true },
-    "table": { "optional": true }
-  }
-}
-```
+#### Navigation (`open`)
 
-Parameter names in `extract` appear as popup inputs when not declared under `parameter` / `parameters`. User-provided values override extraction.
+Required on URL actions. On scriptlets only when returning a URL (`code` + `open`).
 
-Template placeholders:
-
-| Placeholder | Meaning |
+| `open` | Behavior |
 |---|---|
-| `{origin}` | Origin of the matched target tab |
-| `{paramName}` | Parameter value (see below) |
-| `{encode:paramName}` | `encodeURIComponent` of the parameter value |
-
-When `extract` is set, capture group 1 (URL regex) or the DOM value fills the named parameter if the user did not provide a value. If all extract attempts fail and every failed parameter is `optional: true`, the action is a no-op (e.g. already on a navigator URL). Required parameters that fail extraction throw an error.
-
-Absolute paths with `"hostPattern": null` open fixed external URLs:
-
-```json
-{
-  "name": "Now Component Library | ServiceNow Developers",
-  "type": "derived-url",
-  "nav": "foreground",
-  "hostPattern": null,
-  "path": "https://developer.servicenow.com/dev.do#!/reference/..."
-}
-```
-
-#### `navigate`
-
-Explicit navigation without deriving from tab URL structure (except resolving relative paths against origin):
-
-```json
-{
-  "name": "Example same-tab",
-  "type": "navigate",
-  "path": "/some_page.do"
-}
-```
-
-Absolute `path` → badge **Web**, default `nav: foreground`. Relative `path` with `hostPattern` → default `nav: same-tab`.
-
-### Navigation (`nav`)
-
-| `nav` | Behavior |
-|---|---|
-| `same-tab` | Update the target tab |
-| `foreground` | New focused tab |
+| `same-tab` | Replace the target tab’s URL |
+| `tab` | New focused tab |
 | `background` | New background tab |
-| `fetch` | `downloads.download` (e.g. CRX fetch) |
+| `download` | `browser.downloads.download` |
 
-Defaults when omitted: `same-tab` for relative `navigate` paths, `foreground` for absolute `navigate` paths. Required on all `derived-url` links.
+### `params` (scripts) vs `navParams` (URLs)
 
-### Parameters
+Mutual exclusion: `params` on `code` actions, `navParams` on `url` actions. Do not declare both on one leaf.
 
-Declare placeholders with `parameter` (single) or `parameters` (multiple). Substitution applies to `path`, `url`, and scriptlet `code`.
-
-```json
-"parameter": { "name": "sys_id", "placeholder": "sys_id", "default": "abc123" }
-```
+**`params`** — script bindings only (bare names in `code`):
 
 ```json
-"parameters": {
-  "sys_id": { "default": "abc123", "choices": ["abc123", "def456"] }
+"params": {
+  "limit": { "default": "100", "placeholder": "limit", "choices": ["50", "100"] }
 }
 ```
 
-- **`{name}`** — replaced in paths, URLs, and scriptlet code.
-- **`$name`** — replaced in scriptlet code only (regex-aware).
-- **`optional: true`** — allow empty value (often combined with `extract` on `derived-url`).
+**`navParams`** — URL substitution only:
 
-Values persist in `browser.storage.local` under `linkParamValues`.
+```json
+"navParams": {
+  "id": {
+    "fromUrl": "\\/detail\\/([a-p]{32})",
+    "placeholder": "extension id",
+    "optional": true
+  },
+  "sys_id": {
+    "placeholder": "sys_id",
+    "default": "abc123"
+  }
+}
+```
+
+| `navParams` key | Role |
+|---|---|
+| `fromUrl` | Regex on tab URL (capture group 1); xor `fromSelector` |
+| `fromSelector` | CSS selector on tab DOM |
+| `placeholder` | Show popup input (including `""`); never a value |
+| `default` | After derivation if still empty |
+| `optional` | Allow empty; else missing required → no-op |
+
+Resolve order: non-empty manual → derive → `default`. Blank input = no manual value.
+
+Saved values live under `linkParamValues`. See `CONTEXT.md` and [ADR 0001](docs/adr/0001-params-vs-navparams.md).
 
 ### Sections in the current catalog
 
-| Section | `hostPattern` | Contents |
+| Section | `match` | Contents |
 |---|---|---|
-| ServiceNow | `\.service-now\.com$` | Instance links, scriptlets, community/developer docs (`hostPattern: null`) |
+| ServiceNow | `\.service-now\.com$` | Instance links, scriptlets, external docs (`match: null`) |
 | Reverse-engineering tools | (none) | General DOM/event/network debugging scriptlets |
-| Misc | per-link | e.g. Chrome Web Store CRX download (`derived-url` + `fetch`) |
+| Misc | per-link | e.g. Chrome Web Store CRX download |
 
-See `data/links.json` for the full list. `CONTEXT.md` has additional architecture detail.
+See `data/links.json` for the full list. `CONTEXT.md` has architecture detail, network rules, and deferred sandbox notes.
 
 ## Updating links from bookmarks
 
@@ -249,6 +179,6 @@ Legacy import from the **SN links** bookmarks folder only:
 node scripts/parse-bookmarks.js
 ```
 
-Requires `bookmarks.html` at the path expected by the script (see `CONTEXT.md`). Prefer editing `data/links.json` directly for reverse-engineering tools and new links.
+Output is normalized to schema v3 on catalog load. Prefer editing `data/links.json` directly for reverse-engineering tools and new links.
 
 Then reload the extension in `about:debugging`.

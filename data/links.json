@@ -1,122 +1,155 @@
 {
   "ServiceNow": {
-    "hostPattern": "\\.service-now\\.com$",
+    "match": "\\.service-now\\.com$",
     "children": [
       {
         "name": "Set list item limit",
-        "type": "scriptlet",
-        "searchTags": ["limit", "rows", "list"],
-        "code": "var glideListClassRef = globalThis.g_list ?? globalThis.gsft_main?.g_list ?? globalThis.GlideList2 ?? globalThis.gsft_main.GlideList2; if (!glideListClassRef.table) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new GlideList2(ids[0]) } glideListClassRef.setRowsPerPage({limit});",
-        "parameter": {
-          "name": "limit",
-          "placeholder": "limit",
-          "default": "100"
-        }
+        "searchTags": [
+          "limit",
+          "rows",
+          "list"
+        ],
+        "params": {
+          "limit": {
+            "placeholder": "limit",
+            "default": "100"
+          }
+        },
+        "code": "var glideListClassRef = globalThis.g_list ?? globalThis.gsft_main?.g_list ?? globalThis.GlideList2 ?? globalThis.gsft_main.GlideList2; if (!glideListClassRef.table) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new GlideList2(ids[0]) } glideListClassRef.setRowsPerPage(limit);"
       },
       {
         "name": "Clear mandatory fields",
-        "type": "scriptlet",
-        "searchTags": ["mandatory", "required", "form", "g_form"],
+        "searchTags": [
+          "mandatory",
+          "required",
+          "form",
+          "g_form"
+        ],
         "code": "var gFormRef = globalThis.g_form ?? globalThis.gsft_main?.g_form ?? globalThis.GlideForm ?? globalThis.gsft_main?.GlideForm; if (!gFormRef.getTableName || !gFormRef.getTableName()) { var formInput = document.querySelector('input[name=\"sysparm_form\"]'); var formName = formInput && formInput.value; if (!formName) { var formEl = document.querySelector('form[id$=\".form\"]'); formName = formEl && formEl.id.replace(/\\.form$/, ''); } if (formName) gFormRef = new GlideForm(formName); } if (!gFormRef.getTableName || !gFormRef.getTableName()) { console.warn('No g_form found'); } else { var n = 0; gFormRef.elements.forEach(function(element) { gFormRef.setMandatory(element.fieldName, false); n++; }); console.log('Cleared mandatory on ' + n + ' field(s)'); }"
       },
       {
         "name": "SN university complete course",
-        "type": "scriptlet",
-        "searchTags": ["university", "learning", "servicenow", "module"],
+        "searchTags": [
+          "university",
+          "learning",
+          "servicenow",
+          "module"
+        ],
         "code": "var injector = angular.element(document.body).injector();var $http = injector.get(\"$http\");var $rootScope = injector.get(\"$rootScope\");// use current content id from your datavar scope = angular.element(document.querySelector(\"[sn-atf-area=\\\"Learning Course Content Header\\\"]\")).scope();Object.keys(scope.lxpConsumingContent.itemMap).forEach(function(v){if (v.child_sys_class_name = \"sn_lxp_content_item\") { //fails for child_interactive = true I thinkvar contentId = v;//scope.c.data.content_id;$http.post(\"/api/sn_lxp/learner/\" + $rootScope.user.sys_id + \"/setProgress\",{content_id: contentId,progress: \"100\",result: \"\",score: \"100\"}).then(console.log);}});fetch(\"https://learning.servicenow.com/api/now/sp/widget/707188d91b6cb810c93aece03d4bcb69?child_id=4d688dfd97e0a2d0dffaf301f053afeb&course_id=7e48493d4728a6944f97dc84f16d431b&group_id=27584dfd97e0a2d0dffaf301f053af40&id=learning_course&spa=1\",{\"headers\":{\"accept\":\"application/json\",\"accept-language\":\"en-US,en;q=0.9\",\"content-type\":\"application/json;charset=UTF-8\",\"sec-ch-ua\":\"\\\"Chromium\\\";v=\\\"146\\\", \\\"Not-A.Brand\\\";v=\\\"24\\\", \\\"Google Chrome\\\";v=\\\"146\\\"\",\"sec-ch-ua-mobile\":\"?0\",\"sec-ch-ua-platform\":\"\\\"Linux\\\"\",\"sec-fetch-dest\":\"empty\",\"sec-fetch-mode\":\"cors\",\"sec-fetch-site\":\"same-origin\",\"x-portal\":\"59d9f51f1b7194100d228483cc4bcb45\",\"x-transaction-source\":\"Interface=Web,Interface-Name=LXP,Interface-Type=Service Portal,Interface-SysID=59d9f51f1b7194100d228483cc4bcb45\",\"x-use-polaris\":\"false\",\"x-usertoken\":\"45153e158780c79ccfa68519dabb3540312e6923e551306e683c7458cb4cb995cb524782\"},\"referrer\":\"https://learning.servicenow.com/lxp/en/pages/learning-course?id=learning_course&course_id=7e48493d4728a6944f97dc84f16d431b&group_id=27584dfd97e0a2d0dffaf301f053af40&child_id=4d688dfd97e0a2d0dffaf301f053afeb&spa=1\",\"body\":\"{\\\"sessionRotationTrigger\\\":false}\",\"method\":\"POST\",\"mode\":\"cors\",\"credentials\":\"include\"});"
       },
       {
         "name": "Show navigator",
-        "type": "derived-url",
-        "searchTags": ["nav", "navigator"],
-        "nav": "same-tab",
-        "extract": {
+        "searchTags": [
+          "nav",
+          "navigator"
+        ],
+        "open": "same-tab",
+        "navParams": {
           "target": {
-            "url": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
+            "fromUrl": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
           }
         },
-        "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}",
-        "parameter": {
-          "name": "target",
-          "optional": true
-        }
+        "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}"
+      },
+      {
+        "name": "Show XML",
+        "searchTags": [
+          "xml",
+          "record"
+        ],
+        "open": "tab",
+        "match": "^https?://[^/]+/(?:now/nav/ui/classic/params/target/)?[^/?]+(?<!_list)\\.do(?:\\?sys_id=|%3Fsys_id%3D)[0-9a-f]{32}",
+        "navParams": {
+          "table": {
+            "fromUrl": "(?:now/nav/ui/classic/params/target/)?([^/?]+)\\.do(?:\\?sys_id=|%3Fsys_id%3D)[0-9a-f]{32}"
+          },
+          "sys_id": {
+            "fromUrl": "(?:sys_id(?:%3D|=))([0-9a-f]{32})"
+          }
+        },
+        "url": "{origin}/{table}.do?sys_id={sys_id}&XML"
       },
       {
         "name": "SN Upload XML",
-        "type": "derived-url",
-        "searchTags": ["upload", "xml"],
-        "nav": "foreground",
-        "path": "/now/nav/ui/classic/params/target/upload.do"
+        "searchTags": [
+          "upload",
+          "xml"
+        ],
+        "open": "tab",
+        "url": "/now/nav/ui/classic/params/target/upload.do"
       },
       {
         "name": "Cancel transactions",
-        "type": "derived-url",
-        "searchTags": ["cancel", "txn"],
-        "nav": "foreground",
-        "path": "/cancel_my_transaction.do"
+        "searchTags": [
+          "cancel",
+          "txn"
+        ],
+        "open": "tab",
+        "url": "/cancel_my_transaction.do"
       },
       {
         "name": "Source control history/logs",
-        "type": "derived-url",
-        "searchTags": ["git", "vcs", "repo"],
-        "nav": "foreground",
-        "path": "/sys_repo_config_list.do"
+        "searchTags": [
+          "git",
+          "vcs",
+          "repo"
+        ],
+        "open": "tab",
+        "url": "/sys_repo_config_list.do"
       },
       {
         "name": "App Log | ServiceNow",
         "displayName": "App Log (current hour)",
-        "type": "derived-url",
-        "searchTags": ["syslog", "system log", "log"],
-        "nav": "foreground",
-        "path": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
+        "searchTags": [
+          "syslog",
+          "system log",
+          "log"
+        ],
+        "open": "tab",
+        "url": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
       },
       {
         "name": "Custom Layout for sp-model/spModel ( Istanbul ) - ServiceNow Community",
-        "type": "derived-url",
-        "nav": "foreground",
-        "hostPattern": null,
-        "path": "https://www.servicenow.com/community/developer-articles/custom-layout-for-sp-model-spmodel-istanbul/ta-p/2303547"
+        "match": null,
+        "open": "tab",
+        "url": "https://www.servicenow.com/community/developer-articles/custom-layout-for-sp-model-spmodel-istanbul/ta-p/2303547"
       },
       {
         "name": "UIB form component",
         "children": [
           {
             "name": "UI Builder | ServiceNow",
-            "type": "derived-url",
-            "nav": "foreground",
-            "path": "/now/builder/ui/controller/029f04e053610110ac9bddeeff7b1294"
+            "open": "tab",
+            "url": "/now/builder/ui/controller/029f04e053610110ac9bddeeff7b1294"
           },
           {
             "name": "Form Controller | UX Macroponent Definition | ServiceNow",
-            "type": "derived-url",
-            "nav": "foreground",
-            "path": "/sys_ux_macroponent.do?sys_id={sys_id}",
-            "parameter": {
-              "name": "sys_id",
-              "placeholder": "sys_id",
-              "default": "67ee2538534501108135ddeeff7b121b"
-            }
+            "open": "tab",
+            "navParams": {
+              "sys_id": {
+                "placeholder": "sys_id",
+                "default": "67ee2538534501108135ddeeff7b121b"
+              }
+            },
+            "url": "/sys_ux_macroponent.do?sys_id={sys_id}"
           },
           {
             "name": "UX Events View: Advanced | ServiceNow",
-            "type": "derived-url",
-            "nav": "foreground",
-            "path": "/sys_ux_event_list.do?sysparm_query=sys_scope%3D6d940d54d63c3f847df337e8f4e0d712&sysparm_first_row=1&sysparm_view=advanced"
+            "open": "tab",
+            "url": "/sys_ux_event_list.do?sysparm_query=sys_scope%3D6d940d54d63c3f847df337e8f4e0d712&sysparm_first_row=1&sysparm_view=advanced"
           }
         ]
       },
       {
         "name": "ServiceNow node logs",
-        "type": "derived-url",
-        "nav": "foreground",
-        "path": "/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29"
+        "open": "tab",
+        "url": "/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29"
       },
       {
         "name": "Now Component Library | ServiceNow Developers",
-        "type": "derived-url",
-        "nav": "foreground",
-        "hostPattern": null,
-        "path": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
+        "match": null,
+        "open": "tab",
+        "url": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
       }
     ]
   },
@@ -124,222 +157,236 @@
     "children": [
       {
         "name": "Non-default attributes",
-        "type": "scriptlet",
         "code": "var iframe=document.createElement('iframe');iframe.style.display='none';document.documentElement.appendChild(iframe);var added=[];var modified=[];for(const key of Object.getOwnPropertyNames(window)){const current=Object.getOwnPropertyDescriptor(window,key);const clean=Object.getOwnPropertyDescriptor(iframe.contentWindow,key);if(!clean){added.push(key)}else if(current?.value!==clean?.value){modified.push(key)}} console.log('Added:',added.sort());console.log('Modified:',modified.sort());iframe.remove()"
       },
       {
         "name": "Remove blur & overflow hidden",
-        "type": "scriptlet",
-        "code": "(function(){var maxDepth=Math.max(1,parseInt($depth,10)||3);var n=0;function strip(el){var cs=getComputedStyle(el);if(/blur\\s*\\(/i.test(cs.filter))el.style.setProperty('filter','none','important'),n++;if(/blur\\s*\\(/i.test(cs.backdropFilter||''))el.style.setProperty('backdrop-filter','none','important'),n++;if(el.style.filter&&/blur/i.test(el.style.filter)){el.style.filter=el.style.filter.replace(/blur\\([^)]*\\)/gi,'').replace(/^[\\s,]+|[\\s,]+$/g,'');el.style.filter||el.style.removeProperty('filter');n++}(['overflow','overflowX','overflowY']).forEach(function(k,i){var p=['overflow','overflow-x','overflow-y'][i],val=cs[k];if(val==='hidden'||val==='clip')el.style.setProperty(p,'visible','important'),n++})}function walk(el,d){strip(el);if(d>=maxDepth)return;for(var i=0;i<el.children.length;i++)walk(el.children[i],d+1)}if(!document.body){console.warn('No document.body');return}walk(document.body,1);console.log('Removed blur/overflow: '+n+' within '+maxDepth+' level(s) including body')})();",
-        "parameter": {
-          "name": "depth",
-          "placeholder": "depth",
-          "default": "3"
-        }
+        "params": {
+          "depth": {
+            "placeholder": "depth",
+            "default": "3"
+          }
+        },
+        "code": "(function(){var maxDepth=Math.max(1,parseInt(depth,10)||3);var n=0;function strip(el){var cs=getComputedStyle(el);if(/blur\\s*\\(/i.test(cs.filter))el.style.setProperty('filter','none','important'),n++;if(/blur\\s*\\(/i.test(cs.backdropFilter||''))el.style.setProperty('backdrop-filter','none','important'),n++;if(el.style.filter&&/blur/i.test(el.style.filter)){el.style.filter=el.style.filter.replace(/blur\\([^)]*\\)/gi,'').replace(/^[\\s,]+|[\\s,]+$/g,'');el.style.filter||el.style.removeProperty('filter');n++}(['overflow','overflowX','overflowY']).forEach(function(k,i){var p=['overflow','overflow-x','overflow-y'][i],val=cs[k];if(val==='hidden'||val==='clip')el.style.setProperty(p,'visible','important'),n++})}function walk(el,d){strip(el);if(d>=maxDepth)return;for(var i=0;i<el.children.length;i++)walk(el.children[i],d+1)}if(!document.body){console.warn('No document.body');return}walk(document.body,1);console.log('Removed blur/overflow: '+n+' within '+maxDepth+' level(s) including body')})();"
       },
       {
         "name": "Intercept events",
-        "type": "scriptlet",
-        "code": "(function(){var type='$type'.replace(/['\"]/g,'')||'click';window.addEventListener(type,function(event){event.stopPropagation();event.stopImmediatePropagation();console.log(event)},true);console.log('Intercepting '+type+' on window (capture)')})();",
-        "parameter": {
-          "name": "type",
-          "placeholder": "type",
-          "default": "click",
-          "choices": [
-            "click",
-            "dblclick",
-            "mousedown",
-            "mouseup",
-            "mousemove",
-            "mouseenter",
-            "mouseleave",
-            "mouseover",
-            "mouseout",
-            "contextmenu",
-            "auxclick",
-            "pointerdown",
-            "pointerup",
-            "pointermove",
-            "pointerover",
-            "pointerout",
-            "pointerenter",
-            "pointerleave",
-            "pointercancel",
-            "gotpointercapture",
-            "lostpointercapture",
-            "touchstart",
-            "touchend",
-            "touchmove",
-            "touchcancel",
-            "wheel",
-            "keydown",
-            "keyup",
-            "keypress",
-            "input",
-            "beforeinput",
-            "focus",
-            "blur",
-            "focusin",
-            "focusout",
-            "submit",
-            "reset",
-            "change",
-            "invalid",
-            "search",
-            "formdata",
-            "DOMContentLoaded",
-            "load",
-            "unload",
-            "beforeunload",
-            "resize",
-            "scroll",
-            "scrollend",
-            "error",
-            "abort",
-            "hashchange",
-            "pageshow",
-            "pagehide",
-            "popstate",
-            "visibilitychange",
-            "readystatechange",
-            "drag",
-            "dragstart",
-            "dragend",
-            "dragover",
-            "dragenter",
-            "dragleave",
-            "drop",
-            "animationstart",
-            "animationend",
-            "animationiteration",
-            "animationcancel",
-            "transitionrun",
-            "transitionstart",
-            "transitionend",
-            "transitioncancel",
-            "canplay",
-            "canplaythrough",
-            "durationchange",
-            "emptied",
-            "ended",
-            "loadeddata",
-            "loadedmetadata",
-            "loadstart",
-            "pause",
-            "play",
-            "playing",
-            "progress",
-            "ratechange",
-            "seeked",
-            "seeking",
-            "stalled",
-            "suspend",
-            "timeupdate",
-            "volumechange",
-            "waiting",
-            "copy",
-            "cut",
-            "paste",
-            "toggle",
-            "cancel",
-            "close",
-            "online",
-            "offline",
-            "message",
-            "open"
-          ]
-        }
+        "params": {
+          "type": {
+            "placeholder": "type",
+            "default": "click",
+            "choices": [
+              "click",
+              "dblclick",
+              "mousedown",
+              "mouseup",
+              "mousemove",
+              "mouseenter",
+              "mouseleave",
+              "mouseover",
+              "mouseout",
+              "contextmenu",
+              "auxclick",
+              "pointerdown",
+              "pointerup",
+              "pointermove",
+              "pointerover",
+              "pointerout",
+              "pointerenter",
+              "pointerleave",
+              "pointercancel",
+              "gotpointercapture",
+              "lostpointercapture",
+              "touchstart",
+              "touchend",
+              "touchmove",
+              "touchcancel",
+              "wheel",
+              "keydown",
+              "keyup",
+              "keypress",
+              "input",
+              "beforeinput",
+              "focus",
+              "blur",
+              "focusin",
+              "focusout",
+              "submit",
+              "reset",
+              "change",
+              "invalid",
+              "search",
+              "formdata",
+              "DOMContentLoaded",
+              "load",
+              "unload",
+              "beforeunload",
+              "resize",
+              "scroll",
+              "scrollend",
+              "error",
+              "abort",
+              "hashchange",
+              "pageshow",
+              "pagehide",
+              "popstate",
+              "visibilitychange",
+              "readystatechange",
+              "drag",
+              "dragstart",
+              "dragend",
+              "dragover",
+              "dragenter",
+              "dragleave",
+              "drop",
+              "animationstart",
+              "animationend",
+              "animationiteration",
+              "animationcancel",
+              "transitionrun",
+              "transitionstart",
+              "transitionend",
+              "transitioncancel",
+              "canplay",
+              "canplaythrough",
+              "durationchange",
+              "emptied",
+              "ended",
+              "loadeddata",
+              "loadedmetadata",
+              "loadstart",
+              "pause",
+              "play",
+              "playing",
+              "progress",
+              "ratechange",
+              "seeked",
+              "seeking",
+              "stalled",
+              "suspend",
+              "timeupdate",
+              "volumechange",
+              "waiting",
+              "copy",
+              "cut",
+              "paste",
+              "toggle",
+              "cancel",
+              "close",
+              "online",
+              "offline",
+              "message",
+              "open"
+            ]
+          }
+        },
+        "code": "(function(){var type='type'.replace(/['\"]/g,'')||'click';window.addEventListener(type,function(event){event.stopPropagation();event.stopImmediatePropagation();console.log(event)},true);console.log('Intercepting '+type+' on window (capture)')})();"
       },
       {
         "name": "Log postMessage",
-        "type": "scriptlet",
         "code": "(function(){window.addEventListener('message',function(e){console.log('message ←',e.origin,e.data,e)},true);var pm=window.postMessage.bind(window);window.postMessage=function(d,t){console.log('message →',t,d);return pm.apply(window,arguments)};console.log('postMessage hooked')})();"
       },
       {
         "name": "Disable beforeunload",
-        "type": "scriptlet",
         "code": "(function(){window.onbeforeunload=null;window.addEventListener('beforeunload',function(e){e.stopImmediatePropagation();e.preventDefault()},true);console.log('beforeunload suppressed')})();"
       },
       {
         "name": "Disable redirects",
-        "type": "scriptlet",
-        "searchTags": ["redirect", "navigation"],
+        "searchTags": [
+          "redirect",
+          "navigation"
+        ],
         "code": "(function(){if(window.__SN_NO_REDIRECT__)return;window.__SN_NO_REDIRECT__=1;function block(k,u){console.log('blocked '+k,u)}var lp=Location.prototype,hd=Object.getOwnPropertyDescriptor(lp,'href');if(hd&&hd.set)Object.defineProperty(lp,'href',{configurable:1,enumerable:hd.enumerable,get:function(){return hd.get.call(this)},set:function(u){block('href',u)}});lp.assign=function(u){block('assign',u)};lp.replace=function(u){block('replace',u)};lp.reload=function(){block('reload')};var wl=Object.getOwnPropertyDescriptor(Window.prototype,'location');if(wl&&wl.set)Object.defineProperty(Window.prototype,'location',{configurable:1,enumerable:wl.enumerable,get:wl.get,set:function(u){block('window.location',u)}});var dl=Object.getOwnPropertyDescriptor(Document.prototype,'location');if(dl&&dl.set)Object.defineProperty(Document.prototype,'location',{configurable:1,enumerable:dl.enumerable,get:dl.get,set:function(u){block('document.location',u)}});var ps=history.pushState,rs=history.replaceState;history.pushState=function(s,t,u){if(u!=null&&u!=='')return block('pushState',u);return ps.apply(this,arguments)};history.replaceState=function(s,t,u){if(u!=null&&u!=='' )return block('replaceState',u);return rs.apply(this,arguments)};if(window.navigation&&navigation.addEventListener)navigation.addEventListener('navigate',function(e){e.preventDefault();block('navigation',e.destination&&e.destination.url)});var oo=window.open;window.open=function(u){if(u!=null&&u!=='')return block('open',u),null;return oo.apply(this,arguments)};function stripMeta(){document.querySelectorAll('meta[http-equiv=\"refresh\" i]').forEach(function(m){block('meta refresh',m.content);m.remove()});new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(n.nodeType===1&&n.matches&&n.matches('meta[http-equiv=\"refresh\" i]')){block('meta refresh',n.content);n.remove()}})})}).observe(document.documentElement,{subtree:1,childList:1})}if(document.documentElement)stripMeta();else document.addEventListener('DOMContentLoaded',stripMeta,{once:1});document.addEventListener('submit',function(e){var f=e.target;if(f&&f.action){block('form submit',f.action);e.preventDefault();e.stopImmediatePropagation()}},true);console.log('Redirects disabled')})();"
       },
       {
         "name": "Throttle auto-refresh",
-        "type": "scriptlet",
-        "code": "(function(){var sec=Math.max(0,parseInt('$seconds',10)||60);var ms=sec*1000;var _st=setTimeout;window.setInterval=function(){console.log('blocked setInterval',arguments[0]);return 0};window.setTimeout=function(fn,t){var d=Math.max(t||0,ms);if(t!=null&&t<ms)console.log('setTimeout stretched',t,'→',d);return _st(fn,d)};console.log('Intervals blocked; timeouts min '+sec+'s')})();",
-        "parameter": {
-          "name": "seconds",
-          "placeholder": "seconds",
-          "default": "60"
-        }
+        "params": {
+          "seconds": {
+            "placeholder": "seconds",
+            "default": "60"
+          }
+        },
+        "code": "(function(){var sec=Math.max(0,parseInt('seconds',10)||60);var ms=sec*1000;var _st=setTimeout;window.setInterval=function(){console.log('blocked setInterval',arguments[0]);return 0};window.setTimeout=function(fn,t){var d=Math.max(t||0,ms);if(t!=null&&t<ms)console.log('setTimeout stretched',t,'→',d);return _st(fn,d)};console.log('Intervals blocked; timeouts min '+sec+'s')})();"
       },
       {
         "name": "Enable form controls",
-        "type": "scriptlet",
         "code": "(function(){var n=0;document.querySelectorAll('button,input,select,textarea,fieldset').forEach(function(el){if(el.disabled)el.disabled=false,n++;if(el.readOnly)el.readOnly=false,n++});document.querySelectorAll('[aria-disabled=\"true\"]').forEach(function(el){el.setAttribute('aria-disabled','false');n++});console.log('Enabled '+n+' controls')})();"
       },
       {
         "name": "Trace button click",
-        "type": "scriptlet",
-        "code": "(function(){var sel='$selector'.replace(/['\"]/g,'');var origFetch=window.fetch;if(origFetch)window.fetch=function(){console.log('fetch',arguments[0]);return origFetch.apply(this,arguments)};var xopen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){console.log('XHR',m,u);return xopen.apply(this,arguments)};function desc(el){if(!el||el.nodeType!==1)return null;var o={tag:el.tagName,id:el.id,className:el.className};['name','type','value','disabled','formAction','formMethod','href'].forEach(function(k){if(el[k]!=null&&el[k]!=='')o[k]=el[k]});o.onclick=el.getAttribute('onclick');Array.from(el.attributes).forEach(function(a){if(/^(data-|ng-|sn-|aria-)/.test(a.name))o[a.name]=a.value});return o}function trace(el){if(!el){console.warn('No element');return}console.log('Element',desc(el),el);if(el.disabled){el.disabled=false;console.log('disabled cleared')}if(el.getAttribute('aria-disabled')==='true')el.setAttribute('aria-disabled','false');var form=el.form||el.closest('form');if(form)console.log('Form',form.action||form.getAttribute('action'),form.method);el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));console.log('Dispatched click; check fetch/XHR logs above')}if(sel){trace(document.querySelector(sel));return}console.log('Click the button to trace (elementFromPoint; works when disabled)');document.addEventListener('mousedown',function pick(e){document.removeEventListener('mousedown',pick,true);var el=document.elementFromPoint(e.clientX,e.clientY);if(el)el=el.closest('button,input[type=button],input[type=submit],a,[role=button]')||el;trace(el)},true)})();",
-        "parameter": {
-          "name": "selector",
-          "placeholder": "selector (blank = pick)",
-          "default": "",
-          "optional": true
-        }
+        "params": {
+          "selector": {
+            "placeholder": "selector (blank = pick)",
+            "default": "",
+            "optional": true
+          }
+        },
+        "code": "(function(){var sel='selector'.replace(/['\"]/g,'');var origFetch=window.fetch;if(origFetch)window.fetch=function(){console.log('fetch',arguments[0]);return origFetch.apply(this,arguments)};var xopen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){console.log('XHR',m,u);return xopen.apply(this,arguments)};function desc(el){if(!el||el.nodeType!==1)return null;var o={tag:el.tagName,id:el.id,className:el.className};['name','type','value','disabled','formAction','formMethod','href'].forEach(function(k){if(el[k]!=null&&el[k]!=='')o[k]=el[k]});o.onclick=el.getAttribute('onclick');Array.from(el.attributes).forEach(function(a){if(/^(data-|ng-|sn-|aria-)/.test(a.name))o[a.name]=a.value});return o}function trace(el){if(!el){console.warn('No element');return}console.log('Element',desc(el),el);if(el.disabled){el.disabled=false;console.log('disabled cleared')}if(el.getAttribute('aria-disabled')==='true')el.setAttribute('aria-disabled','false');var form=el.form||el.closest('form');if(form)console.log('Form',form.action||form.getAttribute('action'),form.method);el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));console.log('Dispatched click; check fetch/XHR logs above')}if(sel){trace(document.querySelector(sel));return}console.log('Click the button to trace (elementFromPoint; works when disabled)');document.addEventListener('mousedown',function pick(e){document.removeEventListener('mousedown',pick,true);var el=document.elementFromPoint(e.clientX,e.clientY);if(el)el=el.closest('button,input[type=button],input[type=submit],a,[role=button]')||el;trace(el)},true)})();"
       },
       {
         "name": "Watch performance",
-        "type": "scriptlet",
-        "code": "(function(){if(window.__perfWatchInstalled)return;window.__perfWatchInstalled=true;var ms=Math.max(250,parseInt('$interval',10)||1000);var ORIG_TITLE=document.title;var warned=false;var stats={events:0,mutations:0,timers:0,rafs:0,longTasks:0,longTaskMs:0};var eventTypes={};var thresholds={events:10000,mutations:5000,rafs:500,timers:2000,longTasks:5};function warn(snap){if(warned)return;warned=true;var parts=[];if(snap.events>thresholds.events)parts.push('events='+snap.events);if(snap.mutations>thresholds.mutations)parts.push('mutations='+snap.mutations);if(snap.rafs>thresholds.rafs)parts.push('rafs='+snap.rafs);if(snap.timers>thresholds.timers)parts.push('timers='+snap.timers);if(snap.longTasks>thresholds.longTasks)parts.push('longTasks='+snap.longTasks);console.warn('[PERFWATCH] threshold exceeded:',parts.join(', '),snap);document.title='\\uD83D\\uDD25 PERF - '+ORIG_TITLE;var fav=document.querySelector('link[rel*=icon]');if(!fav){fav=document.createElement('link');fav.rel='icon';document.head.appendChild(fav)}fav.href='data:image/svg+xml,'+encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\"><rect width=\"64\" height=\"64\" fill=\"red\"/><text x=\"50%\" y=\"55%\" text-anchor=\"middle\" font-size=\"42\" fill=\"white\">!</text></svg>')}function countEvent(type){stats.events++;if(type)eventTypes[type]=(eventTypes[type]||0)+1}try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){countEvent(e.name)})}).observe({type:'event',buffered:true,durationThreshold:0})}catch(e1){try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){countEvent(e.name)})}).observe({entryTypes:['event']})}catch(e2){var od=EventTarget.prototype.dispatchEvent;EventTarget.prototype.dispatchEvent=function(ev){countEvent(ev&&ev.type);return od.call(this,ev)}}}new MutationObserver(function(records){stats.mutations+=records.length}).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});var _st=window.setTimeout,_si=window.setInterval,_raf=window.requestAnimationFrame;window.setTimeout=function(){stats.timers++;return _st.apply(this,arguments)};window.setInterval=function(){stats.timers++;return _si.apply(this,arguments)};window.requestAnimationFrame=function(cb){stats.rafs++;return _raf.call(this,cb)};try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){stats.longTasks++;stats.longTaskMs+=e.duration})}).observe({entryTypes:['longtask']})}catch(e){}function topEvents(){var keys=Object.keys(eventTypes);if(!keys.length)return null;return keys.sort(function(a,b){return eventTypes[b]-eventTypes[a]}).slice(0,8).map(function(t){return t+':'+eventTypes[t]})}function snapshot(){var snap={intervalMs:ms,events:stats.events,mutations:stats.mutations,timers:stats.timers,rafs:stats.rafs,longTasks:stats.longTasks,longTaskMs:Math.round(stats.longTaskMs)};var top=topEvents();if(top)snap.topEvents=top;if(performance.memory)snap.memMB={used:Math.round(performance.memory.usedJSHeapSize/1048576),total:Math.round(performance.memory.totalJSHeapSize/1048576)};return snap}function reset(){stats.events=stats.mutations=stats.timers=stats.rafs=stats.longTasks=0;stats.longTaskMs=0;for(var k in eventTypes)delete eventTypes[k]}function tick(){var snap=snapshot();if(snap.events>thresholds.events||snap.mutations>thresholds.mutations||snap.rafs>thresholds.rafs||snap.timers>thresholds.timers||snap.longTasks>thresholds.longTasks)warn(snap);console.log('[PERFWATCH]',snap);reset()}window.__perfWatch={stats:stats,thresholds:thresholds,snapshot:snapshot,reset:reset};_si(tick,ms);console.log('[PERFWATCH] watching every '+ms+'ms; inspect window.__perfWatch')})();",
-        "parameter": {
-          "name": "interval",
-          "placeholder": "ms",
-          "default": "5000"
-        }
+        "params": {
+          "interval": {
+            "placeholder": "ms",
+            "default": "5000"
+          }
+        },
+        "code": "(function(){if(window.__perfWatchInstalled)return;window.__perfWatchInstalled=true;var ms=Math.max(250,parseInt('interval',10)||1000);var ORIG_TITLE=document.title;var warned=false;var stats={events:0,mutations:0,timers:0,rafs:0,longTasks:0,longTaskMs:0};var eventTypes={};var thresholds={events:10000,mutations:5000,rafs:500,timers:2000,longTasks:5};function warn(snap){if(warned)return;warned=true;var parts=[];if(snap.events>thresholds.events)parts.push('events='+snap.events);if(snap.mutations>thresholds.mutations)parts.push('mutations='+snap.mutations);if(snap.rafs>thresholds.rafs)parts.push('rafs='+snap.rafs);if(snap.timers>thresholds.timers)parts.push('timers='+snap.timers);if(snap.longTasks>thresholds.longTasks)parts.push('longTasks='+snap.longTasks);console.warn('[PERFWATCH] threshold exceeded:',parts.join(', '),snap);document.title='\\uD83D\\uDD25 PERF - '+ORIG_TITLE;var fav=document.querySelector('link[rel*=icon]');if(!fav){fav=document.createElement('link');fav.rel='icon';document.head.appendChild(fav)}fav.href='data:image/svg+xml,'+encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\"><rect width=\"64\" height=\"64\" fill=\"red\"/><text x=\"50%\" y=\"55%\" text-anchor=\"middle\" font-size=\"42\" fill=\"white\">!</text></svg>')}function countEvent(type){stats.events++;if(type)eventTypes[type]=(eventTypes[type]||0)+1}try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){countEvent(e.name)})}).observe({type:'event',buffered:true,durationThreshold:0})}catch(e1){try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){countEvent(e.name)})}).observe({entryTypes:['event']})}catch(e2){var od=EventTarget.prototype.dispatchEvent;EventTarget.prototype.dispatchEvent=function(ev){countEvent(ev&&ev.type);return od.call(this,ev)}}}new MutationObserver(function(records){stats.mutations+=records.length}).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});var _st=window.setTimeout,_si=window.setInterval,_raf=window.requestAnimationFrame;window.setTimeout=function(){stats.timers++;return _st.apply(this,arguments)};window.setInterval=function(){stats.timers++;return _si.apply(this,arguments)};window.requestAnimationFrame=function(cb){stats.rafs++;return _raf.call(this,cb)};try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){stats.longTasks++;stats.longTaskMs+=e.duration})}).observe({entryTypes:['longtask']})}catch(e){}function topEvents(){var keys=Object.keys(eventTypes);if(!keys.length)return null;return keys.sort(function(a,b){return eventTypes[b]-eventTypes[a]}).slice(0,8).map(function(t){return t+':'+eventTypes[t]})}function snapshot(){var snap={intervalMs:ms,events:stats.events,mutations:stats.mutations,timers:stats.timers,rafs:stats.rafs,longTasks:stats.longTasks,longTaskMs:Math.round(stats.longTaskMs)};var top=topEvents();if(top)snap.topEvents=top;if(performance.memory)snap.memMB={used:Math.round(performance.memory.usedJSHeapSize/1048576),total:Math.round(performance.memory.totalJSHeapSize/1048576)};return snap}function reset(){stats.events=stats.mutations=stats.timers=stats.rafs=stats.longTasks=0;stats.longTaskMs=0;for(var k in eventTypes)delete eventTypes[k]}function tick(){var snap=snapshot();if(snap.events>thresholds.events||snap.mutations>thresholds.mutations||snap.rafs>thresholds.rafs||snap.timers>thresholds.timers||snap.longTasks>thresholds.longTasks)warn(snap);console.log('[PERFWATCH]',snap);reset()}window.__perfWatch={stats:stats,thresholds:thresholds,snapshot:snapshot,reset:reset};_si(tick,ms);console.log('[PERFWATCH] watching every '+ms+'ms; inspect window.__perfWatch')})();"
       },
       {
         "name": "Hook addEventListener",
-        "type": "scriptlet",
         "code": "(function(){var orig=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(type,fn,opts){console.log('addEventListener',type,this,fn);return orig.call(this,type,fn,opts)};console.log('addEventListener hooked')})();"
       },
       {
         "name": "Remove fixed overlays",
-        "type": "scriptlet",
-        "searchTags": ["overlay", "modal", "fixed", "z-index"],
-        "code": "(function(){if(!document.body){console.warn('No document.body');return}var minZ=Math.max(0,parseInt('$minZ',10)||1000);var vw=window.innerWidth,vh=window.innerHeight,n=0,found=[];document.querySelectorAll('*').forEach(function(el){var cs=getComputedStyle(el);if(cs.position!=='fixed'&&cs.position!=='sticky')return;var z=parseInt(cs.zIndex,10);if(isNaN(z)||z<minZ)return;var r=el.getBoundingClientRect();if(r.width<vw*0.75||r.height<vh*0.75)return;el.style.setProperty('display','none','important');found.push({tag:el.tagName,id:el.id||undefined,class:el.className||undefined,zIndex:z,w:Math.round(r.width),h:Math.round(r.height)});n++});console.log('Removed '+n+' fixed overlay(s) (minZ='+minZ+')',found);if(found.length)console.table(found)})();",
-        "parameter": {
-          "name": "minZ",
-          "placeholder": "min z-index",
-          "default": "1000"
-        }
+        "searchTags": [
+          "overlay",
+          "modal",
+          "fixed",
+          "z-index"
+        ],
+        "params": {
+          "minZ": {
+            "placeholder": "min z-index",
+            "default": "1000"
+          }
+        },
+        "code": "(function(){if(!document.body){console.warn('No document.body');return}var minZ=Math.max(0,parseInt('minZ',10)||1000);var vw=window.innerWidth,vh=window.innerHeight,n=0,found=[];document.querySelectorAll('*').forEach(function(el){var cs=getComputedStyle(el);if(cs.position!=='fixed'&&cs.position!=='sticky')return;var z=parseInt(cs.zIndex,10);if(isNaN(z)||z<minZ)return;var r=el.getBoundingClientRect();if(r.width<vw*0.75||r.height<vh*0.75)return;el.style.setProperty('display','none','important');found.push({tag:el.tagName,id:el.id||undefined,class:el.className||undefined,zIndex:z,w:Math.round(r.width),h:Math.round(r.height)});n++});console.log('Removed '+n+' fixed overlay(s) (minZ='+minZ+')',found);if(found.length)console.table(found)})();"
       },
       {
         "name": "Log iframe inventory",
-        "type": "scriptlet",
-        "searchTags": ["iframe", "frame", "embed"],
+        "searchTags": [
+          "iframe",
+          "frame",
+          "embed"
+        ],
         "code": "(function(){var list=Array.from(document.querySelectorAll('iframe')).map(function(f,i){var o={index:i,id:f.id||undefined,name:f.name||undefined,src:f.src||f.getAttribute('src')||'',sandbox:f.getAttribute('sandbox'),allow:f.getAttribute('allow'),referrerPolicy:f.referrerPolicy||f.getAttribute('referrerpolicy'),title:f.title||undefined};try{o.accessible=!!f.contentDocument}catch(e){o.accessible=false;o.crossOrigin='blocked'}return o});console.log('iframes ('+list.length+')',list);if(list.length)console.table(list)})();"
       },
       {
         "name": "Bypass anti-debug",
-        "type": "scriptlet",
-        "searchTags": ["debugger", "devtools", "anti-debug"],
+        "searchTags": [
+          "debugger",
+          "devtools",
+          "anti-debug"
+        ],
         "code": "(function(){if(window.__SN_ANTI_DEBUG__)return;window.__SN_ANTI_DEBUG__=1;var noop=function(){};var OrigFn=Function;Function=function(){var a=Array.from(arguments);if(a.length){var b=a[a.length-1];if(typeof b==='string'&&/\\bdebugger\\b/.test(b)){a[a.length-1]=b.replace(/\\bdebugger\\s*;?/g,'');console.log('Function: stripped debugger')}}return OrigFn.apply(this,a)};Function.prototype=OrigFn.prototype;var _eval=window.eval;window.eval=function(s){if(typeof s==='string'&&/\\bdebugger\\b/.test(s)){s=s.replace(/\\bdebugger\\s*;?/g,'');console.log('eval: stripped debugger')}return _eval.call(window,s)};try{Object.defineProperty(window,'outerWidth',{get:function(){return window.innerWidth},configurable:1});Object.defineProperty(window,'outerHeight',{get:function(){return window.innerHeight},configurable:1})}catch(e1){}window.Firebug={chrome:{isInitialized:false}};['log','debug','info','warn','error'].forEach(function(m){var o=console[m];if(!o)return;var w=function(){return o.apply(console,arguments)};try{w.toString=function(){return'function '+m+'() { [native code] }'}}catch(e2){}console[m]=w});var _si=setInterval,_st=setTimeout;function stripDbg(fn){if(typeof fn!=='function')return fn;var s=fn.toString();if(/\\bdebugger\\b/.test(s)&&s.length<120){console.log('blocked debugger timer');return noop}return fn}window.setInterval=function(fn,t){return _si(stripDbg(fn),t)};window.setTimeout=function(fn,t){return _st(stripDbg(fn),t)};console.log('Anti-debug bypass installed')})();"
       },
       {
         "name": "Hook crypto.subtle",
-        "type": "scriptlet",
-        "searchTags": ["crypto", "webcrypto", "subtle"],
+        "searchTags": [
+          "crypto",
+          "webcrypto",
+          "subtle"
+        ],
         "code": "(function(){if(window.__SN_CRYPTO_HOOK__)return;window.__SN_CRYPTO_HOOK__=1;if(!window.crypto||!crypto.subtle){console.warn('crypto.subtle unavailable');return}var subtle=crypto.subtle;['encrypt','decrypt','sign','verify','digest','generateKey','deriveKey','deriveBits','importKey','exportKey','wrapKey','unwrapKey'].forEach(function(m){if(typeof subtle[m]!=='function')return;var orig=subtle[m].bind(subtle);subtle[m]=function(){console.log('crypto.subtle.'+m,arguments);return orig.apply(subtle,arguments)}});console.log('crypto.subtle hooked')})();"
       },
       {
         "name": "Log dispatchEvent",
-        "type": "scriptlet",
-        "searchTags": ["dispatch", "event", "synthetic"],
+        "searchTags": [
+          "dispatch",
+          "event",
+          "synthetic"
+        ],
         "code": "(function(){if(window.__SN_DISPATCH_HOOK__)return;window.__SN_DISPATCH_HOOK__=1;var orig=EventTarget.prototype.dispatchEvent;EventTarget.prototype.dispatchEvent=function(ev){console.log('dispatchEvent',ev&&ev.type,this,ev);return orig.call(this,ev)};console.log('dispatchEvent hooked')})();"
       }
     ]
@@ -347,21 +394,17 @@
   "Misc": {
     "children": [
       {
-        "hostPattern": "chromewebstore\\.google\\.com/detail/",
         "name": "Download Chrome extension",
-        "type": "derived-url",
-        "nav": "fetch",
-        "extract": {
+        "match": "chromewebstore\\.google\\.com/detail/",
+        "open": "download",
+        "navParams": {
           "id": {
-            "url": "\\/detail\\/(?:[^/]+\\/)*([a-p]{32})(?:[/?#]|$)"
+            "fromUrl": "\\/detail\\/(?:[^/]+\\/)*([a-p]{32})(?:[/?#]|$)",
+            "placeholder": "extension id",
+            "optional": true
           }
         },
-        "url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=999.0&acceptformat=crx2,crx3&x=id%3D{id}%26uc",
-        "parameter": {
-          "name": "id",
-          "placeholder": "extension id",
-          "optional": true
-        }
+        "url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=999.0&acceptformat=crx2,crx3&x=id%3D{id}%26uc"
       }
     ]
   }

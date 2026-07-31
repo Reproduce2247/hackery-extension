@@ -57,11 +57,10 @@ let defaultSectionName = null;
 
 const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl);
 
-function typeBadge(type) {
-  if (type === "scriptlet") return "Run";
-  if (type === "derived-url") return "Derive";
-  if (type === "navigate") return "Open";
-  return type || "Link";
+const { linkBadgeLabel } = globalThis.SnLinksBehaviors;
+
+function typeBadge(node) {
+  return linkBadgeLabel(node);
 }
 
 function getSelectedLink() {
@@ -124,7 +123,7 @@ function renderLinksList() {
 
     const badge = document.createElement("span");
     badge.className = "link-item-badge";
-    badge.textContent = typeBadge(link.type);
+    badge.textContent = typeBadge(link);
 
     const labelWrap = document.createElement("span");
     labelWrap.className = "link-item-label-wrap";

@@ -1,18 +1,16 @@
 import { getTargetTab } from "./tab-target.js";
 
-const {
-  resolveDerivedLink,
-  coerceScriptletNavigationUrl,
-  resolveNav,
-  performNavigation,
-} = globalThis.SnLinksNav;
+const { executeScriptletWithBindings } = globalThis.SnLinksScriptletInject;
+
+const { matchBehavior } = globalThis.SnLinksBehaviors;
 
 const {
   PARAM_VALUES_KEY,
-  getParameterDefs,
+  getRuntimeValueDefs,
+  getEditableValueDefs,
   linkStorageKey,
-  resolveNode,
   resolveParamValues,
+  seedNavParamValues,
 } = globalThis.SnLinksLinkModel;
 
 export async function loadParamValues() {
@@ -37,9 +35,26 @@ export function readParamValuesFromRow(row, parameterDefs) {
   return values;
 }
 
-export function validateParamValues(parameterDefs, values) {
+/**
+ * Validate values before run/navigate.
+ * navParams with fromUrl/fromSelector may still be filled by derivation.
+ */
+export function validateParamValues(parameterDefs, values, options = {}) {
+  const isUrlAction = Boolean(options.isUrlAction);
   const missing = parameterDefs
-    .filter((def) => !def.optional && !values[def.name])
+    .filter((def) => {
+      if (def.optional || values[def.name]) {
+        return false;
+      }
+      if (isUrlAction && (def.fromUrl || def.fromSelector)) {
+        // Derivation may fill these; unresolved required values no-op at resolve time.
+        return false;
+      }
+      if (isUrlAction && def.default !== "" && def.default !== undefined) {
+        return false;
+      }
+      return true;
+    })
     .map((def) => def.label || def.name);
   if (missing.length === 0) {
     return null;
@@ -50,28 +65,8 @@ export function validateParamValues(parameterDefs, values) {
   return `Enter values for ${missing.join(", ")}.`;
 }
 
-async function runScriptlet(tabId, code) {
-  if (!tabId) {
-    throw new Error("No target tab for script injection.");
-  }
-  const [{ result }] = await browser.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    injectImmediately: true,
-    func: (source) => new Function(source)(),
-    args: [code],
-  });
-  return result;
-}
-
-export async function resolveNavigationUrl(resolved, tab, origin, paramValues) {
-  if (resolved.type === "derived-url") {
-    return resolveDerivedLink(resolved, tab, origin, paramValues);
-  }
-  if (resolved.type === "navigate") {
-    return globalThis.SnLinksNav.resolvePathUrl(resolved.path, tab, origin);
-  }
-  return null;
+async function executeScriptlet(tabId, code, paramValues) {
+  return executeScriptletWithBindings(tabId, code, paramValues);
 }
 
 export function createActivateLink({ showMessage, hideMessage }) {
@@ -79,75 +74,68 @@ export function createActivateLink({ showMessage, hideMessage }) {
     hideMessage();
 
     try {
-      const parameterDefs = getParameterDefs(node);
+      const behavior = matchBehavior(node);
+      if (!behavior) {
+        throw new Error(`No behavior matched for "${node.name}".`);
+      }
+
+      const isUrlAction = behavior.id === "open-url";
+      const runtimeDefs = getRuntimeValueDefs(node);
+      const editableDefs = getEditableValueDefs(node);
       const rawValues =
-        row && parameterDefs.length > 0
-          ? readParamValuesFromRow(row, parameterDefs)
+        row && editableDefs.length > 0
+          ? readParamValuesFromRow(row, editableDefs)
           : {};
-      const paramValues = resolveParamValues(parameterDefs, rawValues);
-      const validationError = validateParamValues(parameterDefs, paramValues);
+
+      const paramValues = isUrlAction
+        ? seedNavParamValues(runtimeDefs, rawValues)
+        : resolveParamValues(runtimeDefs, rawValues);
+
+      const validationError = validateParamValues(runtimeDefs, {
+        ...Object.fromEntries(
+          runtimeDefs.map((def) => [def.name, paramValues[def.name] ?? ""])
+        ),
+        ...rawValues,
+      }, { isUrlAction });
       if (validationError) {
         showMessage(validationError);
         return;
       }
 
       const linkKey = linkStorageKey(node);
-      for (const def of parameterDefs) {
-        await saveParamValue(linkKey, def.name, paramValues[def.name]);
+      for (const def of editableDefs) {
+        await saveParamValue(linkKey, def.name, rawValues[def.name] ?? "");
       }
 
-      const resolved = resolveNode(node, paramValues);
+      const matchPattern = node.match ?? null;
+      const { tab, origin } = await getTargetTab(matchPattern);
+      // Switch to the matched host tab before injecting / navigating (same as pre-v2).
+      if (matchPattern) {
+        await browser.tabs.update(tab.id, { active: true });
+      }
 
-      if (resolved.type === "scriptlet") {
-        const hostPattern = resolved.hostPattern ?? null;
-        const { tab, origin } = await getTargetTab(hostPattern);
-        if (hostPattern) {
-          await browser.tabs.update(tab.id, { active: true });
-        }
+      const result = await behavior.run(node, {
+        tab,
+        origin,
+        paramValues,
+        executeScriptlet: executeScriptlet,
+      });
 
-        if (resolved.nav) {
-          const returnValue = await runScriptlet(tab.id, resolved.code);
-          const url = coerceScriptletNavigationUrl(returnValue, tab, origin);
-          if (!url) {
-            throw new Error("Navigation script did not resolve to a URL.");
-          }
-          await performNavigation(resolveNav(resolved), url, tab, hostPattern);
-          window.close();
-          return;
-        }
+      if (behavior.id === "open-url" && result?.url === null) {
+        showMessage(
+          "No URL derived from the current tab (pattern may not match, or already on the target page)."
+        );
+        return;
+      }
 
-        await runScriptlet(tab.id, resolved.code);
+      if (behavior.id === "run") {
         showMessage("Script ran — check the page console.");
         return;
       }
 
-      const hostPattern = resolved.hostPattern ?? null;
-      const { tab, origin } = await getTargetTab(hostPattern);
-      const url = await resolveNavigationUrl(
-        resolved,
-        tab,
-        origin,
-        paramValues
-      );
-
-      if (url === null) {
-        if (resolved.type === "derived-url") {
-          showMessage(
-            "No URL derived from the current tab (pattern may not match, or already on the target page)."
-          );
-          return;
-        }
+      if (behavior.id === "open-from-script" || behavior.id === "open-url") {
         window.close();
-        return;
       }
-
-      const nav = resolveNav(resolved);
-      if (!nav) {
-        throw new Error(`Navigation mode is required for ${resolved.type} links.`);
-      }
-
-      await performNavigation(nav, url, tab, hostPattern);
-      window.close();
     } catch (error) {
       showMessage(error.message || String(error));
     }

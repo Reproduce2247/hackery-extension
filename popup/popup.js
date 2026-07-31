@@ -130,7 +130,7 @@ function getVisibleSections() {
 }
 
 function sectionHasCustomLinks(section) {
-  return flattenLinkNodes(section.children, section.hostPattern, section.name).some(
+  return flattenLinkNodes(section.children, section.match, section.name).some(
     (node) => isCustomLink(node)
   );
 }
@@ -216,7 +216,7 @@ async function renderAll() {
         const sortedNodes = search.sortNodesBySearchScore(
           flattenLinkNodes(
             section.children,
-            section.hostPattern,
+            section.match,
             section.name
           ),
           (node, activeQuery) => search.nodeSearchScore(node, activeQuery)
@@ -250,7 +250,7 @@ async function renderAll() {
           section.children,
           list,
           savedParamValues,
-          section.hostPattern,
+          section.match,
           section.name,
           injectOnLoad,
           {
@@ -300,7 +300,7 @@ async function addQuickAction() {
   try {
     const leafNodes = flattenLinkNodes(
       section.children,
-      section.hostPattern,
+      section.match,
       section.name
     );
     const node = buildQuickLinkNode(

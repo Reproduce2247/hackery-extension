@@ -87,7 +87,7 @@ export function createSearchController({
 
     return flattenLinkNodes(
       section.children,
-      section.hostPattern,
+      section.match,
       section.name
     ).some((node) => nodeHasExactSearchMatch(node, query));
   }

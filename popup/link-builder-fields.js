@@ -82,39 +82,56 @@ function readMultipleParameters(listEl) {
   return Object.keys(parameters).length ? parameters : undefined;
 }
 
-function readExtractList(listEl) {
-  const extract = {};
-  for (const row of listEl.querySelectorAll(".extract-row")) {
-    const paramName = row.querySelector('[data-field="extract-name"]')?.value.trim();
+function readNavParamsList(listEl) {
+  const navParams = {};
+  for (const row of listEl.querySelectorAll(".nav-param-row")) {
+    const paramName = row.querySelector('[data-field="nav-name"]')?.value.trim();
     if (!paramName) {
       continue;
     }
-    const kind = row.querySelector('[data-field="extract-kind"]')?.value || "url";
+    const spec = {};
+    const kind = row.querySelector('[data-field="nav-kind"]')?.value || "none";
     if (kind === "url") {
       const pattern = getFieldValue(
-        row.querySelector('[data-field="extract-url"]')
+        row.querySelector('[data-field="nav-from-url"]')
       ).trim();
       if (pattern) {
-        extract[paramName] = { url: pattern };
+        spec.fromUrl = pattern;
       }
+    } else if (kind === "dom") {
+      const selector = row.querySelector('[data-field="nav-from-selector"]')?.value.trim();
+      if (selector) {
+        spec.fromSelector = selector;
+        const stringSource = row.querySelector('[data-field="nav-string-source"]')?.value;
+        if (stringSource) {
+          spec.stringSource = stringSource;
+        }
+        const attribute = row.querySelector('[data-field="nav-attribute"]')?.value.trim();
+        if (attribute) {
+          spec.attribute = attribute;
+        }
+      }
+    }
+
+    const showInput = row.querySelector('[data-field="nav-show-input"]')?.checked;
+    if (showInput) {
+      spec.placeholder =
+        row.querySelector('[data-field="nav-placeholder"]')?.value ?? "";
+    }
+    const defaultValue = row.querySelector('[data-field="nav-default"]')?.value.trim();
+    if (defaultValue) {
+      spec.default = defaultValue;
+    }
+    if (row.querySelector('[data-field="nav-optional"]')?.checked) {
+      spec.optional = true;
+    }
+
+    if (!spec.fromUrl && !spec.fromSelector && !showInput && !spec.default && !spec.optional) {
       continue;
     }
-    const selector = row.querySelector('[data-field="extract-selector"]')?.value.trim();
-    if (!selector) {
-      continue;
-    }
-    const spec = { selector };
-    const stringSource = row.querySelector('[data-field="extract-string-source"]')?.value;
-    if (stringSource) {
-      spec.stringSource = stringSource;
-    }
-    const attribute = row.querySelector('[data-field="extract-attribute"]')?.value.trim();
-    if (attribute) {
-      spec.attribute = attribute;
-    }
-    extract[paramName] = spec;
+    navParams[paramName] = spec;
   }
-  return Object.keys(extract).length ? extract : undefined;
+  return Object.keys(navParams).length ? navParams : undefined;
 }
 
 function fillSingleParameter(container, parameter = {}) {
@@ -139,7 +156,7 @@ function createParameterRow(values = {}) {
     <input data-field="param-name" type="text" placeholder="name" />
     <input data-field="param-placeholder" type="text" placeholder="placeholder" />
     <input data-field="param-default" type="text" placeholder="default" />
-    <label class="inline-check"><input data-field="param-optional" type="checkbox" /> Optional</label>
+    <label class="inline-check"><input data-field="param-optional" type="checkbox" /> Optional (may run empty)</label>
     <input data-field="param-choices" type="text" placeholder="choices, comma, separated" />
     <button type="button" class="row-remove secondary" title="Remove">×</button>
   `;
@@ -154,69 +171,101 @@ function createParameterRow(values = {}) {
   return row;
 }
 
-function updateExtractRowVisibility(row) {
-  const kind = row.querySelector('[data-field="extract-kind"]')?.value || "url";
-  const isUrl = kind === "url";
+function updateNavParamRowVisibility(row) {
+  const kind = row.querySelector('[data-field="nav-kind"]')?.value || "none";
   setFieldVisible(
-    row.querySelector('[data-field="extract-url"]')?.closest(".extract-url-field"),
-    isUrl
+    row.querySelector('[data-field="nav-from-url"]')?.closest(".nav-url-field"),
+    kind === "url"
   );
-  setFieldVisible(row.querySelector(".extract-dom-fields"), !isUrl);
-  const stringSource = row.querySelector('[data-field="extract-string-source"]')?.value;
+  setFieldVisible(row.querySelector(".nav-dom-fields"), kind === "dom");
+  const stringSource = row.querySelector('[data-field="nav-string-source"]')?.value;
   setFieldVisible(
-    row.querySelector('[data-field="extract-attribute"]')?.closest(".extract-attribute-field"),
-    stringSource === "attribute"
+    row.querySelector('[data-field="nav-attribute"]')?.closest(".nav-attribute-field"),
+    kind === "dom" && stringSource === "attribute"
+  );
+  const showInput = row.querySelector('[data-field="nav-show-input"]')?.checked;
+  setFieldVisible(
+    row.querySelector('[data-field="nav-placeholder"]')?.closest(".nav-placeholder-field"),
+    showInput
   );
 }
 
-function createExtractRow(values = {}) {
+function createNavParamRow(values = {}) {
   const row = document.createElement("div");
-  row.className = "extract-row builder-row";
+  row.className = "nav-param-row builder-row";
   row.innerHTML = `
-    <input data-field="extract-name" type="text" placeholder="param name" />
-    <select data-field="extract-kind">
-      <option value="url">URL regex</option>
-      <option value="dom">DOM selector</option>
+    <input data-field="nav-name" type="text" placeholder="name" />
+    <select data-field="nav-kind">
+      <option value="none">Manual / default only</option>
+      <option value="url">fromUrl (regex)</option>
+      <option value="dom">fromSelector (DOM)</option>
     </select>
-    <div class="extract-url-field">
-      <textarea data-field="extract-url" rows="1" spellcheck="false" placeholder="regex (capture group 1)"></textarea>
+    <div class="nav-url-field is-hidden">
+      <textarea data-field="nav-from-url" rows="1" spellcheck="false" placeholder="regex (capture group 1)"></textarea>
     </div>
-    <div class="extract-dom-fields is-hidden">
-      <input data-field="extract-selector" type="text" placeholder="CSS selector" />
-      <select data-field="extract-string-source">
+    <div class="nav-dom-fields is-hidden">
+      <input data-field="nav-from-selector" type="text" placeholder="CSS selector" />
+      <select data-field="nav-string-source">
         ${STRING_SOURCE_OPTIONS.map(
           (option) =>
             `<option value="${option.value}">${option.label}</option>`
         ).join("")}
       </select>
-      <div class="extract-attribute-field is-hidden">
-        <input data-field="extract-attribute" type="text" placeholder="attribute name" />
+      <div class="nav-attribute-field is-hidden">
+        <input data-field="nav-attribute" type="text" placeholder="attribute name" />
       </div>
     </div>
+    <label class="inline-check">
+      <input data-field="nav-show-input" type="checkbox" />
+      Show input (placeholder)
+    </label>
+    <div class="nav-placeholder-field is-hidden">
+      <input data-field="nav-placeholder" type="text" placeholder="placeholder text (may be empty)" />
+    </div>
+    <input data-field="nav-default" type="text" placeholder="default" />
+    <label class="inline-check">
+      <input data-field="nav-optional" type="checkbox" />
+      Optional (may run empty)
+    </label>
     <button type="button" class="row-remove secondary" title="Remove">×</button>
   `;
 
-  const kindSelect = row.querySelector('[data-field="extract-kind"]');
-  const sourceSelect = row.querySelector('[data-field="extract-string-source"]');
-  kindSelect.addEventListener("change", () => updateExtractRowVisibility(row));
-  sourceSelect.addEventListener("change", () => updateExtractRowVisibility(row));
+  const kindSelect = row.querySelector('[data-field="nav-kind"]');
+  const sourceSelect = row.querySelector('[data-field="nav-string-source"]');
+  const showInput = row.querySelector('[data-field="nav-show-input"]');
+  kindSelect.addEventListener("change", () => updateNavParamRowVisibility(row));
+  sourceSelect.addEventListener("change", () => updateNavParamRowVisibility(row));
+  showInput.addEventListener("change", () => updateNavParamRowVisibility(row));
   row.querySelector(".row-remove").addEventListener("click", () => row.remove());
 
-  if (values.url) {
+  if (values.fromUrl || values.url) {
     kindSelect.value = "url";
-    setFieldValue(row.querySelector('[data-field="extract-url"]'), values.url);
-  } else if (values.selector) {
+    setFieldValue(
+      row.querySelector('[data-field="nav-from-url"]'),
+      values.fromUrl || values.url
+    );
+  } else if (values.fromSelector || values.selector) {
     kindSelect.value = "dom";
-    row.querySelector('[data-field="extract-selector"]').value = values.selector;
+    row.querySelector('[data-field="nav-from-selector"]').value =
+      values.fromSelector || values.selector;
     sourceSelect.value = values.stringSource || "textContent";
-    row.querySelector('[data-field="extract-attribute"]').value = values.attribute || "";
-  }
-  if (values.paramName) {
-    row.querySelector('[data-field="extract-name"]').value = values.paramName;
+    row.querySelector('[data-field="nav-attribute"]').value = values.attribute || "";
+  } else {
+    kindSelect.value = "none";
   }
 
-  updateExtractRowVisibility(row);
-  attachCodeMirror(row.querySelector('[data-field="extract-url"]'), {
+  if (values.paramName) {
+    row.querySelector('[data-field="nav-name"]').value = values.paramName;
+  }
+  if (Object.prototype.hasOwnProperty.call(values, "placeholder")) {
+    showInput.checked = true;
+    row.querySelector('[data-field="nav-placeholder"]').value = values.placeholder ?? "";
+  }
+  row.querySelector('[data-field="nav-default"]').value = values.default ?? "";
+  row.querySelector('[data-field="nav-optional"]').checked = Boolean(values.optional);
+
+  updateNavParamRowVisibility(row);
+  attachCodeMirror(row.querySelector('[data-field="nav-from-url"]'), {
     language: "regex",
     compact: true,
     placeholder: "regex (capture group 1)",
@@ -234,8 +283,8 @@ export function wireBuilderFieldUi(fieldElements) {
   fieldElements.addParameterBtn.addEventListener("click", () => {
     fieldElements.multipleParametersList.appendChild(createParameterRow());
   });
-  fieldElements.addExtractBtn.addEventListener("click", () => {
-    fieldElements.extractList.appendChild(createExtractRow());
+  fieldElements.addNavParamBtn.addEventListener("click", () => {
+    fieldElements.navParamsList.appendChild(createNavParamRow());
   });
 }
 
@@ -293,15 +342,28 @@ export function readParameterFields(fieldElements) {
 
 export function populateParameterFields(fieldElements, node) {
   fieldElements.multipleParametersList.replaceChildren();
+  const params =
+    node.params ||
+    (node.parameters && typeof node.parameters === "object" ? node.parameters : null);
+
   if (node.parameter && !Array.isArray(node.parameter)) {
     fieldElements.parameterModeSelect.value = "single";
     fillSingleParameter(fieldElements.singleParameterFields, node.parameter);
-  } else if (node.parameters && typeof node.parameters === "object") {
-    fieldElements.parameterModeSelect.value = "multiple";
-    for (const [name, config] of Object.entries(node.parameters)) {
-      fieldElements.multipleParametersList.appendChild(
-        createParameterRow({ name, ...config })
-      );
+  } else if (params) {
+    const entries = Object.entries(params);
+    if (entries.length === 1) {
+      fieldElements.parameterModeSelect.value = "single";
+      fillSingleParameter(fieldElements.singleParameterFields, {
+        name: entries[0][0],
+        ...entries[0][1],
+      });
+    } else {
+      fieldElements.parameterModeSelect.value = "multiple";
+      for (const [name, config] of entries) {
+        fieldElements.multipleParametersList.appendChild(
+          createParameterRow({ name, ...config })
+        );
+      }
     }
   } else {
     fieldElements.parameterModeSelect.value = "none";
@@ -317,24 +379,39 @@ export function clearParameterFields(fieldElements) {
   updateParameterModeVisibility(fieldElements);
 }
 
-export function populateExtractFields(fieldElements, extract) {
-  fieldElements.extractList.replaceChildren();
-  if (!extract || typeof extract !== "object") {
+export function populateNavParamsFields(fieldElements, navParams) {
+  fieldElements.navParamsList.replaceChildren();
+  if (!navParams || typeof navParams !== "object") {
     return;
   }
-  for (const [paramName, spec] of Object.entries(extract)) {
-    fieldElements.extractList.appendChild(
-      createExtractRow({ paramName, ...spec })
+  for (const [paramName, spec] of Object.entries(navParams)) {
+    fieldElements.navParamsList.appendChild(
+      createNavParamRow({ paramName, ...spec })
     );
   }
 }
 
-export function readExtractFields(fieldElements) {
-  return readExtractList(fieldElements.extractList);
+export function readNavParamsFields(fieldElements) {
+  return readNavParamsList(fieldElements.navParamsList);
 }
 
+export function clearNavParamsFields(fieldElements) {
+  fieldElements.navParamsList.replaceChildren();
+}
+
+/** @deprecated use populateNavParamsFields */
+export function populateExtractFields(fieldElements, extract) {
+  populateNavParamsFields(fieldElements, extract);
+}
+
+/** @deprecated use readNavParamsFields */
+export function readExtractFields(fieldElements) {
+  return readNavParamsFields(fieldElements);
+}
+
+/** @deprecated use clearNavParamsFields */
 export function clearExtractFields(fieldElements) {
-  fieldElements.extractList.replaceChildren();
+  clearNavParamsFields(fieldElements);
 }
 
 export function getBuilderFieldElements(root = document) {
@@ -347,9 +424,13 @@ export function getBuilderFieldElements(root = document) {
     multipleParametersPanel: root.getElementById("multiple-parameters-panel"),
     multipleParametersList: root.getElementById("multiple-parameters-list"),
     addParameterBtn: root.getElementById("add-parameter-btn"),
-    extractSection: root.getElementById("extract-section"),
-    extractList: root.getElementById("extract-list"),
-    addExtractBtn: root.getElementById("add-extract-btn"),
+    navParamsSection: root.getElementById("nav-params-section"),
+    navParamsList: root.getElementById("nav-params-list"),
+    addNavParamBtn: root.getElementById("add-nav-param-btn"),
+    // Legacy aliases used by older builder markup during rename.
+    extractSection: root.getElementById("nav-params-section"),
+    extractList: root.getElementById("nav-params-list"),
+    addExtractBtn: root.getElementById("add-nav-param-btn"),
     parametersSection: root.getElementById("parameters-section"),
   };
 }

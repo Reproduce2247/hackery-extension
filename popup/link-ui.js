@@ -6,16 +6,18 @@ import {
 import { getTargetTab } from "./tab-target.js";
 
 const {
-  isAbsoluteUrl,
-  resolveNavScriptletUrl,
-} = globalThis.SnLinksNav;
+  linkBadgeLabel,
+  linkBadgeClass,
+  displayHint,
+  matchBehavior,
+  formatOpenHint,
+} = globalThis.SnLinksBehaviors;
 
 const {
   INJECT_ON_LOAD_KEY,
-  getParameterConfig,
-  getParameterDefs,
+  getEditableValueDefs,
   linkStorageKey,
-  resolveHostPattern,
+  resolveMatch,
   resolveParamValues,
   nodeHasOnLoad,
 } = globalThis.SnLinksLinkModel;
@@ -130,89 +132,37 @@ function showLinkContextMenu(event, node, row, { copyLink, exportLinkJson, editC
   openContextMenu = menu;
 }
 
-function buildParameterDef(node, paramName) {
-  const config = getParameterConfig(node, paramName) || {};
+function buildParameterDef(def) {
   return {
-    name: paramName,
-    label: config.label || paramName,
-    placeholder: config.placeholder || paramName,
-    default: config.default ?? "",
-    optional: Boolean(config.optional),
-    choices: Array.isArray(config.choices) ? config.choices : null,
+    ...def,
+    placeholder:
+      def.placeholder !== undefined && def.placeholder !== ""
+        ? def.placeholder
+        : def.name,
   };
 }
 
 function getUiParameterDefs(node) {
-  return getParameterDefs(node).map((def) => ({
-    ...def,
-    ...buildParameterDef(node, def.name),
-  }));
+  return getEditableValueDefs(node).map((def) => buildParameterDef(def));
 }
 
 function displayLabel(node) {
   return node.displayName || node.name;
 }
 
-function linkBadgeLabel(node) {
-  if (node.type === "scriptlet") {
-    return node.nav ? "Open" : "Run";
-  }
-  if (node.type === "derived-url") return "Derive";
-  if (node.type === "navigate") {
-    return isAbsoluteUrl(node.path || "") ? "Web" : "Open";
-  }
-  return "Open";
-}
-
-function linkBadgeClass(node) {
-  let classes = "link-badge";
-  if (node.type === "derived-url") classes += " derived-url";
-  if (node.type === "scriptlet" && node.nav) classes += " nav-scriptlet";
-  if (node.type === "navigate" && isAbsoluteUrl(node.path || "")) {
-    classes += " absolute-url";
-  }
-  return classes;
-}
-
-function displayHint(node, paramValues = {}) {
-  const { resolveNode } = globalThis.SnLinksLinkModel;
-  const resolved = resolveNode(node, paramValues);
-  if (resolved.type === "scriptlet") {
-    if (resolved.nav) {
-      return null;
-    }
-    return resolved.hostPattern
-      ? "Runs on the matched host tab"
-      : "Runs on the active tab";
-  }
-  if (resolved.type === "derived-url") {
-    if (resolved.path) {
-      return resolved.path;
-    }
-    return resolved.url
-      ? resolved.url
-          .replace(/\{encode:[^}]+\}/g, "…")
-          .replace(/\{[^}]+\}/g, "…")
-      : "";
-  }
-  if (resolved.type === "navigate") {
-    return resolved.path || "";
-  }
-  return "";
-}
-
 async function resolveNavScriptletHint(node, row, parameterDefs) {
-  const { resolveNode } = globalThis.SnLinksLinkModel;
-  const resolved = resolveNode(
-    node,
-    resolveParamValues(parameterDefs, readParamValuesFromRow(row, parameterDefs))
+  const { resolveNavScriptletUrl } = globalThis.SnLinksNav;
+  const { formatOpenHint } = globalThis.SnLinksBehaviors;
+  const paramValues = resolveParamValues(
+    parameterDefs,
+    readParamValuesFromRow(row, parameterDefs)
   );
-  const hostPattern = resolved.hostPattern ?? null;
-  const { tab, origin } = await getTargetTab(hostPattern);
-  return (
-    resolveNavScriptletUrl(resolved.code, tab.url, origin, tab) ||
-    "Navigation script"
-  );
+  const matchPattern = node.match ?? null;
+  const { tab, origin } = await getTargetTab(matchPattern);
+  const url =
+    resolveNavScriptletUrl(node.code, tab.url, origin, tab, paramValues) ||
+    "Navigation script";
+  return formatOpenHint(node.open, url);
 }
 
 function bindParamInput(input, def, linkKey, onEnter) {
@@ -465,7 +415,7 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     if (options.isCustom) {
       button.classList.add("is-custom");
     }
-    button.dataset.type = node.type;
+    button.dataset.behavior = matchBehavior(node)?.id || "";
 
     const badge = document.createElement("span");
     badge.className = linkBadgeClass(node);
@@ -478,14 +428,15 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     const hint = document.createElement("span");
     hint.className = "link-hint";
     const updateHint = () => {
-      if (node.type === "scriptlet" && node.nav) {
-        hint.textContent = "…";
+      const behavior = matchBehavior(node);
+      if (behavior?.id === "open-from-script") {
+        hint.textContent = displayHint(node) || "…";
         resolveNavScriptletHint(node, row, parameterDefs)
           .then((text) => {
             hint.textContent = text;
           })
           .catch(() => {
-            hint.textContent = "Navigation script";
+            hint.textContent = formatOpenHint(node.open, "Navigation script");
           });
         return;
       }
@@ -539,8 +490,8 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
       row.classList.add("has-on-load");
       const injectLabel = document.createElement("label");
       injectLabel.className = "inject-load";
-      const hostHint = node.hostPattern
-        ? `Inject at document start when tab URL matches /${node.hostPattern}/`
+      const hostHint = node.match
+        ? `Inject at document start when tab URL matches /${node.match}/`
         : "Inject at document start on every page";
       injectLabel.title = hostHint;
 
@@ -582,7 +533,7 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     nodes,
     container,
     savedParamValues,
-    inheritedHostPattern = null,
+    inheritedMatch = null,
     sectionName = null,
     injectOnLoad = {},
     options = {}
@@ -590,7 +541,7 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     const { isCustomLink } = globalThis.SnLinksLinkCatalog;
 
     for (const node of nodes) {
-      const hostPattern = resolveHostPattern(node, inheritedHostPattern);
+      const matchPattern = resolveMatch(node, inheritedMatch);
       if (node.children) {
         const folder = document.createElement("section");
         folder.className = "folder";
@@ -604,7 +555,7 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
           node.children,
           folder,
           savedParamValues,
-          hostPattern,
+          matchPattern,
           sectionName,
           injectOnLoad,
           options
@@ -615,7 +566,7 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
 
       container.appendChild(
         createLinkRow(
-          { ...node, hostPattern, sectionName },
+          { ...node, match: matchPattern, sectionName },
           {
             savedParamValues,
             injectOnLoad,

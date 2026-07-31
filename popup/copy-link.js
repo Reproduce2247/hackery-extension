@@ -1,71 +1,84 @@
 import { getTargetTab } from "./tab-target.js";
 import {
   readParamValuesFromRow,
-  resolveNavigationUrl,
   saveParamValue,
   validateParamValues,
 } from "./activate-link.js";
 
-const { resolveNavScriptletUrl } = globalThis.SnLinksNav;
+const { resolveNavScriptletUrl, resolveUrlAction } = globalThis.SnLinksNav;
+const { matchBehavior } = globalThis.SnLinksBehaviors;
 
 const {
-  getParameterDefs,
+  getRuntimeValueDefs,
+  getEditableValueDefs,
   linkStorageKey,
-  resolveNode,
   resolveParamValues,
+  seedNavParamValues,
 } = globalThis.SnLinksLinkModel;
 
 async function resolveCopyText(node, row) {
-  const parameterDefs = getParameterDefs(node);
+  const behavior = matchBehavior(node);
+  if (!behavior) {
+    throw new Error(`No behavior matched for "${node.name}".`);
+  }
+
+  const isUrlAction = behavior.id === "open-url";
+  const runtimeDefs = getRuntimeValueDefs(node);
+  const editableDefs = getEditableValueDefs(node);
   const rawValues =
-    row && parameterDefs.length > 0
-      ? readParamValuesFromRow(row, parameterDefs)
+    row && editableDefs.length > 0
+      ? readParamValuesFromRow(row, editableDefs)
       : {};
-  const paramValues = resolveParamValues(parameterDefs, rawValues);
-  const validationError = validateParamValues(parameterDefs, paramValues);
+
+  const paramValues = isUrlAction
+    ? seedNavParamValues(runtimeDefs, rawValues)
+    : resolveParamValues(runtimeDefs, rawValues);
+
+  const validationError = validateParamValues(
+    runtimeDefs,
+    {
+      ...Object.fromEntries(
+        runtimeDefs.map((def) => [def.name, paramValues[def.name] ?? ""])
+      ),
+      ...rawValues,
+    },
+    { isUrlAction }
+  );
   if (validationError) {
     throw new Error(validationError);
   }
 
   const linkKey = linkStorageKey(node);
-  for (const def of parameterDefs) {
-    await saveParamValue(linkKey, def.name, paramValues[def.name]);
+  for (const def of editableDefs) {
+    await saveParamValue(linkKey, def.name, rawValues[def.name] ?? "");
   }
 
-  const resolved = resolveNode(node, paramValues);
-
-  if (resolved.type === "scriptlet") {
-    if (resolved.nav) {
-      const hostPattern = resolved.hostPattern ?? null;
-      const { tab, origin } = await getTargetTab(hostPattern);
-      const url = resolveNavScriptletUrl(
-        resolved.code,
-        tab.url,
-        origin,
-        tab
-      );
-      if (!url) {
-        throw new Error("Navigation script did not resolve to a URL.");
-      }
-      return url;
+  if (behavior.id === "open-from-script") {
+    const matchPattern = node.match ?? null;
+    const { tab, origin } = await getTargetTab(matchPattern);
+    const url = resolveNavScriptletUrl(
+      node.code,
+      tab.url,
+      origin,
+      tab,
+      paramValues
+    );
+    if (!url) {
+      throw new Error("Navigation script did not resolve to a URL.");
     }
-    return resolved.code || "";
+    return url;
   }
 
-  const hostPattern = resolved.hostPattern ?? null;
-  const { tab, origin } = await getTargetTab(hostPattern);
-  const url = await resolveNavigationUrl(
-    resolved,
-    tab,
-    origin,
-    paramValues
-  );
+  if (behavior.id === "run") {
+    return node.code || "";
+  }
+
+  const matchPattern = node.match ?? null;
+  const { tab, origin } = await getTargetTab(matchPattern);
+  const url = await resolveUrlAction(node, tab, origin, paramValues);
 
   if (url === null) {
-    if (resolved.type === "derived-url") {
-      throw new Error("Could not derive URL from the current tab.");
-    }
-    throw new Error("No URL to copy.");
+    throw new Error("Could not derive URL from the current tab.");
   }
 
   return url;

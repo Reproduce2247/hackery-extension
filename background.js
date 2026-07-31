@@ -9,7 +9,7 @@ const REFRESH_DEBOUNCE_MS = 300;
 const TEST_RULE_TIMEOUT_MS = 8000;
 
 let linksCache = null;
-/** @type {{ hostPattern: string | null, code: string }[]} */
+/** @type {{ match: string | null, code: string, paramValues: Record<string, string> }[]} */
 let injectEntries = [];
 let networkRulesState = defaultNetworkRulesState();
 let networkRulesCompiled = [];
@@ -39,9 +39,13 @@ function codesForUrl(url) {
     return [];
   }
 
-  return injectEntries
-    .filter((entry) => LM.matchesHostPattern(url, entry.hostPattern))
-    .map((entry) => entry.code);
+  return injectEntries.filter((entry) => LM.matchesHostPattern(url, entry.match));
+}
+
+async function runInjectEntriesForTab(tabId, entries, frameId) {
+  for (const entry of entries) {
+    await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+  }
 }
 
 async function loadExtensionSettings() {
@@ -107,7 +111,7 @@ async function rebuildInjectCache() {
   for (const [name, section] of Object.entries(sections)) {
     LM.collectScriptlets(
       section.children || [],
-      section.hostPattern ?? null,
+      section.match ?? section.hostPattern ?? null,
       name,
       scriptlets
     );
@@ -116,14 +120,14 @@ async function rebuildInjectCache() {
   injectEntries = [];
   for (const { linkKey, node } of scriptlets) {
     if (!injectOnLoad[linkKey]) continue;
-    if (node.nav) continue;
 
     const parameterDefs = LM.getParameterDefs(node);
     const rawValues = paramValues[linkKey] || {};
     const values = LM.resolveParamValues(parameterDefs, rawValues);
     injectEntries.push({
-      hostPattern: node.hostPattern ?? null,
-      code: LM.applyParameters(node.code, values, { scriptlet: true }),
+      match: node.match ?? null,
+      code: node.code,
+      paramValues: values,
     });
   }
 }
@@ -165,9 +169,7 @@ async function reinjectOnLoadAllTabs() {
       continue;
     }
     try {
-      for (const code of codes) {
-        await executeScriptletInTab(tab.id, code);
-      }
+      await runInjectEntriesForTab(tab.id, codes);
     } catch {
       // restricted tab — skip
     }
@@ -458,22 +460,47 @@ function initNetworkNavigationHook() {
   networkNavigationHookRegistered = true;
 }
 
-function runInjectedSource(source) {
-  new Function(source)();
+function runInjectedSource(names, values, source) {
+  try {
+    const value = !names.length
+      ? new Function(source)()
+      : new Function(...names, source)(...values);
+    return { ok: true, value };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error && typeof error === "object" && "message" in error
+          ? String(error.message)
+          : String(error),
+    };
+  }
 }
 
-async function executeScriptletInTab(tabId, code, frameId) {
+async function executeScriptletInTab(tabId, code, paramValues = {}, frameId) {
   const target = { tabId };
   if (frameId != null) {
     target.frameIds = [frameId];
   }
-  await browser.scripting.executeScript({
+  const [injection] = await browser.scripting.executeScript({
     target,
     world: "MAIN",
     injectImmediately: true,
     func: runInjectedSource,
-    args: [code],
+    args: [Object.keys(paramValues), Object.values(paramValues), code],
   });
+
+  if (injection?.error != null) {
+    const message =
+      typeof injection.error === "string"
+        ? injection.error
+        : injection.error?.message || String(injection.error);
+    throw new Error(message);
+  }
+  if (injection?.result?.ok === false) {
+    throw new Error(injection.result.error || "Script threw an error.");
+  }
+  return injection?.result?.ok === true ? injection.result.value : injection?.result;
 }
 
 function scheduleRefreshInjectState() {

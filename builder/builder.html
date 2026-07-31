@@ -109,7 +109,7 @@
 
           <section id="parameters-section" class="field-group">
             <label class="field">
-              <span class="field-label">Parameters</span>
+              <span class="field-label">Script parameters</span>
               <select id="parameter-mode">
                 <option value="none">None</option>
                 <option value="single">Single parameter</option>
@@ -125,7 +125,7 @@
               <div class="builder-row">
                 <label class="inline-check">
                   <input data-field="param-optional" type="checkbox" />
-                  Optional
+                  Optional (may run empty)
                 </label>
                 <input
                   data-field="param-choices"
@@ -142,14 +142,14 @@
             </div>
           </section>
 
-          <section id="extract-section" class="field-group is-hidden">
+          <section id="nav-params-section" class="field-group is-hidden">
             <div class="field-group-header">
-              <span class="field-label">Extract rules</span>
-              <button id="add-extract-btn" type="button" class="secondary row-add">
-                Add extract rule
+              <span class="field-label">URL navParams</span>
+              <button id="add-nav-param-btn" type="button" class="secondary row-add">
+                Add navParam
               </button>
             </div>
-            <div id="extract-list" class="builder-list"></div>
+            <div id="nav-params-list" class="builder-list"></div>
           </section>
 
           <div class="form-actions">
@@ -164,9 +164,10 @@
     </main>
 
     <script src="../lib/storage-keys.js"></script>
-    <script src="../lib/link-catalog.js"></script>
     <script src="../lib/link-model.js"></script>
-    <script src="../lib/ui-message.js"></script>
+    <script src="../lib/link-catalog.js"></script>
+    <script src="../lib/navigation-shared.js"></script>
+    <script src="../lib/link-behaviors.js"></script>
     <script type="module" src="builder.js"></script>
   </body>
 </html>

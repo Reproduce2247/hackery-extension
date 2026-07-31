@@ -19,8 +19,10 @@ The UI still says "ServiceNow Links" in places (`manifest.json`, README); treat 
 ```
 manifest.json
 ├── background.js          # Content-script registration, scriptlet execution, inject cache
-├── lib/link-model.js        # Shared link tree, parameters, host patterns, scriptlet normalization
-├── lib/navigation-shared.js # Shared URL resolution and nav execution
+├── lib/link-model.js        # Shared link tree, parameters, match patterns, normalization
+├── lib/link-behaviors.js    # Behavior registry (run / open-url / open-from-script)
+├── lib/scriptlet-inject.js  # Scriptlet binding injection helper
+├── lib/navigation-shared.js # Shared URL resolution and open execution
 ├── lib/network-rules-shared.js # Rule model, matching, shared state helpers
 ├── lib/network-hook-install.js # MAIN-world fetch/XHR hook (injected)
 ├── lib/network-webrequest.js   # webRequest blocking/filter for non-hook traffic
@@ -42,24 +44,165 @@ manifest.json
 
 ### Execution flow
 
-1. User opens popup → `popup.js` loads `data/links.json` and renders section tabs.
-2. **Run (scriptlet):** popup sends `RUN_SCRIPTLET` to background → `browser.scripting.executeScript` in **MAIN** world (`runInjectedSource` via `new Function`).
-3. **Navigate (`navigate`):** explicit `path`; resolved via `hostPattern` and `nav`.
-4. **Derive (`derived-url`):** `path` and/or `extract`+`url` — origin from matching tab; opened per `nav`.
-5. **On load:** user enables checkbox → background registers `inject/on-load.js` at `document_start` on all http(s) pages → inject script messages background with page URL → enabled scriptlets whose **hostPattern** matches the tab URL run in MAIN world (`hostPattern` null/absent = every page). Navigation scriptlets are excluded. Master toggle **On load** in popup disables all on-load injection.
-6. **Network rules:** `rules/rules.html` edits `networkRules` in storage → fetch/XHR hooks + `webRequest` apply block/redirect/modify/mock. Rules re-inject on open tabs when saved. Master toggle **Network** in popup disables hooks and webRequest rule handling.
+1. User opens popup → `popup.js` loads merged catalog and renders section tabs.
+2. **Run:** `code` only → `new Function(...names, code)(...values)` in MAIN world.
+3. **Open / Web / Derive:** `url` (+ optional `navParams`) → resolve against matching tab; navigate per `open`.
+4. **Open (script):** `code` + `open` → run script with bindings; coerce return value to URL; navigate.
+5. **On load:** user enables checkbox → on-load inject runs **Run** behaviors only (`code` without `open`), filtered by inherited `match`.
+6. **Network rules:** unchanged (see below).
 
-### On-load + `hostPattern`
+### On-load + `match`
 
-On-load is **not** a separate rule engine — it reuses link `hostPattern` inheritance from `links.json`:
+On-load reuses link `match` inheritance from `links.json` (same rules as tab targeting). Only **Run** actions (`code` without `open`) are eligible.
 
-| Scriptlet `hostPattern` | On-load runs when… |
+### Tab / origin targeting
+
+| `match` | Behavior |
 |---|---|
-| Inherited from section (e.g. `\.service-now\.com$`) | Tab URL hostname or href matches the regex |
-| Set on the link node | Same; overrides section default |
-| `null` / absent (e.g. Reverse-engineering tools, custom scripts) | Every http(s) page |
+| Set (e.g. `\.service-now\.com$`) | Find or create a tab matching the pattern; remember origin per pattern in `lastOrigins` |
+| Set with path (e.g. `chromewebstore\.google\.com/detail/`) | Same; pattern can match full tab URL |
+| `null` / absent on node | Use the **active tab** (overrides section inheritance when set explicitly on a link) |
 
-The bootstrap content script is registered on all http(s) URLs; `background.js` filters which scriptlets run per navigation via `codesForUrl()`.
+Reverse-engineering tools have no section-level `match` — they run on the active tab.
+
+## Link data model (`data/links.json`) — schema v3
+
+Top-level keys are **section names** (popup tabs):
+
+```json
+{
+  "match": "\\.service-now\\.com$",
+  "children": [ /* folders + leaves */ ]
+}
+```
+
+`match` is optional and inherited by nested folders/leaves unless overridden.
+
+### Leaf actions (no `type` field)
+
+Discriminated by properties; [`lib/link-behaviors.js`](lib/link-behaviors.js) picks the first matching behavior:
+
+| Behavior | Badge | Shape |
+|---|---|---|
+| `run` | Run | `code` only |
+| `open-from-script` | Open | `code` + `open` (script returns URL) |
+| `open-url` | Open / Web / Derive | `url` + `open`; optional `navParams` and/or `{…}` templates |
+
+Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParams` or template tokens in `url`).
+
+### Common fields
+
+| Field | Purpose |
+|---|---|
+| `code` | Script body; `params` keys are lexical bindings at runtime |
+| `url` | Relative path, absolute URL, or template |
+| `open` | How to open a resolved URL (see below) |
+| `params` | Script/function bindings only (see below) |
+| `navParams` | URL/URI substitution values only (see below) |
+| `match` | Host/URL regex; `null` = active tab |
+
+Folders: `{ "name": "…", "children": [ … ] }`.
+
+### Navigation (`open`)
+
+Required on URL actions. On scriptlets, only when the script returns a URL (`code` + `open`).
+
+| Value | Behavior |
+|---|---|
+| `same-tab` | Replace the target tab’s URL |
+| `tab` | Open in a new focused tab |
+| `background` | Open in a new background tab |
+| `download` | Trigger `browser.downloads.download` |
+
+Legacy aliases normalized on load: `foreground` → `tab`, `fetch` → `download`.
+
+### params vs navParams
+
+Mutual exclusion by behavior (see [ADR 0001](docs/adr/0001-params-vs-navparams.md)):
+
+| | `params` | `navParams` |
+|---|---|---|
+| **Owns** | Script/function bindings | URL `{name}` / `{encode:name}` substitution |
+| **Used on** | `code` actions (`run`, `open-from-script`) | `url` actions (`open-url`) |
+| **Runtime** | `new Function(...names, code)(...values)` | Applied to `url` template after resolve |
+
+A leaf should not declare both. Normalization moves URL-only legacy `params` into `navParams` and drops `navParams`/`extract` on pure script actions.
+
+#### `params` fields
+
+```json
+"params": {
+  "limit": {
+    "placeholder": "limit",
+    "default": "100",
+    "optional": false,
+    "choices": ["50", "100", "200"]
+  }
+}
+```
+
+| Key | Purpose |
+|---|---|
+| `placeholder` | Popup input hint (also implies the input is shown) |
+| `default` | Used when the input is blank |
+| `optional` | Allow running with an empty value |
+| `choices` | Optional combobox suggestions |
+
+Script code uses bare names (`limit`), not `{limit}` or `$limit`.
+
+#### `navParams` fields
+
+```json
+"navParams": {
+  "target": { "fromUrl": "^https?://[^/]+/(.+)$" },
+  "id": {
+    "fromUrl": "\\/detail\\/([a-p]{32})",
+    "placeholder": "extension id",
+    "optional": true
+  },
+  "sys_id": {
+    "placeholder": "sys_id",
+    "default": "67ee2538534501108135ddeeff7b121b"
+  }
+}
+```
+
+| Key | Purpose |
+|---|---|
+| `fromUrl` | Regex against the tab URL; capture group 1 is the value |
+| `fromSelector` | CSS selector on the tab DOM (mutually exclusive with `fromUrl`) |
+| `stringSource` | With `fromSelector`: `textContent` (default), `innerHTML`, `id`, or `attribute` |
+| `attribute` | Required when `stringSource` is `attribute` |
+| `placeholder` | **UI opt-in:** presence (including `""`) shows a popup input; never used as a value |
+| `default` | Used after derivation if still empty |
+| `optional` | Allow navigating with an empty value; otherwise missing required → no-op |
+| `choices` / `label` | Same semantics as `params` when an input is shown |
+
+**Resolve order** per key: non-empty manual input → `fromUrl` / `fromSelector` → `default`. Blank input means “no manual value” (fall through). At most one derivation source per key.
+
+URL templates also support `{origin}` (target tab origin), independent of `navParams`.
+
+### Schema migration
+
+`LINKS_SCHEMA_VERSION` is **3**. Bumping clears `linkParamValues` and `injectOnLoad` once (`linksSchemaVersion` in storage). Overlay / catalog normalize on load:
+
+| Legacy | Canonical |
+|---|---|
+| `extract` | `navParams` |
+| `extract.*.url` | `navParams.*.fromUrl` |
+| `extract.*.selector` | `navParams.*.fromSelector` |
+| URL-only `params` (no `code`) | merged into `navParams` |
+| `type` / `path` / `nav` / `hostPattern` / `parameter` | as in v2 |
+
+One-off file rewrite: `node scripts/migrate-links-json.js`.
+
+### Deferred: sandbox
+
+Future `sandbox` on `code` actions: `"main"` (default), `"isolated"`, `"readonly-dom"`. Readonly-dom is best-effort (cloned document); not a security boundary. Not implemented.
+
+### Bookmark sync contract (future)
+
+Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navParams`. Scriptlet bookmarklets should use the same binding model as the extension, not string substitution into `code`.
 
 ### Network rules (`rules/`)
 
@@ -94,77 +237,9 @@ The bootstrap content script is registered on all http(s) URLs; `background.js` 
 
 When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. `Authorization`) may not carry the way Requestly’s session DNR rules do. Header **modify** rules on fetch/XHR apply in the page hook; **webRequest** header rules apply to other resource types. Preserving auth across redirect rewritten URLs is **not implemented** — documented for future work in `rules/rules.html`.
 
-### Tab / origin targeting
-
-| `hostPattern` | Behavior |
-|---|---|
-| Set (e.g. `\.service-now\.com$`) | Find or create a tab matching the pattern; remember origin per pattern in `lastOrigins` |
-| Set with path (e.g. `chromewebstore\.google\.com/detail/`) | Same, but pattern can match the full tab URL (hostname-only patterns still work) |
-| `null` / absent on node | Use the **active tab** in the current window (overrides section inheritance when set explicitly on a link) |
-
 When matching tabs in the current window: the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
 
-Reverse-engineering tools have no section-level `hostPattern` — they always run on whatever tab is active.
-
-## Link data model (`data/links.json`)
-
-Top-level keys are **section names** (shown as popup tabs). Each section:
-
-```json
-{
-  "hostPattern": "\\.service-now\\.com$",
-  "children": [ /* tree nodes */ ]
-}
-```
-
-`hostPattern` is optional and inherited by nested folders/links unless overridden.
-
-### Node types (leaves)
-
-| `type` | Badge | Fields | Runs on |
-|---|---|---|---|
-| `scriptlet` | Run | `code`; optional `nav` + returning `code` | Target tab, MAIN world (or background eval when `nav` set) |
-| `navigate` | Open / Web | `path` (relative or absolute); optional `hostPattern`; optional `nav` | Declared path resolved per `hostPattern` |
-| `derived-url` | Derive | `path` and/or `extract`+`url`; required `nav` | Origin from matching tab; `path` for instance-independent SN links |
-
-Use **`derived-url`** with `path` + section `hostPattern` for instance-relative links that should open in a new tab (default pattern for ServiceNow catalog entries). Use **`navigate`** for same-tab or explicitly declared paths. Set `"hostPattern": null` on links that must not bind to the section instance (e.g. community/developer docs on non-instance hosts).
-
-Folders use `{ "name": "…", "children": [ … ] }` with no `type`.
-
-### Navigation (`nav`)
-
-Optional on `navigate` (defaults: `same-tab` for relative paths, `foreground` for absolute URLs). **Required** on `derived-url`. Optional on `scriptlet` when `code` returns a URL evaluated in the background against tab `location`.
-
-| `nav` | Behavior |
-|---|---|
-| `same-tab` | `browser.tabs.update` on target tab |
-| `foreground` | New tab, focused |
-| `background` | New tab, unfocused |
-| `fetch` | `browser.downloads.download` (direct request / file download) |
-
-### Parameters
-
-Placeholders in paths, URLs, and scriptlet code (`{name}`, `$name`) are substituted only when declared via `parameter` or `parameters` on the same node — not inferred from template text.
-
-```json
-"parameter": { "name": "limit", "placeholder": "…", "default": "100" }
-```
-
-Or multiple:
-
-```json
-"parameters": { "sys_id": { "default": "…", "choices": ["a", "b"] } }
-```
-
-Set `"optional": true` to allow running without a value (e.g. filled from the tab URL or page DOM instead). For `derived-url`, when all extract attempts fail and every failed parameter is optional, the action is a no-op (e.g. already on a navigator URL).
-
-`extract` maps parameter names to `{ "url": "<regex>" }` (capture group 1 from the tab URL) or `{ "selector": "<css>", "stringSource": "textContent"|"innerHTML"|"id"|"attribute", "attribute": "<name>" }` (first matching DOM element).
-
-`derived-url` templates support `{paramName}` placeholders and `{encode:paramName}` for `encodeURIComponent`. `{origin}` is filled from the target tab origin.
-
-Scriptlets may set `"nav"` so `code` returns a URL string when given a `location` object (evaluated in the background from the tab URL). Relative returns are resolved against the target tab origin.
-
-Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key** derived from section + type + name + template.
+Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key** derived from section + behavior + name + template.
 
 ## Sections (current)
 
@@ -184,10 +259,10 @@ These are the **primary** reason the extension exists; extend this section when 
 
 ### ServiceNow
 
-Instance-scoped actions with `hostPattern: \.service-now\.com$`. Examples:
+Instance-scoped actions with `match: \.service-now\.com$`. Examples:
 
 - Set list row limit (parameterized GlideList2 scriptlet)
-- Show navigator (`derived-url`: extract current path, wrap in classic navigator URL)
+- Show navigator (`url` + `navParams` + `open`)
 - Upload XML, cancel transactions, app logs
 - UIB / macroponent deep links (parameterized `sys_id`)
 - External docs (community, developer portal)
@@ -198,8 +273,8 @@ Originally populated from the **SN links** Firefox bookmarks folder via `scripts
 
 Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). **Advanced…** opens `builder/builder.html` for full link editing, import, and export.
 
-- Quick-add: JavaScript/bookmarklet → scriptlet; `http(s)://…` or `/path` → navigate link
-- Advanced window: all link types, parameters, extract, host patterns, JSON import/export
+- Quick-add: JavaScript/bookmarklet → `code` action; `http(s)://…` or `/path` → `url` + `open`
+- Advanced window: all action shapes, `params`, `navParams`, `match`, JSON import/export
 - Right-click custom links → **Edit in builder** opens the advanced window
 - Custom links stored in `linksJsonOverlay` (links.json format); export for source control
 
@@ -207,13 +282,14 @@ Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). *
 
 | Key | Purpose |
 |---|---|
-| `lastOrigins` | Map of `hostPattern` → last seen origin |
+| `lastOrigins` | Map of match pattern → last seen origin |
 | `linkParamValues` | Saved parameter values per link key |
 | `injectOnLoad` | Map of link key → true for on-load scriptlets |
 | `injectOnLoadEnabled` | Master switch for on-load injection (default true) |
 | `networkRules` | Network rules editor state (`enabled` + `rules[]`) |
 | `networkHooksEnabled` | Master switch for network hooks + webRequest rules (default true) |
 | `networkSharedState` | Persistent key/value for network rule scripts (`ctx.sharedState`) |
+| `linksSchemaVersion` | Catalog schema version (v3 triggers one-time overlay migration + storage reset) |
 | `linksJsonOverlay` | Custom section links in `links.json` format (merged at load) |
 | `customScripts` | Legacy user scripts (migrated to `linksJsonOverlay`) |
 | `activeSectionTab` | Last selected section tab |
@@ -232,8 +308,9 @@ Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). *
 - **New reverse-engineering tools:** add to `Reverse-engineering tools` in `data/links.json`; prefer scriptlets that log to `console` and are idempotent where possible (many check a `window.__…` guard).
 - **New ServiceNow links:** edit `links.json` directly, or update `bookmarks.html` and run `node scripts/parse-bookmarks.js` (only imports the SN links folder into the ServiceNow section).
 - **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.).
-- **On-load inject:** only for non-navigation scriptlets; respects per-link `hostPattern`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
-- **Host patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.
+- **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
+- **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.
+- **Schema v3 update:** clears saved parameter values and on-load preferences once; reload preferences after updating.
 - Reload extension after changing `links.json` or background logic.
 
 ## Known limitations

@@ -7,9 +7,9 @@ import {
   readParameterFields,
   populateParameterFields,
   clearParameterFields,
-  populateExtractFields,
-  readExtractFields,
-  clearExtractFields,
+  populateNavParamsFields,
+  readNavParamsFields,
+  clearNavParamsFields,
   getBuilderFieldElements,
   setFieldVisible,
 } from "./link-builder-fields.js";
@@ -22,23 +22,54 @@ const NAV_OPTIONS = {
   scriptlet: [
     { value: "", label: "Default" },
     { value: "same-tab", label: "Same tab" },
-    { value: "foreground", label: "New tab (foreground)" },
+    { value: "tab", label: "New tab (foreground)" },
     { value: "background", label: "New tab (background)" },
-    { value: "fetch", label: "Download (fetch)" },
+    { value: "download", label: "Download" },
   ],
   navigate: [
     { value: "same-tab", label: "Same tab" },
-    { value: "foreground", label: "New tab (foreground)" },
+    { value: "tab", label: "New tab (foreground)" },
     { value: "background", label: "New tab (background)" },
-    { value: "fetch", label: "Download (fetch)" },
+    { value: "download", label: "Download" },
   ],
   "derived-url": [
     { value: "same-tab", label: "Same tab" },
-    { value: "foreground", label: "New tab (foreground)" },
+    { value: "tab", label: "New tab (foreground)" },
     { value: "background", label: "New tab (background)" },
-    { value: "fetch", label: "Download (fetch)" },
+    { value: "download", label: "Download" },
   ],
 };
+
+function paramsFromFormFields(parameterFields) {
+  if (parameterFields.params) {
+    return parameterFields.params;
+  }
+  if (parameterFields.parameters) {
+    return parameterFields.parameters;
+  }
+  if (parameterFields.parameter) {
+    const { name, ...rest } = parameterFields.parameter;
+    return { [name || "value"]: rest };
+  }
+  return undefined;
+}
+
+function inferBuilderType(node) {
+  if (node.code) {
+    return "scriptlet";
+  }
+  if (node.navParams || node.extract || (node.url && /\{[^}]+\}/.test(node.url))) {
+    return "derived-url";
+  }
+  return "navigate";
+}
+
+function openForBuilderSelect(node) {
+  const open = node.open ?? node.nav;
+  if (open === "foreground") return "tab";
+  if (open === "fetch") return "download";
+  return open || "";
+}
 
 function defaultUrlName(path, existingCount) {
   try {
@@ -68,18 +99,16 @@ export function buildQuickLinkNode(
   if (mode === "link") {
     const node = {
       name: nameInput.trim() || defaultUrlName(input, existingNodes.length),
-      type: "navigate",
-      path: input,
-      nav: input.startsWith("/") ? "same-tab" : "foreground",
+      url: input,
+      open: input.startsWith("/") ? "same-tab" : "tab",
     };
     return ensureLinkId(node);
   }
 
   const code = normalizeScriptInput(input);
-  const scriptlets = existingNodes.filter((node) => node.type === "scriptlet");
+  const scriptlets = existingNodes.filter((node) => node.code && !node.url);
   return ensureLinkId({
     name: nameInput.trim() || defaultScriptName(code, scriptlets),
-    type: "scriptlet",
     code,
   });
 }
@@ -113,9 +142,7 @@ export function buildPathTemplateFromUrl(urlString) {
     const url = new URL(urlString);
     if (!/^https?:$/i.test(url.protocol)) {
       return {
-        path: urlString,
-        parameter: undefined,
-        parameters: undefined,
+        url: urlString,
       };
     }
 
@@ -125,35 +152,22 @@ export function buildPathTemplateFromUrl(urlString) {
 
     if (paramEntries.length === 0) {
       return {
-        path: `${pathname}${hash}`,
-        parameter: undefined,
-        parameters: undefined,
+        url: `${pathname}${hash}`,
       };
     }
 
-    const parameters = {};
+    const params = {};
     const queryParts = [];
     for (const [name, value] of paramEntries) {
       queryParts.push(`${encodeURIComponent(name)}={${name}}`);
-      parameters[name] = { default: value, placeholder: name };
+      params[name] = { default: value, placeholder: name };
     }
 
-    const path = `${pathname}?${queryParts.join("&")}${hash}`;
-    if (paramEntries.length === 1) {
-      const [name, value] = paramEntries[0];
-      return {
-        path,
-        parameter: { name, default: value, placeholder: name },
-        parameters: undefined,
-      };
-    }
-
-    return { path, parameter: undefined, parameters };
+    const urlTemplate = `${pathname}?${queryParts.join("&")}${hash}`;
+    return { url: urlTemplate, params };
   } catch {
     return {
-      path: pathFromTabUrl(urlString),
-      parameter: undefined,
-      parameters: undefined,
+      url: pathFromTabUrl(urlString),
     };
   }
 }
@@ -163,15 +177,14 @@ export function buildPrefillFromTab(tab) {
     return null;
   }
 
-  const { path, parameter, parameters } = buildPathTemplateFromUrl(tab.url);
-  const title = tab.title?.trim() || defaultUrlName(path, 0);
+  const { url, params } = buildPathTemplateFromUrl(tab.url);
+  const title = tab.title?.trim() || defaultUrlName(url, 0);
   return {
     name: title,
     displayName: title,
-    path,
-    parameter,
-    parameters,
-    hostPattern: hostPatternFromUrl(tab.url),
+    url,
+    params,
+    match: hostPatternFromUrl(tab.url),
     absoluteUrl: tab.url,
   };
 }
@@ -288,75 +301,66 @@ export function buildLinkNodeFromForm(form) {
     throw new Error("Name is required.");
   }
 
-  const node = { name };
+  const draft = { name };
   if (form.editId) {
-    node.id = form.editId;
+    draft.id = form.editId;
   }
   if (form.displayName.trim()) {
-    node.displayName = form.displayName.trim();
+    draft.displayName = form.displayName.trim();
   }
 
-  if (form.hostPattern !== undefined) {
-    node.hostPattern = form.hostPattern;
+  if (form.match !== undefined) {
+    draft.match = form.match;
   }
 
   const searchTags = parseSearchTags(form.searchTags);
   if (searchTags) {
-    node.searchTags = searchTags;
+    draft.searchTags = searchTags;
   }
 
+  const params = paramsFromFormFields(form);
+
   if (type === "scriptlet") {
-    node.type = "scriptlet";
+    if (params) {
+      draft.params = params;
+    }
     const code = normalizeScriptInput(form.code);
     if (!code) {
       throw new Error("Script code is required.");
     }
-    node.code = code;
+    draft.code = code;
     if (form.nav.trim()) {
-      node.nav = form.nav.trim();
+      draft.open = form.nav.trim();
     }
   } else if (type === "navigate") {
-    node.type = "navigate";
-    const path = form.path.trim();
-    if (!path) {
-      throw new Error("Path is required.");
+    const url = form.url.trim() || form.path.trim();
+    if (!url) {
+      throw new Error("URL is required.");
     }
-    node.path = path;
-    if (form.nav.trim()) {
-      node.nav = form.nav.trim();
+    draft.url = url;
+    draft.open = form.nav.trim() || "same-tab";
+    if (form.navParams) {
+      draft.navParams = form.navParams;
     }
   } else if (type === "derived-url") {
-    node.type = "derived-url";
-    const nav = form.nav.trim();
-    if (!nav) {
-      throw new Error("Navigation mode is required for derived URLs.");
+    const open = form.nav.trim();
+    if (!open) {
+      throw new Error("Open mode is required for derived URLs.");
     }
-    node.nav = nav;
-    const path = form.path.trim();
-    const url = form.url.trim();
-    if (!path && !url) {
-      throw new Error("Path or URL template is required.");
+    draft.open = open;
+    const url = form.url.trim() || form.path.trim();
+    if (!url) {
+      throw new Error("URL template is required.");
     }
-    if (path) {
-      node.path = path;
-    }
-    if (url) {
-      node.url = url;
-    }
-    if (form.extract) {
-      node.extract = form.extract;
+    draft.url = url;
+    if (form.navParams) {
+      draft.navParams = form.navParams;
     }
   } else {
     throw new Error(`Unknown link type: ${type}`);
   }
 
-  if (form.parameter) {
-    node.parameter = form.parameter;
-  }
-  if (form.parameters) {
-    node.parameters = form.parameters;
-  }
-
+  const node = globalThis.SnLinksLinkModel.normalizeLeafNode(draft);
   return form.editId ? node : ensureLinkId(node);
 }
 
@@ -416,8 +420,8 @@ export function populateSectionSelect(elements, sectionNames, selectedSection) {
 
 export function readBuilderForm(elements) {
   const parameterFields = readParameterFields(elements.fieldElements);
-  const extract = readExtractFields(elements.fieldElements);
-  const hostPattern = readHostPattern(elements.fieldElements);
+  const navParams = readNavParamsFields(elements.fieldElements);
+  const match = readHostPattern(elements.fieldElements);
 
   return {
     editId: elements.editIdInput.value.trim() || null,
@@ -425,33 +429,38 @@ export function readBuilderForm(elements) {
     type: elements.typeSelect.value,
     name: elements.nameInput.value,
     displayName: elements.displayNameInput.value,
-    hostPattern,
+    match,
     searchTags: elements.searchTagsInput.value,
     code: getFieldValue(elements.codeInput),
     path: elements.pathInput.value,
     url: elements.urlInput.value,
     nav: elements.navSelect.value,
-    extract,
+    navParams,
     ...parameterFields,
   };
 }
 
 export function populateBuilderForm(elements, node, sectionName, sectionNames) {
-  elements.editIdInput.value = node.id || "";
+  const normalized = globalThis.SnLinksLinkModel.normalizeLeafNode(node);
+  elements.editIdInput.value = normalized.id || "";
   populateSectionSelect(elements, sectionNames, sectionName);
-  elements.typeSelect.value = node.type || "scriptlet";
-  elements.nameInput.value = node.name || "";
-  elements.displayNameInput.value = node.displayName || "";
-  populateHostPattern(elements.fieldElements, node.hostPattern);
-  elements.searchTagsInput.value = Array.isArray(node.searchTags)
-    ? node.searchTags.join(", ")
+  elements.typeSelect.value = inferBuilderType(normalized);
+  elements.nameInput.value = normalized.name || "";
+  elements.displayNameInput.value = normalized.displayName || "";
+  populateHostPattern(elements.fieldElements, normalized.match);
+  elements.searchTagsInput.value = Array.isArray(normalized.searchTags)
+    ? normalized.searchTags.join(", ")
     : "";
-  setFieldValue(elements.codeInput, node.code || "");
-  elements.pathInput.value = node.path || "";
-  elements.urlInput.value = node.url || "";
-  populateParameterFields(elements.fieldElements, node);
-  populateExtractFields(elements.fieldElements, node.extract);
-  setNavOptions(elements.navSelect, elements.typeSelect.value, node.nav || "");
+  setFieldValue(elements.codeInput, normalized.code || "");
+  elements.pathInput.value = "";
+  elements.urlInput.value = normalized.url || "";
+  populateParameterFields(elements.fieldElements, normalized);
+  populateNavParamsFields(elements.fieldElements, normalized.navParams);
+  setNavOptions(
+    elements.navSelect,
+    elements.typeSelect.value,
+    openForBuilderSelect(normalized)
+  );
   updateBuilderFieldVisibility(elements);
 }
 
@@ -467,7 +476,7 @@ export function clearBuilderForm(elements, sectionNames, defaultSection) {
   elements.pathInput.value = "";
   elements.urlInput.value = "";
   clearParameterFields(elements.fieldElements);
-  clearExtractFields(elements.fieldElements);
+  clearNavParamsFields(elements.fieldElements);
   setNavOptions(elements.navSelect, "scriptlet", "");
   updateBuilderFieldVisibility(elements);
 }
@@ -479,29 +488,40 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
   elements.typeSelect.value = type;
   elements.nameInput.value = prefill.name || "";
   elements.displayNameInput.value = prefill.displayName || prefill.name || "";
-  elements.pathInput.value = prefill.path || "";
+  elements.urlInput.value = prefill.url || prefill.path || "";
+  elements.pathInput.value = "";
 
-  if (prefill.hostPattern) {
-    populateHostPattern(elements.fieldElements, prefill.hostPattern);
+  if (prefill.match) {
+    populateHostPattern(elements.fieldElements, prefill.match);
   }
 
   if (type === "navigate" || type === "derived-url") {
-    if (prefill.parameters) {
-      populateParameterFields(elements.fieldElements, { parameters: prefill.parameters });
-    } else if (prefill.parameter) {
-      populateParameterFields(elements.fieldElements, { parameter: prefill.parameter });
+    clearParameterFields(elements.fieldElements);
+    if (prefill.navParams) {
+      populateNavParamsFields(elements.fieldElements, prefill.navParams);
+    } else if (prefill.params || prefill.parameters || prefill.parameter) {
+      // Legacy prefill: URL params → navParams via normalize.
+      const normalized = globalThis.SnLinksLinkModel.normalizeLeafNode({
+        name: prefill.name || "prefill",
+        url: prefill.url || prefill.path || "/",
+        open: "tab",
+        ...(prefill.params ? { params: prefill.params } : {}),
+        ...(prefill.parameters ? { parameters: prefill.parameters } : {}),
+        ...(prefill.parameter ? { parameter: prefill.parameter } : {}),
+      });
+      populateNavParamsFields(elements.fieldElements, normalized.navParams);
     } else {
-      clearParameterFields(elements.fieldElements);
+      clearNavParamsFields(elements.fieldElements);
     }
   }
 
-  const defaultNav =
+  const defaultOpen =
     type === "derived-url"
-      ? "foreground"
-      : /^https?:\/\//i.test(prefill.absoluteUrl || prefill.path || "")
-        ? "foreground"
+      ? "tab"
+      : /^https?:\/\//i.test(prefill.absoluteUrl || prefill.url || prefill.path || "")
+        ? "tab"
         : "same-tab";
-  setNavOptions(elements.navSelect, type, defaultNav);
+  setNavOptions(elements.navSelect, type, defaultOpen);
   updateBuilderFieldVisibility(elements);
 }
 
@@ -516,23 +536,15 @@ function applyPrefillIfEmpty(elements, prefill, type) {
   if (!elements.displayNameInput.value.trim()) {
     elements.displayNameInput.value = prefill.displayName || prefill.name || "";
   }
-  if (!elements.pathInput.value.trim()) {
-    elements.pathInput.value = prefill.path || "";
+  if (!elements.urlInput.value.trim()) {
+    elements.urlInput.value = prefill.url || prefill.path || "";
   }
 
   if (
-    prefill.hostPattern &&
+    prefill.match &&
     elements.fieldElements.hostPatternModeSelect.value === "inherit"
   ) {
-    populateHostPattern(elements.fieldElements, prefill.hostPattern);
-  }
-
-  if (elements.fieldElements.parameterModeSelect.value === "none") {
-    if (prefill.parameters) {
-      populateParameterFields(elements.fieldElements, { parameters: prefill.parameters });
-    } else if (prefill.parameter) {
-      populateParameterFields(elements.fieldElements, { parameter: prefill.parameter });
-    }
+    populateHostPattern(elements.fieldElements, prefill.match);
   }
 }
 
@@ -541,14 +553,16 @@ export function updateBuilderFieldVisibility(elements) {
   const isScriptlet = type === "scriptlet";
   const isNavigate = type === "navigate";
   const isDerived = type === "derived-url";
+  const isUrlType = isNavigate || isDerived;
 
   setFieldVisible(elements.codeField, isScriptlet);
-  setFieldVisible(elements.pathField, isNavigate || isDerived);
-  setFieldVisible(elements.urlField, isDerived);
-  setFieldVisible(elements.navField, isNavigate || isDerived);
-  setFieldVisible(elements.fieldElements.extractSection, isDerived);
+  setFieldVisible(elements.pathField, false);
+  setFieldVisible(elements.urlField, isUrlType);
+  setFieldVisible(elements.navField, isUrlType);
+  setFieldVisible(elements.fieldElements.parametersSection, isScriptlet);
+  setFieldVisible(elements.fieldElements.navParamsSection, isUrlType);
 
-  if (isNavigate || isDerived) {
+  if (isUrlType) {
     setNavOptions(
       elements.navSelect,
       type,
