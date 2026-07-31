@@ -8,7 +8,15 @@
   </head>
   <body>
     <header class="page-header">
-      <h1>Network rules</h1>
+      <h1>
+        Network rules
+        <span
+          id="network-status-dot"
+          class="network-status-dot"
+          title="Network hooks status"
+          aria-hidden="true"
+        ></span>
+      </h1>
       <p class="page-header-desc">
         fetch/XHR + webRequest; re-injects on save. Global on/off: popup Network toggle.
       </p>
@@ -312,6 +320,42 @@
           </fieldset>
 
           <fieldset class="fieldset">
+            <legend>Hook behavior</legend>
+            <p class="fieldset-hint">
+              When a rule script triggers fetch/XHR, other rules are skipped unless
+              they opt in below. A rule never matches its own traffic while running.
+            </p>
+            <label class="field field-check">
+              <input id="rule-match-hook-originated" type="checkbox" />
+              <span>Match hook-originated requests</span>
+            </label>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend>Test rule</legend>
+            <p class="fieldset-hint">
+              Opens the URL in a new tab and shows a toast when this rule matches.
+            </p>
+            <div class="form-grid test-rule-row">
+              <label class="field">
+                <span class="field-label">Test URL</span>
+                <input
+                  id="rule-test-url"
+                  type="url"
+                  placeholder="https://example.com/"
+                  spellcheck="false"
+                />
+              </label>
+              <div class="field field-action">
+                <span class="field-label">&nbsp;</span>
+                <button id="test-rule-btn" type="button" class="secondary">
+                  Test
+                </button>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="fieldset">
             <legend>Untested intent</legend>
             <p class="fieldset-hint intent-note">
               Header forwarding on redirect (e.g. preserving
@@ -339,6 +383,7 @@
       <section class="panel log-panel" aria-label="Recent matches">
         <div class="panel-header">
           <h2>Recent matches</h2>
+          <span class="panel-meta">Last 100 matches</span>
           <button id="clear-log-btn" type="button" class="secondary small">
             Clear
           </button>

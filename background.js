@@ -5,12 +5,14 @@ if (!globalThis.SnLinksLinkModel) {
 const LM = globalThis.SnLinksLinkModel;
 
 const INJECT_SCRIPT_ID = "sn-links-on-load";
-const REFRESH_DEBOUNCE_MS = 100;
+const REFRESH_DEBOUNCE_MS = 300;
+const TEST_RULE_TIMEOUT_MS = 8000;
 
 let linksCache = null;
 /** @type {{ hostPattern: string | null, code: string }[]} */
 let injectEntries = [];
 let networkRulesState = defaultNetworkRulesState();
+let networkRulesCompiled = [];
 let extensionSettings = defaultExtensionSettings();
 let networkHookVersion = "";
 let networkLogToken = "";
@@ -19,6 +21,8 @@ let networkTabState = {};
 let injectRefreshTimer = null;
 let networkRefreshTimer = null;
 let networkNavigationHookRegistered = false;
+/** @type {{ ruleId: string, tabId: number, deadline: number, timerId: ReturnType<typeof setTimeout> } | null} */
+let testRuleSession = null;
 
 async function getLinkSections() {
   if (!linksCache) {
@@ -183,6 +187,7 @@ async function loadNetworkRulesState() {
   if (!Array.isArray(networkRulesState.rules)) {
     networkRulesState.rules = [];
   }
+  networkRulesCompiled = compileRulesForMatching(networkRulesState.rules);
   networkHookVersion = getNetworkHookVersion({
     enabled: networkRulesState.enabled,
     rules: rulesForPageHook(networkRulesState.rules),
@@ -213,7 +218,7 @@ function enabledNetworkRules() {
   if (!networkRulesState.enabled) {
     return [];
   }
-  return networkRulesState.rules.filter((rule) => rule.enabled);
+  return networkRulesCompiled.filter((rule) => rule.enabled);
 }
 
 async function installNetworkHookInTab(tabId, frameId) {
@@ -310,18 +315,97 @@ async function setTabRuleBadge(tabId) {
   }
 }
 
-async function appendNetworkRuleLog(entry, tabId) {
-  const sanitized = sanitizeLogEntry(entry);
-  if (!sanitized) {
+async function injectRuleTestToast(tabId, message, success) {
+  if (tabId == null || tabId < 0) {
     return;
   }
+  try {
+    await browser.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      injectImmediately: true,
+      func: (text, ok) => {
+        const id = "sn-links-rule-test-toast";
+        let el = document.getElementById(id);
+        if (!el) {
+          el = document.createElement("div");
+          el.id = id;
+          el.style.cssText =
+            "position:fixed;bottom:16px;right:16px;z-index:2147483647;padding:10px 14px;border-radius:6px;font:13px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.25);max-width:320px;";
+          document.documentElement.appendChild(el);
+        }
+        el.style.background = ok ? "#2f7d62" : "#6b7280";
+        el.textContent = text;
+        el.style.opacity = "1";
+        clearTimeout(el.__snLinksHideTimer);
+        el.__snLinksHideTimer = setTimeout(() => {
+          el.style.opacity = "0";
+        }, 4000);
+      },
+      args: [message, success],
+    });
+  } catch {
+    // restricted tab
+  }
+}
+
+function clearTestRuleSession() {
+  if (testRuleSession?.timerId) {
+    clearTimeout(testRuleSession.timerId);
+  }
+  testRuleSession = null;
+}
+
+async function startTestRuleSession(ruleId, url) {
+  clearTestRuleSession();
+
+  const tab = await browser.tabs.create({ url, active: true });
+  if (!tab?.id) {
+    throw new Error("Could not open test tab.");
+  }
+
+  const deadline = Date.now() + TEST_RULE_TIMEOUT_MS;
+  const timerId = setTimeout(async () => {
+    if (!testRuleSession || testRuleSession.tabId !== tab.id) {
+      return;
+    }
+    await injectRuleTestToast(tab.id, "No match yet for this rule.", false);
+    clearTestRuleSession();
+  }, TEST_RULE_TIMEOUT_MS);
+
+  testRuleSession = { ruleId, tabId: tab.id, deadline, timerId };
+  return { tabId: tab.id };
+}
+
+async function handleTestRuleMatch(entry, tabId) {
+  if (!testRuleSession || testRuleSession.tabId !== tabId) {
+    return;
+  }
+  if (entry.ruleId !== testRuleSession.ruleId) {
+    return;
+  }
+  if (Date.now() > testRuleSession.deadline) {
+    return;
+  }
+
+  const ruleName = entry.ruleName || "Rule";
+  clearTestRuleSession();
+  await injectRuleTestToast(tabId, `${ruleName} applied.`, true);
+}
+
+async function appendNetworkRuleLog(entry, tabId) {
   const stored = await browser.storage.session.get(NETWORK_RULES_LOG_KEY);
-  const entries = trimLogEntries([...(stored[NETWORK_RULES_LOG_KEY] || []), sanitized]);
+  const payload =
+    tabId != null && tabId >= 0 ? { ...entry, tabId } : entry;
+  const entries = appendNetworkLogQueue(stored[NETWORK_RULES_LOG_KEY] || [], payload);
   await browser.storage.session.set({ [NETWORK_RULES_LOG_KEY]: entries });
   if (tabId != null && tabId >= 0) {
     await setTabRuleBadge(tabId);
+    await handleTestRuleMatch(entry, tabId);
   }
 }
+
+globalThis.snLinksAppendNetworkRuleLog = appendNetworkRuleLog;
 
 async function reinjectNetworkHookAllTabs() {
   const rules = pageHookRules();
@@ -441,6 +525,7 @@ const messageHandlers = createBackgroundMessageHandlers({
   defaultNetworkRulesState,
   isCspDisabledForTab,
   setCspDisabledForTab,
+  startTestRuleSession,
 });
 
 browser.runtime.onMessage.addListener(createMessageRouter(messageHandlers));
@@ -477,6 +562,9 @@ browser.tabs.onRemoved.addListener((tabId) => {
   if (networkTabState[tabKey]) {
     delete networkTabState[tabKey];
     browser.storage.session.set({ [NETWORK_TAB_STATE_KEY]: networkTabState });
+  }
+  if (testRuleSession?.tabId === tabId) {
+    clearTestRuleSession();
   }
   try {
     browser.action.setBadgeText({ text: "", tabId });

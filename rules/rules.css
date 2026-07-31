@@ -64,6 +64,34 @@ body {
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.network-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.network-status-dot.is-disabled {
+  background: #9aa3a0;
+}
+
+.network-status-dot.is-matched {
+  background: #2f7d62;
+}
+
+.test-rule-row {
+  align-items: end;
+}
+
+.field-action button {
+  width: 100%;
 }
 
 .page-header-desc {

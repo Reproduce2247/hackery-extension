@@ -76,7 +76,17 @@ The bootstrap content script is registered on all http(s) URLs; `background.js` 
 
 **Mock:** use action `mock`, or `modify` + **Serve without request** with mock status/body fields.
 
-**Rule visibility:** recent matches log to session storage; toolbar badge `●` on tabs where a rule fired; rules UI highlights the last matched rule.
+**Rule visibility:** recent matches log to session storage (FIFO cap of 100); toolbar badge `●` on tabs where a rule fired; rules UI highlights the last matched rule. Log entries include `tabId` when known.
+
+**Pattern compilation:** filter regexes compile once on rules refresh in the background and once per hook install in the page. Rule refresh is debounced (300ms).
+
+**Hook reentrancy:** fetch/XHR triggered from inside a rule script skips other rules unless they set **`matchHookOriginated: true`**. A rule never matches its own request while its script is running.
+
+**Hook idempotency:** re-install restores native `fetch`/XHR from the first install before re-wrapping, so in-tab re-inject does not stack wrappers.
+
+**Rule test:** DevTools rules editor **Test** opens a URL in a new tab and shows an in-page toast when that rule matches (8s timeout).
+
+**DevTools status:** the Network Rules panel header dot reflects hooks disabled (grey), enabled (teal), or a recent match on the inspected tab (green). The toolbar extension icon is unchanged.
 
 **Auto re-inject:** saving rules or toggling hooks re-runs the page hook on open http(s) tabs (manual **Re-inject** still available).
 

@@ -39,6 +39,10 @@ const headerReplacementsEl = document.getElementById("header-replacements");
 const setHeadersEl = document.getElementById("set-headers");
 const ruleRequestScriptEl = document.getElementById("rule-request-script");
 const ruleResponseScriptEl = document.getElementById("rule-response-script");
+const ruleMatchHookOriginatedEl = document.getElementById("rule-match-hook-originated");
+const ruleTestUrlEl = document.getElementById("rule-test-url");
+const testRuleBtn = document.getElementById("test-rule-btn");
+const networkStatusDotEl = document.getElementById("network-status-dot");
 const deleteRuleBtn = document.getElementById("delete-rule-btn");
 const ruleTemplateSelectEl = document.getElementById("rule-template-select");
 
@@ -344,6 +348,9 @@ function loadRuleIntoForm(rule) {
   renderSetHeaders(setHeadersEl, rule.modify?.setHeaders);
   setFieldValue(ruleRequestScriptEl, rule.modify?.requestScript || "");
   setFieldValue(ruleResponseScriptEl, rule.modify?.responseScript || "");
+  if (ruleMatchHookOriginatedEl) {
+    ruleMatchHookOriginatedEl.checked = Boolean(rule.matchHookOriginated);
+  }
   updateActionSections();
 }
 
@@ -418,6 +425,11 @@ function renderRulesList() {
       selectedRuleId = rule.id;
       renderRulesList();
       loadRuleIntoForm(rule);
+      defaultTestUrl().then((url) => {
+        if (ruleTestUrlEl && url && !ruleTestUrlEl.value.trim()) {
+          ruleTestUrlEl.value = url;
+        }
+      });
     });
 
     row.appendChild(button);
@@ -563,6 +575,7 @@ function readRuleFromForm(existingRule) {
     responseStatusMax: statusMaxRaw ? Number(statusMaxRaw) : null,
     action: ruleActionEl.value,
     redirectUrl: ruleRedirectUrlEl.value.trim(),
+    matchHookOriginated: Boolean(ruleMatchHookOriginatedEl?.checked),
     modify: {
       urlReplacements: readReplacementList(urlReplacementsEl),
       bodyReplacements: readReplacementList(bodyReplacementsEl),
@@ -593,6 +606,67 @@ async function loadState() {
 async function loadLog() {
   const stored = await browser.storage.session.get(NETWORK_RULES_LOG_KEY);
   renderLog(stored[NETWORK_RULES_LOG_KEY] || []);
+  updateNetworkStatusDot(stored[NETWORK_RULES_LOG_KEY] || []);
+}
+
+function getInspectedTabId() {
+  return browser.devtools?.inspectedWindow?.tabId ?? null;
+}
+
+async function updateNetworkStatusDot(logEntries = null) {
+  if (!networkStatusDotEl) {
+    return;
+  }
+
+  const settingsResponse = await browser.runtime.sendMessage({
+    type: "GET_EXTENSION_SETTINGS",
+  });
+  const hooksEnabled =
+    settingsResponse?.ok && settingsResponse.settings?.networkHooksEnabled !== false;
+
+  networkStatusDotEl.classList.remove("is-disabled", "is-matched");
+
+  if (!hooksEnabled || rulesState.enabled === false) {
+    networkStatusDotEl.classList.add("is-disabled");
+    networkStatusDotEl.title = "Network hooks disabled";
+    return;
+  }
+
+  const tabId = getInspectedTabId();
+  let entries = logEntries;
+  if (!entries) {
+    const stored = await browser.storage.session.get(NETWORK_RULES_LOG_KEY);
+    entries = stored[NETWORK_RULES_LOG_KEY] || [];
+  }
+
+  const hasTabMatch =
+    tabId != null &&
+    entries.some((entry) => {
+      if (entry.tabId !== tabId || !entry?.ts) {
+        return false;
+      }
+      return Date.now() - entry.ts < 60000;
+    });
+
+  if (hasTabMatch) {
+    networkStatusDotEl.classList.add("is-matched");
+    networkStatusDotEl.title = "Recent rule match on this tab";
+  } else {
+    networkStatusDotEl.title = "Network hooks enabled";
+  }
+}
+
+async function defaultTestUrl() {
+  const tabId = getInspectedTabId();
+  if (tabId == null) {
+    return "";
+  }
+  try {
+    const tab = await browser.tabs.get(tabId);
+    return tab.url?.startsWith("http") ? tab.url : "";
+  } catch {
+    return "";
+  }
 }
 
 function syncTemplateSelectWidth() {
@@ -687,6 +761,7 @@ rulesEnabledEl.addEventListener("change", async () => {
   hideMessage();
   rulesState.enabled = rulesEnabledEl.checked;
   await persistRulesState();
+  updateNetworkStatusDot();
   showMessage(rulesState.enabled ? "Rules enabled." : "Rules disabled.");
 });
 
@@ -725,6 +800,32 @@ deleteRuleBtn.addEventListener("click", () => {
   deleteRuleById(existing.id);
 });
 
+if (testRuleBtn) {
+  testRuleBtn.addEventListener("click", async () => {
+    hideMessage();
+    const rule = getSelectedRule();
+    if (!rule) {
+      showMessage("Select a rule first.");
+      return;
+    }
+    const url = ruleTestUrlEl?.value.trim() || (await defaultTestUrl());
+    if (!url) {
+      showMessage("Enter a test URL.");
+      return;
+    }
+    const response = await browser.runtime.sendMessage({
+      type: "TEST_NETWORK_RULE",
+      ruleId: rule.id,
+      url,
+    });
+    if (response?.ok) {
+      showMessage(`Testing "${rule.name}" in a new tab…`);
+    } else {
+      showMessage(response?.error || "Test failed.");
+    }
+  });
+}
+
 document.getElementById("clear-log-btn").addEventListener("click", async () => {
   await browser.runtime.sendMessage({ type: "CLEAR_NETWORK_RULE_LOG" });
   renderLog([]);
@@ -754,7 +855,12 @@ document.querySelector("[data-add-set-header]").addEventListener("click", () => 
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "session" && changes[NETWORK_RULES_LOG_KEY]) {
-    renderLog(changes[NETWORK_RULES_LOG_KEY].newValue || []);
+    const entries = changes[NETWORK_RULES_LOG_KEY].newValue || [];
+    renderLog(entries);
+    updateNetworkStatusDot(entries);
+  }
+  if (area === "local" && changes[NETWORK_HOOKS_ENABLED_KEY]) {
+    updateNetworkStatusDot();
   }
   if (area === "local" && changes[NETWORK_RULES_KEY]) {
     const incoming = changes[NETWORK_RULES_KEY].newValue;
@@ -773,9 +879,16 @@ browser.storage.onChanged.addListener((changes, area) => {
     rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
     loadRuleIntoForm(getSelectedRule());
+    updateNetworkStatusDot();
   }
 });
 
 loadRuleTemplates();
-loadState();
-loadLog();
+loadState().then(() => {
+  loadLog();
+  defaultTestUrl().then((url) => {
+    if (ruleTestUrlEl && url) {
+      ruleTestUrlEl.value = url;
+    }
+  });
+});

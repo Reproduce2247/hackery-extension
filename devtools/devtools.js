@@ -1,1 +1,16 @@
-browser.devtools.panels.create("Network Rules", "", "/rules/rules.html");
+// Static icon path only — no runtime drawing/recoloring.
+// Root-absolute path (leading /). Empty string falls back to the extension icon.
+browser.devtools.panels
+  .create(
+    "Network Rules",
+    "/icons/devtools-icon-default-16.png",
+    "/rules/rules.html"
+  )
+  .catch((error) => {
+    console.error("Complex Linker: failed to create Network Rules panel", error);
+    return browser.devtools.panels.create(
+      "Network Rules",
+      "",
+      "/rules/rules.html"
+    );
+  });
