@@ -11,8 +11,8 @@
       <div class="page-header-main">
         <h1>Link builder</h1>
         <p class="page-subtitle">
-          Edit user-added links in links.json format. Changes save to extension
-          storage and appear in the popup after reload or when the popup is open.
+          Edit user-added links. Changes save to extension storage and appear in
+          the sidebar. Drag to reorder in the sidebar; export follows that order.
         </p>
       </div>
       <div class="page-header-actions">
@@ -164,10 +164,14 @@
     </main>
 
     <script src="../lib/storage-keys.js"></script>
+    <script src="../lib/url-normalize.js"></script>
     <script src="../lib/link-model.js"></script>
     <script src="../lib/link-catalog.js"></script>
     <script src="../lib/navigation-shared.js"></script>
     <script src="../lib/link-behaviors.js"></script>
+    <script src="../lib/catalog-order.js"></script>
+    <script src="../lib/catalog-events.js"></script>
+    <script src="../lib/ui-message.js"></script>
     <script type="module" src="builder.js"></script>
   </body>
 </html>

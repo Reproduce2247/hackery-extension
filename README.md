@@ -17,15 +17,25 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 
 ## Usage
 
-1. Open a tab on the site the action targets (for any item with a regex "match" that matches the URL, active tab will switch automatically).
-2. Click the extension toolbar button.
+1. Open a tab on the site the action targets (for any item with a regex `match` that matches the URL, the active tab will switch automatically).
+2. Open the **sidebar** via the toolbar button or **Ctrl+Period** (toggle).
 3. Choose an action (badge indicates type):
    - **Run** — script injected into the target tab
    - **Derive** — URL built from the tab (`navParams` / template)
    - **Open** — relative path on the target tab
    - **Web** — absolute URL
 
-The popup shows the active tab origin. When a link has a `match` pattern, the extension prefers the active tab if it matches, otherwise the nearest matching tab in the current window.
+**Search without focusing the sidebar:** type `cl` in the address bar (omnibox), then a query; Enter runs the top match.
+
+**In-sidebar search:** focus the search field with `/` or **Ctrl+K** (no type-anywhere capture — the page keeps keyboard focus when the sidebar is open but unfocused).
+
+**Shortcuts:** right-click a link → Assign Alt+1…0. Those keys run the link globally.
+
+**Create from page:** right-click the page/link/selection → **Create Complex Linker action** (opens the advanced builder; clicked elements prefill a `fromSelector` navParam).
+
+Drag links/folders/section tabs to reorder; order is saved and used for export.
+
+The sidebar shows the active tab origin. When a link has a `match` pattern, the extension prefers the active tab if it matches, otherwise the nearest matching tab in the current window.
 
 Reload the extension in `about:debugging` after editing `data/links.json`.
 
@@ -33,7 +43,7 @@ Reload the extension in `about:debugging` after editing `data/links.json`.
 
 ## Link catalog (`data/links.json`)
 
-Top-level keys are **section names** (popup tabs). Each section has optional `match` and a `children` array (folders and leaf actions). Leaves have **no `type` field** — behavior is inferred from properties.
+Top-level keys are **section names** (sidebar tabs). Each section has optional `match` and a `children` array (folders and leaf actions). Leaves have **no `type` field** — behavior is inferred from properties.
 
 ```json
 {

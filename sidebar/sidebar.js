@@ -25,28 +25,23 @@ import {
 } from "../lib/codemirror-fields.bundle.js";
 
 if (!globalThis.SnLinksLinkModel) {
-  throw new Error("sn-links: lib/link-model.js must load before popup.js");
+  throw new Error("sn-links: lib/link-model.js must load before sidebar.js");
 }
 if (!globalThis.SnLinksLinkCatalog) {
-  throw new Error("sn-links: lib/link-catalog.js must load before popup.js");
+  throw new Error("sn-links: lib/link-catalog.js must load before sidebar.js");
 }
 
 const {
   SECTION_TAB_KEY,
   ADD_SCRIPT_EXPANDED_KEY,
-  POPUP_SIZE_KEY,
   LINKS_OVERLAY_KEY,
+  CATALOG_ORDER_KEY,
 } = globalThis.SnLinksStorageKeys;
 
 const { parseLinkSections, flattenLinkNodes } = globalThis.SnLinksLinkModel;
 const { isCustomLink } = globalThis.SnLinksLinkCatalog;
-
-const POPUP_MIN_WIDTH = 420;
-const POPUP_MIN_HEIGHT = 400;
-const POPUP_MAX_WIDTH = 800;
-const POPUP_MAX_HEIGHT = 600;
-const POPUP_DEFAULT_WIDTH = 420;
-const POPUP_DEFAULT_HEIGHT = 560;
+const Order = () => globalThis.SnLinksCatalogOrder;
+const Shortcuts = () => globalThis.SnLinksLinkShortcuts;
 
 const sectionTabsEl = document.getElementById("section-tabs");
 const linksEl = document.getElementById("links");
@@ -77,11 +72,11 @@ scriptCodeEditor.view.dom.addEventListener("keydown", (event) => {
   }
 });
 const quickAddModeSelect = document.getElementById("quick-add-mode");
-const searchOverlayEl = document.getElementById("search-overlay");
 const searchInputEl = document.getElementById("search-input");
 
 let linkSections = null;
 let activeSectionName = null;
+let shortcutSlots = {};
 
 function updateStickyOffsets() {
   const header = document.querySelector("header");
@@ -113,12 +108,37 @@ function editCustomLink(node) {
   openLinkBuilderWindow({ editId: node.id, sectionName: node.sectionName });
 }
 
+async function assignShortcut(node, commandName, row = null) {
+  const key =
+    row?.dataset?.stableKey ||
+    Order().linkStableKey(node.sectionName || getActiveSection()?.name, [], node);
+  if (!commandName) {
+    const map = await Shortcuts().loadShortcutSlots();
+    const current = Shortcuts().slotForKey(map, key);
+    if (current) {
+      await Shortcuts().assignSlot(current, null);
+    }
+  } else {
+    await Shortcuts().assignSlot(commandName, key);
+  }
+  shortcutSlots = await Shortcuts().loadShortcutSlots();
+  await renderAll();
+  showMessage(
+    commandName
+      ? `Assigned Alt+${Shortcuts().SLOT_LABELS[commandName]} to “${node.displayName || node.name}”.`
+      : "Shortcut cleared."
+  );
+}
+
 const linkUi = createLinkUi({
   activateLink,
   copyLink,
   exportLinkJson,
   editCustomLink,
   setInjectOnLoad,
+  assignShortcut,
+  getShortcutSlots: () => shortcutSlots,
+  onReorderSiblings: persistSiblingOrder,
 });
 
 function getLinkSections() {
@@ -148,6 +168,28 @@ async function reloadLinkSections() {
   linkSections = parseLinkSections(merged);
 }
 
+/**
+ * Persist DnD sibling order into catalogOrder.linkKeys.
+ */
+async function persistSiblingOrder(orderedStableKeys) {
+  const order = await Order().loadCatalogOrder();
+  const linkKeys = Order().moveKeysInOrder(order.linkKeys, orderedStableKeys);
+  await Order().saveCatalogOrder({
+    linkKeys,
+    sectionOrder: order.sectionOrder,
+  });
+  await renderAll();
+}
+
+async function persistSectionOrder(orderedSectionNames) {
+  const order = await Order().loadCatalogOrder();
+  await Order().saveCatalogOrder({
+    linkKeys: order.linkKeys,
+    sectionOrder: orderedSectionNames,
+  });
+  await renderAll();
+}
+
 function renderSectionTabs() {
   if (!sectionTabsEl || !linkSections) {
     return;
@@ -159,6 +201,8 @@ function renderSectionTabs() {
     const tab = document.createElement("button");
     tab.type = "button";
     tab.className = "section-tab";
+    tab.draggable = true;
+    tab.dataset.sectionName = section.name;
     tab.role = "tab";
     tab.textContent = section.name;
     tab.setAttribute(
@@ -175,6 +219,33 @@ function renderSectionTabs() {
       await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
       await renderAll();
     });
+    tab.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/section-name", section.name);
+      event.dataTransfer.effectAllowed = "move";
+      tab.classList.add("is-dragging");
+    });
+    tab.addEventListener("dragend", () => tab.classList.remove("is-dragging"));
+    tab.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+    tab.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      const from = event.dataTransfer.getData("text/section-name");
+      const to = section.name;
+      if (!from || from === to) {
+        return;
+      }
+      const names = getVisibleSections().map((s) => s.name);
+      const fromIndex = names.indexOf(from);
+      const toIndex = names.indexOf(to);
+      if (fromIndex < 0 || toIndex < 0) {
+        return;
+      }
+      names.splice(fromIndex, 1);
+      names.splice(toIndex, 0, from);
+      await persistSectionOrder(names);
+    });
     sectionTabsEl.appendChild(tab);
   }
 }
@@ -186,6 +257,7 @@ async function renderAll() {
 
   try {
     await reloadLinkSections();
+    shortcutSlots = await Shortcuts().loadShortcutSlots();
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
     const injectOnLoad = await loadInjectOnLoad();
@@ -214,11 +286,7 @@ async function renderAll() {
     if (section) {
       if (query) {
         const sortedNodes = search.sortNodesBySearchScore(
-          flattenLinkNodes(
-            section.children,
-            section.match,
-            section.name
-          ),
+          flattenLinkNodes(section.children, section.match, section.name),
           (node, activeQuery) => search.nodeSearchScore(node, activeQuery)
         );
         for (const node of sortedNodes) {
@@ -228,6 +296,8 @@ async function renderAll() {
               injectOnLoad,
               showRemove: showRemove,
               isCustom: isCustomLink(node),
+              stableKey: Order().linkStableKey(section.name, [], node),
+              enableDrag: false,
               onDelete:
                 isCustomLink(node) && node.id
                   ? async (event) => {
@@ -255,6 +325,8 @@ async function renderAll() {
           injectOnLoad,
           {
             showRemoveColumn: showRemove,
+            enableDrag: true,
+            pathParts: [],
             onDeleteCustom: async (linkId) => {
               await removeCustomLinkById(linkId);
               const nextInject = await loadInjectOnLoad();
@@ -278,7 +350,6 @@ async function renderAll() {
 }
 
 const search = createSearchController({
-  searchOverlayEl,
   searchInputEl,
   displayLabel: linkUi.displayLabel,
   getLinkSections,
@@ -318,131 +389,6 @@ async function addQuickAction() {
     showMessage(error.message || String(error));
     focusField(scriptCodeInput);
   }
-}
-
-let popupResizeObserverPaused = false;
-let pendingPopupSize = null;
-let lastAppliedPopupSize = null;
-
-function clampPopupSize(width, height) {
-  return {
-    width: Math.min(POPUP_MAX_WIDTH, Math.max(POPUP_MIN_WIDTH, Math.round(width))),
-    height: Math.min(
-      POPUP_MAX_HEIGHT,
-      Math.max(POPUP_MIN_HEIGHT, Math.round(height))
-    ),
-  };
-}
-
-function applyPopupSize(width, height) {
-  const size = clampPopupSize(width, height);
-  if (
-    lastAppliedPopupSize &&
-    lastAppliedPopupSize.width === size.width &&
-    lastAppliedPopupSize.height === size.height
-  ) {
-    return size;
-  }
-  lastAppliedPopupSize = size;
-  const widthPx = `${size.width}px`;
-  const heightPx = `${size.height}px`;
-  document.documentElement.style.width = widthPx;
-  document.documentElement.style.height = heightPx;
-  document.body.style.width = widthPx;
-  document.body.style.height = heightPx;
-  return size;
-}
-
-function updateResizePreview(width, height) {
-  const size = clampPopupSize(width, height);
-  pendingPopupSize = size;
-  document.body.dataset.resizePreview = `${size.width} × ${size.height}`;
-}
-
-function clearResizePreview() {
-  delete document.body.dataset.resizePreview;
-  pendingPopupSize = null;
-}
-
-async function savePopupSize() {
-  await browser.storage.local.set({
-    [POPUP_SIZE_KEY]: {
-      width: document.body.offsetWidth,
-      height: document.body.offsetHeight,
-    },
-  });
-}
-
-function initResizeHandle() {
-  const handle = document.getElementById("resize-handle");
-  if (!handle) {
-    return;
-  }
-
-  handle.addEventListener("mousedown", (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    popupResizeObserverPaused = true;
-    document.body.classList.add("is-resizing");
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startWidth = document.body.offsetWidth;
-    const startHeight = document.body.offsetHeight;
-
-    updateResizePreview(startWidth, startHeight);
-
-    function onMouseMove(moveEvent) {
-      updateResizePreview(
-        startWidth - (moveEvent.clientX - startX),
-        startHeight + (moveEvent.clientY - startY)
-      );
-    }
-
-    function onMouseUp() {
-      popupResizeObserverPaused = false;
-      document.body.classList.remove("is-resizing");
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-
-      const size = pendingPopupSize;
-      clearResizePreview();
-      if (size) {
-        applyPopupSize(size.width, size.height);
-      }
-
-      savePopupSize();
-    }
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  });
-}
-
-async function initPopupSize() {
-  const stored = await browser.storage.local.get(POPUP_SIZE_KEY);
-  const size = stored[POPUP_SIZE_KEY];
-
-  const width =
-    size?.width >= POPUP_MIN_WIDTH ? size.width : POPUP_DEFAULT_WIDTH;
-  const height =
-    size?.height >= POPUP_MIN_HEIGHT ? size.height : POPUP_DEFAULT_HEIGHT;
-
-  applyPopupSize(width, height);
-  initResizeHandle();
-
-  let saveTimer = null;
-  new ResizeObserver(() => {
-    updateStickyOffsets();
-    if (popupResizeObserverPaused) {
-      return;
-    }
-    window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(savePopupSize, 200);
-  }).observe(document.body);
 }
 
 async function initAddScriptCollapse() {
@@ -560,6 +506,19 @@ async function initCspDisableControl() {
   });
 }
 
+async function focusLinkFromMessage(stableKey, queryHint) {
+  if (queryHint) {
+    search.setSearchQuery(queryHint);
+  }
+  await renderAll();
+  search.focusSearchInput();
+  if (stableKey) {
+    const row = linksEl.querySelector(`[data-stable-key="${CSS.escape(stableKey)}"]`);
+    row?.scrollIntoView({ block: "nearest" });
+    row?.classList.add("search-exact-match");
+  }
+}
+
 async function init() {
   await reloadLinkSections();
   const stored = await browser.storage.local.get(SECTION_TAB_KEY);
@@ -576,7 +535,11 @@ async function init() {
 
   const activeTab = await getActiveTab();
   if (activeTab?.url) {
-    activeTabStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
+    try {
+      activeTabStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
+    } catch {
+      activeTabStatusEl.textContent = "Active tab";
+    }
   } else {
     activeTabStatusEl.textContent = "No active tab";
   }
@@ -597,13 +560,32 @@ async function init() {
   });
 
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area === "local" && changes[LINKS_OVERLAY_KEY]) {
+    if (
+      area === "local" &&
+      (changes[LINKS_OVERLAY_KEY] ||
+        changes[CATALOG_ORDER_KEY] ||
+        changes[Shortcuts().LINK_SHORTCUT_SLOTS_KEY])
+    ) {
       renderAll();
     }
   });
 
+  browser.runtime.onMessage.addListener((message) => {
+    if (globalThis.SnLinksCatalogEvents?.isCatalogChangedMessage?.(message)) {
+      void renderAll();
+      return;
+    }
+    if (message?.type === "FOCUS_SIDEBAR_LINK") {
+      void focusLinkFromMessage(message.stableKey, message.query);
+    }
+  });
+
+  const params = new URLSearchParams(location.search);
+  if (params.get("q")) {
+    search.setSearchQuery(params.get("q"));
+  }
+
   search.initSearch();
-  await initPopupSize();
   await renderAll();
   await initAddScriptCollapse();
   try {

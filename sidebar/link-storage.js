@@ -5,7 +5,12 @@ const {
   ensureLinksOverlayInStorage,
 } = globalThis.SnLinksLinkCatalog;
 
-const { LINKS_OVERLAY_KEY } = globalThis.SnLinksStorageKeys;
+const { LINKS_OVERLAY_KEY, CATALOG_ORDER_KEY } = globalThis.SnLinksStorageKeys;
+
+async function persistOverlay(overlay, reason = "overlay") {
+  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  globalThis.SnLinksCatalogEvents?.emitCatalogChanged?.({ reason });
+}
 
 export async function loadBundledLinksJson() {
   const response = await fetch(browser.runtime.getURL("data/links.json"));
@@ -16,7 +21,28 @@ export async function ensureLinksOverlay() {
   return ensureLinksOverlayInStorage();
 }
 
+/**
+ * Merged catalog with user catalogOrder applied.
+ */
 export async function loadMergedLinkCatalog() {
+  const Order = globalThis.SnLinksCatalogOrder;
+  const bundled = await loadBundledLinksJson();
+  const overlay = await ensureLinksOverlay();
+  const merged = mergeLinksCatalog(bundled, overlay);
+  let order = await Order.loadCatalogOrder();
+  const next = Order.appendMissingKeys(order, merged);
+  if (
+    next.linkKeys.length !== order.linkKeys.length ||
+    next.sectionOrder.length !== order.sectionOrder.length
+  ) {
+    order = next;
+    await browser.storage.local.set({ [CATALOG_ORDER_KEY]: order });
+  }
+  return Order.applyOrder(merged, order);
+}
+
+/** Raw merge without order (for order editing / export helpers). */
+export async function loadMergedLinkCatalogUnordered() {
   const bundled = await loadBundledLinksJson();
   const overlay = await ensureLinksOverlay();
   return mergeLinksCatalog(bundled, overlay);
@@ -30,7 +56,7 @@ export async function getSectionOverlayChildren(sectionName) {
 export async function saveSectionOverlay(sectionName, section) {
   const overlay = await ensureLinksOverlay();
   overlay[sectionName] = section;
-  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  await persistOverlay(overlay);
 }
 
 export async function saveSectionOverlayChildren(sectionName, children) {
@@ -39,7 +65,7 @@ export async function saveSectionOverlayChildren(sectionName, children) {
     ...(overlay[sectionName] || {}),
     children,
   };
-  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  await persistOverlay(overlay);
 }
 
 export async function addLinksToSection(sectionName, nodes) {
@@ -52,9 +78,13 @@ export async function addLinksToSection(sectionName, nodes) {
 }
 
 export async function importLinksOverlay(raw) {
+  const Order = globalThis.SnLinksCatalogOrder;
   const overlay = await ensureLinksOverlay();
   const result = importOverlayIntoExisting(overlay, raw);
-  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: result.overlay });
+  await persistOverlay(result.overlay, "import");
+  const merged = mergeLinksCatalog(await loadBundledLinksJson(), result.overlay);
+  const order = Order.appendMissingKeys(await Order.loadCatalogOrder(), merged);
+  await Order.saveCatalogOrder(order);
   return result;
 }
 
@@ -86,7 +116,7 @@ export async function removeCustomLinkById(linkId) {
     ...overlay[found.sectionName],
     children,
   };
-  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  await persistOverlay(overlay, "delete");
 }
 
 export async function updateCustomLink(linkId, nextNode, targetSectionName) {
@@ -119,11 +149,16 @@ export async function updateCustomLink(linkId, nextNode, targetSectionName) {
     };
   }
 
-  await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  await persistOverlay(overlay);
 }
 
 export async function getAllCustomLinks() {
+  const Order = globalThis.SnLinksCatalogOrder;
   const overlay = await ensureLinksOverlay();
+  const order = await Order.loadCatalogOrder();
+  const orderIndex = new Map(
+    (order.linkKeys || []).map((key, i) => [key, i])
+  );
   const results = [];
 
   for (const [sectionName, section] of Object.entries(overlay)) {
@@ -132,14 +167,21 @@ export async function getAllCustomLinks() {
     }
     for (const node of section.children) {
       if (node.id && !node.children) {
-        results.push({ ...node, sectionName });
+        const key = Order.linkStableKey(sectionName, [], node);
+        results.push({
+          ...node,
+          sectionName,
+          _orderRank: orderIndex.has(key)
+            ? orderIndex.get(key)
+            : Number.MAX_SAFE_INTEGER,
+        });
       }
     }
   }
 
-  return results.sort((a, b) =>
-    (a.displayName || a.name).localeCompare(b.displayName || b.name)
-  );
+  return results
+    .sort((a, b) => a._orderRank - b._orderRank)
+    .map(({ _orderRank, ...link }) => link);
 }
 
 export async function getCatalogSectionNames() {
@@ -148,7 +190,10 @@ export async function getCatalogSectionNames() {
 }
 
 export async function getLinksOverlayForExport() {
-  return ensureLinksOverlay();
+  const Order = globalThis.SnLinksCatalogOrder;
+  const overlay = await ensureLinksOverlay();
+  const order = await Order.loadCatalogOrder();
+  return Order.applyOrder(overlay, order);
 }
 
 /** @deprecated use addLinksToSection */

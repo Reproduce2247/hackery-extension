@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Complex Linker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Links, scriptlets, and network rules.",
   "browser_specific_settings": {
     "gecko": {
@@ -12,6 +12,7 @@
   "permissions": [
     "activeTab",
     "clipboardWrite",
+    "contextMenus",
     "downloads",
     "scripting",
     "storage",
@@ -25,11 +26,18 @@
   "background": {
     "scripts": [
       "lib/storage-keys.js",
+      "lib/url-normalize.js",
       "lib/link-catalog.js",
       "lib/link-model.js",
       "lib/navigation-shared.js",
       "lib/link-behaviors.js",
       "lib/scriptlet-inject.js",
+      "lib/tab-target.js",
+      "lib/activate-link.js",
+      "lib/link-search.js",
+      "lib/catalog-order.js",
+      "lib/catalog-events.js",
+      "lib/link-shortcuts.js",
       "lib/network-rule-engine-core.js",
       "lib/network-rules-shared.js",
       "lib/network-hook-install.js",
@@ -42,12 +50,73 @@
   },
   "devtools_page": "devtools/devtools.html",
   "action": {
-    "default_popup": "popup/popup.html",
     "default_title": "Complex Linker",
     "default_icon": {
       "16": "icon.png",
       "32": "icon.png",
       "48": "icon.png"
+    }
+  },
+  "sidebar_action": {
+    "default_title": "Complex Linker",
+    "default_panel": "sidebar/sidebar.html",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png"
+    },
+    "open_at_install": false
+  },
+  "omnibox": {
+    "keyword": "cl"
+  },
+  "commands": {
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Ctrl+Period",
+        "mac": "MacCtrl+Period"
+      },
+      "description": "Toggle Complex Linker sidebar"
+    },
+    "run_link_1": {
+      "suggested_key": { "default": "Alt+1" },
+      "description": "Run assigned link slot 1"
+    },
+    "run_link_2": {
+      "suggested_key": { "default": "Alt+2" },
+      "description": "Run assigned link slot 2"
+    },
+    "run_link_3": {
+      "suggested_key": { "default": "Alt+3" },
+      "description": "Run assigned link slot 3"
+    },
+    "run_link_4": {
+      "suggested_key": { "default": "Alt+4" },
+      "description": "Run assigned link slot 4"
+    },
+    "run_link_5": {
+      "suggested_key": { "default": "Alt+5" },
+      "description": "Run assigned link slot 5"
+    },
+    "run_link_6": {
+      "suggested_key": { "default": "Alt+6" },
+      "description": "Run assigned link slot 6"
+    },
+    "run_link_7": {
+      "suggested_key": { "default": "Alt+7" },
+      "description": "Run assigned link slot 7"
+    },
+    "run_link_8": {
+      "suggested_key": { "default": "Alt+8" },
+      "description": "Run assigned link slot 8"
+    },
+    "run_link_9": {
+      "suggested_key": { "default": "Alt+9" },
+      "description": "Run assigned link slot 9"
+    },
+    "run_link_0": {
+      "suggested_key": { "default": "Alt+0" },
+      "description": "Run assigned link slot 0"
     }
   },
   "icons": {

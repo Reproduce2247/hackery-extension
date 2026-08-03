@@ -485,22 +485,37 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
   if (!prefill) {
     return;
   }
-  elements.typeSelect.value = type;
+  const resolvedType = prefill.builderType || type;
+  elements.typeSelect.value = resolvedType;
   elements.nameInput.value = prefill.name || "";
   elements.displayNameInput.value = prefill.displayName || prefill.name || "";
-  elements.urlInput.value = prefill.url || prefill.path || "";
+  elements.urlInput.value =
+    prefill.url ||
+    prefill.path ||
+    (resolvedType === "derived-url" ? "{origin}/{value}" : prefill.absoluteUrl) ||
+    "";
   elements.pathInput.value = "";
 
   if (prefill.match) {
     populateHostPattern(elements.fieldElements, prefill.match);
   }
 
-  if (type === "navigate" || type === "derived-url") {
+  if (resolvedType === "navigate" || resolvedType === "derived-url") {
     clearParameterFields(elements.fieldElements);
-    if (prefill.navParams) {
+    if (prefill.fromSelector) {
+      populateNavParamsFields(elements.fieldElements, {
+        value: {
+          fromSelector: prefill.fromSelector,
+          placeholder: "value",
+          optional: true,
+        },
+      });
+      if (!elements.urlInput.value.trim()) {
+        elements.urlInput.value = "{origin}/{value}";
+      }
+    } else if (prefill.navParams) {
       populateNavParamsFields(elements.fieldElements, prefill.navParams);
     } else if (prefill.params || prefill.parameters || prefill.parameter) {
-      // Legacy prefill: URL params → navParams via normalize.
       const normalized = globalThis.SnLinksLinkModel.normalizeLeafNode({
         name: prefill.name || "prefill",
         url: prefill.url || prefill.path || "/",
@@ -516,12 +531,12 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
   }
 
   const defaultOpen =
-    type === "derived-url"
+    resolvedType === "derived-url"
       ? "tab"
       : /^https?:\/\//i.test(prefill.absoluteUrl || prefill.url || prefill.path || "")
         ? "tab"
         : "same-tab";
-  setNavOptions(elements.navSelect, type, defaultOpen);
+  setNavOptions(elements.navSelect, resolvedType, defaultOpen);
   updateBuilderFieldVisibility(elements);
 }
 

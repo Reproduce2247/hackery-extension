@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <title>Complex Linker</title>
-    <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="sidebar.css" />
     <link rel="stylesheet" href="../lib/codemirror-fields.css" />
   </head>
-  <body>
+  <body class="sidebar">
     <header>
       <div class="header-row">
         <h1>Complex Linker</h1>
@@ -38,6 +38,18 @@
         </div>
       </div>
       <p id="active-tab-status" class="active-tab-status"></p>
+      <label class="sidebar-search-field">
+        <span class="visually-hidden">Search links</span>
+        <input
+          id="search-input"
+          type="search"
+          class="search-input"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search (/ or Ctrl+K) · or type cl in address bar"
+          aria-label="Search links"
+        />
+      </label>
     </header>
     <div id="message" class="message hidden" role="status"></div>
     <nav
@@ -92,34 +104,20 @@
         <button id="add-script-btn" type="button">Add action</button>
       </div>
     </section>
-    <div
-      id="search-overlay"
-      class="search-overlay hidden"
-      aria-hidden="true"
-    >
-      <input
-        id="search-input"
-        type="text"
-        class="search-input"
-        autocomplete="off"
-        spellcheck="false"
-        aria-label="Search links"
-      />
-    </div>
-    <div
-      id="resize-handle"
-      class="resize-handle"
-      role="separator"
-      aria-label="Resize popup"
-      tabindex="-1"
-    ></div>
     <script src="../lib/storage-keys.js"></script>
+    <script src="../lib/url-normalize.js"></script>
     <script src="../lib/link-catalog.js"></script>
     <script src="../lib/link-model.js"></script>
     <script src="../lib/navigation-shared.js"></script>
     <script src="../lib/link-behaviors.js"></script>
     <script src="../lib/scriptlet-inject.js"></script>
+    <script src="../lib/tab-target.js"></script>
+    <script src="../lib/activate-link.js"></script>
+    <script src="../lib/link-search.js"></script>
+    <script src="../lib/catalog-order.js"></script>
+    <script src="../lib/catalog-events.js"></script>
+    <script src="../lib/link-shortcuts.js"></script>
     <script src="../lib/ui-message.js"></script>
-    <script type="module" src="popup.js"></script>
+    <script type="module" src="sidebar.js"></script>
   </body>
 </html>

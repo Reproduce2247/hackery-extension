@@ -18,38 +18,53 @@ The repo still says "ServiceNow" in places (`manifest.json`, README); treat that
 
 ```
 manifest.json
-├── background.js          # Content-script registration, scriptlet execution, inject cache
+├── background.js            # Inject cache, omnibox, shortcuts, context menus, badges
 ├── lib/link-model.js        # Shared link tree, parameters, match patterns, normalization
 ├── lib/link-behaviors.js    # Behavior registry (run / open-url / open-from-script)
+├── lib/link-search.js       # Fuzzy scoring (sidebar + omnibox)
+├── lib/url-normalize.js     # Runtime URL canonicalization
+├── lib/catalog-order.js     # Stable keys + display/export order override
+├── lib/catalog-events.js    # CATALOG_CHANGED broadcast
+├── lib/link-shortcuts.js    # Alt+1…0 slot map
+├── lib/tab-target.js        # Tab matching / origin memory
+├── lib/activate-link.js     # Shared leaf activation (sidebar / omnibox / shortcuts)
 ├── lib/scriptlet-inject.js  # Scriptlet binding injection helper
 ├── lib/navigation-shared.js # Shared URL resolution and open execution
-├── lib/network-rules-shared.js # Rule model, matching, shared state helpers
-├── lib/network-hook-install.js # MAIN-world fetch/XHR hook (injected)
-├── lib/network-webrequest.js   # webRequest blocking/filter for non-hook traffic
-├── inject/on-load.js      # Thin bootstrap: asks background to run enabled on-load scriptlets
-├── rules/                 # Network rules editor (rules.html, rules.js)
-├── popup/
-│   ├── popup.html         # Toolbar popup UI
-│   ├── popup.js           # Bootstrap, settings, render orchestration
-│   ├── link-ui.js         # Link row rendering, params, on-load checkboxes
-│   ├── activate-link.js   # Run / navigate / derive activation
-│   ├── tab-target.js      # Tab matching and origin memory
-│   ├── search.js          # Fuzzy search overlay and section switching
-│   └── popup.css
-├── data/links.json        # Canonical link catalog (sections → tree of actions)
+├── inject/on-load.js        # Thin bootstrap for on-load scriptlets
+├── inject/context-target.js # Last contextmenu target → CSS selector
+├── sidebar/
+│   ├── sidebar.html         # Firefox sidebar UI
+│   ├── sidebar.js           # Bootstrap, settings, render, DnD
+│   ├── link-ui.js           # Link rows, context menu, shortcuts
+│   ├── search.js            # Explicit / / Ctrl+K search
+│   └── …
+├── builder/                 # Advanced link editor window
+├── rules/                   # Network rules editor
+├── data/links.json          # Canonical bundled catalog
 └── scripts/
-    ├── parse-bookmarks.js # One-way import from bookmarks.html → links.json (ServiceNow folder only)
-    └── generate-icons.js  # Icon asset generation
 ```
+
+### Module owners
+
+| Concern | Owner |
+|---|---|
+| Catalog merge / import / export | `lib/link-catalog.js` |
+| Display / export order | `lib/catalog-order.js` |
+| URL canonicalization | `lib/url-normalize.js` |
+| Leaf activation | `lib/activate-link.js` + `lib/link-behaviors.js` |
+| Search scoring | `lib/link-search.js` |
+| Shortcut slots | `lib/link-shortcuts.js` |
+| Catalog change broadcast | `lib/catalog-events.js` |
+| Sidebar UI | `sidebar/` |
+| Builder dirty/import UX | `builder/builder.js` |
 
 ### Execution flow
 
-1. User opens popup → `popup.js` loads merged catalog and renders section tabs.
-2. **Run:** `code` only → `new Function(...names, code)(...values)` in MAIN world.
-3. **Open / Web / Derive:** `url` (+ optional `navParams`) → resolve against matching tab; navigate per `open`.
-4. **Open (script):** `code` + `open` → run script with bindings; coerce return value to URL; navigate.
-5. **On load:** user enables checkbox → on-load inject runs **Run** behaviors only (`code` without `open`), filtered by inherited `match`.
-6. **Network rules:** unchanged (see below).
+1. User opens sidebar (toolbar or Ctrl+Period) → `sidebar.js` loads ordered merged catalog and renders section tabs.
+2. **Omnibox `cl`** — page-focused search/run without focusing the sidebar.
+3. **Alt+1…0** — run assigned link slots (right-click a link → Assign Alt+N).
+4. **Run / Open / Derive** — via `lib/activate-link.js` + behaviors.
+5. **On load / Network rules** — unchanged (see below).
 
 ### On-load + `match`
 
@@ -67,7 +82,7 @@ Reverse-engineering tools have no section-level `match` — they run on the acti
 
 ## Link data model (`data/links.json`) — schema v3
 
-Top-level keys are **section names** (popup tabs):
+Top-level keys are **section names** (sidebar tabs):
 
 ```json
 {
@@ -271,12 +286,11 @@ Originally populated from the **SN links** Firefox bookmarks folder via `scripts
 
 ## User-added actions
 
-Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). **Advanced…** opens `builder/builder.html` for full link editing, import, and export.
+Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** opens `builder/builder.html`. Page context menu **Create Complex Linker action** opens the builder with tab URL / clicked-element `fromSelector` prefill.
 
-- Quick-add: JavaScript/bookmarklet → `code` action; `http(s)://…` or `/path` → `url` + `open`
-- Advanced window: all action shapes, `params`, `navParams`, `match`, JSON import/export
-- Right-click custom links → **Edit in builder** opens the advanced window
-- Custom links stored in `linksJsonOverlay` (links.json format); export for source control
+- Drag-and-drop in the sidebar reorders bundled and custom items; order is stored in `catalogOrder` and used for display and export
+- Custom links stored in `linksJsonOverlay`; export follows catalog order
+- Right-click → Assign Alt+1…0 for global shortcuts
 
 ## Storage keys (`browser.storage.local`)
 
@@ -294,7 +308,10 @@ Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). *
 | `customScripts` | Legacy user scripts (migrated to `linksJsonOverlay`) |
 | `activeSectionTab` | Last selected section tab |
 | `addScriptExpanded` | Add-action panel collapsed state |
-| `popupSize` | Persisted popup dimensions |
+| `catalogOrder` | `{ linkKeys[], sectionOrder[] }` display/export order override |
+| `linkShortcutSlots` | Map of `run_link_N` → stable link key |
+| `lastActivatedLinkKey` | Last activated stable key |
+| `preferredOpenDefault` | Preferred `open` default for new links |
 
 ### Session storage
 
@@ -302,6 +319,8 @@ Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). *
 |---|---|
 | `networkRulesLog` | Recent network rule matches (cap 100) |
 | `networkTabState` | Per-tab objects for `ctx.tabState` keyed by tab id |
+| `linkBuilderPrefill` | Tab/context prefill for new builder links |
+| `linkBuilderSection` | Default section for builder |
 
 ## Conventions for changes
 
@@ -318,7 +337,7 @@ Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). *
 - Firefox-only (uses `browser.*` APIs, gecko manifest settings).
 - Temporary add-ons do not persist across browser restarts unless signed/packaged.
 - `parse-bookmarks.js` reads `../../bookmarks.html` relative to the script — path assumes a sibling bookmarks export outside this repo.
-- Duplicate logic between `background.js` and `popup.js` for link/parameter handling lives in `lib/link-model.js` — update that module when changing behavior.
+- Duplicate activation/search logic belongs in `lib/activate-link.js` / `lib/link-search.js` — not sidebar-only copies.
 - README describes an older, smaller link set; `data/links.json` is authoritative.
 
 ## Related tooling

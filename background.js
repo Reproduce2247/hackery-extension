@@ -609,3 +609,345 @@ browser.runtime.onStartup.addListener(() => {
 });
 
 initExtension();
+
+// --- Sidebar toggle, omnibox, shortcuts, context menus, badges ---
+
+async function getOrderedCatalog() {
+  const Order = globalThis.SnLinksCatalogOrder;
+  const catalog = await getLinkSections();
+  const order = await Order.loadCatalogOrder();
+  const next = Order.appendMissingKeys(order, catalog);
+  return Order.applyOrder(catalog, next);
+}
+
+async function openSidebarPanel() {
+  try {
+    await browser.sidebarAction.open();
+  } catch {
+    // Some hosts disallow open(); toggle may still work from user gesture.
+  }
+}
+
+async function toggleSidebarPanel() {
+  try {
+    if (browser.sidebarAction.toggle) {
+      await browser.sidebarAction.toggle();
+      return;
+    }
+  } catch {
+    // fall through
+  }
+  await openSidebarPanel();
+}
+
+browser.action.onClicked.addListener(() => {
+  void toggleSidebarPanel();
+});
+
+async function activateByStableKey(stableKey, { openSidebarIfNeeded = true } = {}) {
+  const catalog = await getOrderedCatalog();
+  const node = globalThis.SnLinksLinkShortcuts.findNodeByStableKey(
+    catalog,
+    stableKey
+  );
+  if (!node) {
+    await browser.action.setBadgeText({ text: "?" });
+    setTimeout(() => browser.action.setBadgeText({ text: "" }), 1200);
+    return { ok: false, message: "Link not found." };
+  }
+
+  const outcome = await globalThis.SnLinksActivate.activateLinkNode(node, {
+    allowMissingParams: false,
+  });
+
+  if (outcome.needsParams && openSidebarIfNeeded) {
+    const label = node.displayName || node.name;
+    await openSidebarPanel();
+    browser.runtime
+      .sendMessage({
+        type: "FOCUS_SIDEBAR_LINK",
+        stableKey,
+        query: label,
+      })
+      .catch(() => {});
+    return outcome;
+  }
+
+  if (!outcome.ok) {
+    await browser.action.setBadgeText({ text: "!" });
+    setTimeout(() => browser.action.setBadgeText({ text: "" }), 1200);
+  }
+  return outcome;
+}
+
+browser.commands.onCommand.addListener((command) => {
+  if (command === "_execute_sidebar_action") {
+    void toggleSidebarPanel();
+    return;
+  }
+  if (!globalThis.SnLinksLinkShortcuts.isSlotCommand(command)) {
+    return;
+  }
+  void (async () => {
+    const slots = await globalThis.SnLinksLinkShortcuts.loadShortcutSlots();
+    const key = slots[command];
+    if (!key) {
+      await browser.action.setBadgeText({ text: "—" });
+      setTimeout(() => browser.action.setBadgeText({ text: "" }), 1000);
+      return;
+    }
+    await activateByStableKey(key);
+  })();
+});
+
+let omniboxCatalogCache = null;
+let omniboxCacheAt = 0;
+
+async function getOmniboxCatalog() {
+  if (omniboxCatalogCache && Date.now() - omniboxCacheAt < 5000) {
+    return omniboxCatalogCache;
+  }
+  try {
+    omniboxCatalogCache = await getOrderedCatalog();
+  } catch (error) {
+    console.error("ordered catalog failed, using raw merge:", error);
+    omniboxCatalogCache = await getLinkSections();
+  }
+  omniboxCacheAt = Date.now();
+  return omniboxCatalogCache;
+}
+
+function escapeOmniboxXml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+browser.omnibox.setDefaultSuggestion({
+  description: "Search Complex Linker actions (Enter to run top match)",
+});
+
+browser.omnibox.onInputChanged.addListener((text, suggest) => {
+  void (async () => {
+    try {
+      const catalog = await getOmniboxCatalog();
+      const Search = globalThis.SnLinksLinkSearch;
+      if (!Search) {
+        suggest([]);
+        return;
+      }
+      const matches = Search.searchCatalog(catalog, text, 8);
+      suggest(
+        matches.map((entry) => {
+          const label = entry.label || "";
+          const section = entry.node.sectionName || "";
+          const safeLabel = escapeOmniboxXml(label);
+          const safeSection = escapeOmniboxXml(section);
+          return {
+            content: label,
+            description: safeSection
+              ? `${safeLabel} — ${safeSection}`
+              : safeLabel,
+          };
+        })
+      );
+    } catch (error) {
+      console.error("omnibox search failed:", error);
+      suggest([]);
+    }
+  })();
+});
+
+browser.omnibox.onInputEntered.addListener((text) => {
+  void (async () => {
+    try {
+      const catalog = await getOmniboxCatalog();
+      const matches = globalThis.SnLinksLinkSearch.searchCatalog(catalog, text, 1);
+      const top = matches[0];
+      if (!top) {
+        return;
+      }
+      const Order = globalThis.SnLinksCatalogOrder;
+      let key;
+      if (top.node.id) {
+        key = `id:${top.node.id}`;
+      } else {
+        // Prefer the ordered walk key so nested paths resolve.
+        key = null;
+        Order.walkWithKeys(
+          catalog[top.node.sectionName]?.children || [],
+          top.node.sectionName,
+          [],
+          (entry) => {
+            if (
+              entry.kind === "leaf" &&
+              entry.node.name === top.node.name &&
+              !key
+            ) {
+              key = entry.key;
+            }
+          }
+        );
+        key =
+          key ||
+          Order.linkStableKey(top.node.sectionName, [], top.node);
+      }
+      await activateByStableKey(key);
+    } catch (error) {
+      console.error("omnibox activate failed:", error);
+    }
+  })();
+});
+
+async function ensureContextTargetScript(tabId) {
+  try {
+    await browser.scripting.executeScript({
+      target: { tabId },
+      files: ["inject/context-target.js"],
+    });
+  } catch {
+    // Restricted pages
+  }
+}
+
+async function openBuilderWithContextPrefill(info, tab) {
+  const { LINK_BUILDER_PREFILL_KEY } = globalThis.SnLinksStorageKeys;
+  let selector = "";
+  let text = "";
+  if (tab?.id) {
+    await ensureContextTargetScript(tab.id);
+    try {
+      const response = await browser.tabs.sendMessage(tab.id, {
+        type: "GET_CONTEXT_TARGET",
+      });
+      selector = response?.selector || "";
+      text = response?.text || "";
+    } catch {
+      // no content script response
+    }
+  }
+
+  const pageUrl = info.pageUrl || tab?.url || "";
+  const linkUrl = info.linkUrl || "";
+  let match = null;
+  let name = text || tab?.title || "New action";
+  try {
+    if (pageUrl) {
+      const host = new URL(pageUrl).hostname.replace(/\./g, "\\.");
+      match = `^${host}$`;
+    }
+  } catch {
+    // ignore
+  }
+
+  const UrlNorm = globalThis.SnLinksUrlNormalize;
+  const prefill = {
+    name: String(name).slice(0, 80),
+    displayName: "",
+    absoluteUrl: linkUrl || pageUrl,
+    path: "",
+    match,
+    fromSelector: selector || null,
+    builderType: selector ? "derived-url" : "navigate",
+    selectionText: info.selectionText || "",
+  };
+
+  if (pageUrl && UrlNorm) {
+    prefill.absoluteUrl = UrlNorm.canonicalizeHref(linkUrl || pageUrl);
+  }
+
+  await browser.storage.session.set({ [LINK_BUILDER_PREFILL_KEY]: prefill });
+
+  const baseUrl = browser.runtime.getURL("builder/builder.html");
+  const targetUrl = `${baseUrl}?new=1`;
+  await browser.windows.create({
+    url: targetUrl,
+    type: "popup",
+    width: 960,
+    height: 720,
+  });
+}
+
+function initContextMenus() {
+  browser.contextMenus.removeAll().then(() => {
+    browser.contextMenus.create({
+      id: "cl-create-action",
+      title: "Create Complex Linker action",
+      contexts: ["page", "link", "selection", "editable"],
+    });
+  });
+}
+
+browser.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === "cl-create-action") {
+    void openBuilderWithContextPrefill(info, tab);
+  }
+});
+
+async function refreshActionBadge(tabId, url) {
+  try {
+    if (!tabId) {
+      return;
+    }
+    const settings = await loadExtensionSettings();
+    let mark = "";
+    if (settings.networkHooksEnabled && networkRulesCompiled.length) {
+      // Keep network ● when hooks enabled (existing signal used elsewhere may set this).
+      mark = "●";
+    }
+    if (settings.injectOnLoadEnabled && url && codesForUrl(url).length) {
+      mark = mark ? "●+" : "+";
+    }
+    await browser.action.setBadgeText({ text: mark, tabId });
+    await browser.action.setBadgeBackgroundColor({
+      color: "#81b5a1",
+      tabId,
+    });
+  } catch {
+    // ignore
+  }
+}
+
+browser.tabs.onActivated.addListener((activeInfo) => {
+  void browser.tabs.get(activeInfo.tabId).then((tab) => {
+    refreshActionBadge(tab.id, tab.url);
+  });
+});
+
+browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" || changeInfo.url) {
+    void refreshActionBadge(tabId, tab.url);
+  }
+});
+
+browser.runtime.onMessage.addListener((message) => {
+  if (globalThis.SnLinksCatalogEvents?.isCatalogChangedMessage?.(message)) {
+    linksCache = null;
+    omniboxCatalogCache = null;
+    scheduleRefreshInjectState();
+    void browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+      const tab = tabs[0];
+      if (tab) {
+        refreshActionBadge(tab.id, tab.url);
+      }
+    });
+  }
+});
+
+browser.runtime.onInstalled.addListener(() => {
+  initContextMenus();
+});
+
+initContextMenus();
+
+if (typeof CATALOG_ORDER_KEY !== "undefined") {
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && (changes[CATALOG_ORDER_KEY] || changes[LINK_SHORTCUT_SLOTS_KEY])) {
+      linksCache = null;
+      omniboxCatalogCache = null;
+    }
+  });
+}

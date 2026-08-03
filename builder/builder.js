@@ -1,4 +1,4 @@
-import { attachCodeMirrorAll } from "../lib/codemirror-fields.bundle.js";
+import { attachCodeMirrorAll, getFieldValue } from "../lib/codemirror-fields.bundle.js";
 import {
   addLinksToSection,
   getAllCustomLinks,
@@ -8,7 +8,7 @@ import {
   getCatalogSectionNames,
   getLinksOverlayForExport,
   importLinksOverlay,
-} from "../popup/link-storage.js";
+} from "../sidebar/link-storage.js";
 import {
   buildLinkNodeFromForm,
   readBuilderForm,
@@ -19,8 +19,8 @@ import {
   applyTabPrefill,
   initBuilderForm,
   updateBuilderFieldVisibility,
-} from "../popup/link-builder.js";
-import { downloadOverlayJson } from "../popup/link-export.js";
+} from "../sidebar/link-builder.js";
+import { downloadOverlayJson } from "../sidebar/link-export.js";
 
 const { overlayExport } = globalThis.SnLinksLinkCatalog;
 
@@ -32,6 +32,7 @@ const messageEl = document.getElementById("message");
 const linkFormEl = document.getElementById("link-form");
 const editorTitleEl = document.getElementById("editor-title");
 const importFileInput = document.getElementById("import-file-input");
+const importBtn = document.getElementById("import-btn");
 const deleteLinkBtn = document.getElementById("delete-link-btn");
 
 const builderElements = getBuilderFormElements();
@@ -54,6 +55,8 @@ let customLinks = [];
 let sectionNames = [];
 let selectedLinkId = null;
 let defaultSectionName = null;
+/** @type {string|null} */
+let formSnapshot = null;
 
 const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl);
 
@@ -63,17 +66,50 @@ function typeBadge(node) {
   return linkBadgeLabel(node);
 }
 
+function snapshotForm() {
+  try {
+    const form = readBuilderForm(builderElements);
+    form.code = getFieldValue(builderElements.codeInput) || form.code || "";
+    return JSON.stringify(form);
+  } catch {
+    return null;
+  }
+}
+
+function markFormClean() {
+  formSnapshot = snapshotForm();
+}
+
+function isFormDirty() {
+  if (formSnapshot == null) {
+    return false;
+  }
+  const current = snapshotForm();
+  return current !== formSnapshot;
+}
+
+function confirmDiscardIfDirty() {
+  if (!isFormDirty()) {
+    return true;
+  }
+  return window.confirm("Discard unsaved changes?");
+}
+
 function getSelectedLink() {
   return customLinks.find((link) => link.id === selectedLinkId) || null;
 }
 
 function selectLink(linkId) {
+  if (selectedLinkId !== linkId && !confirmDiscardIfDirty()) {
+    return;
+  }
   selectedLinkId = linkId;
   const link = getSelectedLink();
   if (!link) {
     editorTitleEl.textContent = "New link";
     deleteLinkBtn.disabled = true;
     renderLinksList();
+    markFormClean();
     return;
   }
 
@@ -81,6 +117,7 @@ function selectLink(linkId) {
   editorTitleEl.textContent = link.displayName || link.name;
   deleteLinkBtn.disabled = false;
   renderLinksList();
+  markFormClean();
 }
 
 function createLinkDeleteButton(link) {
@@ -184,7 +221,9 @@ async function saveCurrentLink(event) {
     }
 
     await reloadLinks();
+    formSnapshot = null;
     selectLink(selectedLinkId);
+    markFormClean();
   } catch (error) {
     showMessage(error.message || String(error));
   }
@@ -217,6 +256,9 @@ async function deleteCurrentLink() {
 }
 
 async function startNewLink(sectionName = defaultSectionName) {
+  if (!confirmDiscardIfDirty()) {
+    return;
+  }
   hideMessage();
   selectedLinkId = null;
   clearBuilderForm(builderElements, sectionNames, sectionName);
@@ -225,13 +267,18 @@ async function startNewLink(sectionName = defaultSectionName) {
 
   const prefill = await consumeBuilderPrefill();
   if (prefill) {
-    applyTabPrefill(builderElements, prefill, "navigate");
+    applyTabPrefill(
+      builderElements,
+      prefill,
+      prefill.builderType || (prefill.fromSelector ? "derived-url" : "navigate")
+    );
   } else {
     updateBuilderFieldVisibility(builderElements);
   }
 
   builderElements.nameInput.focus();
   renderLinksList();
+  markFormClean();
 }
 
 async function importLinksFromJson(raw) {
@@ -243,14 +290,24 @@ async function importLinksFromJson(raw) {
     return;
   }
 
+  if (importBtn) {
+    importBtn.disabled = true;
+  }
+  showMessage("Importing…");
+
   try {
-    const { importedLeafCount, sectionNames } = await importLinksOverlay(trimmed);
+    const { importedLeafCount, sectionNames: importedSections } =
+      await importLinksOverlay(trimmed);
     await reloadLinks();
     showMessage(
-      `Imported ${importedLeafCount} link(s) into ${sectionNames.join(", ")}.`
+      `Imported ${importedLeafCount} link(s) into ${importedSections.join(", ")}.`
     );
   } catch (error) {
     showMessage(error.message || String(error));
+  } finally {
+    if (importBtn) {
+      importBtn.disabled = false;
+    }
   }
 }
 
@@ -323,6 +380,10 @@ async function init() {
   linkFormEl.addEventListener("submit", saveCurrentLink);
   deleteLinkBtn.addEventListener("click", deleteCurrentLink);
   document.getElementById("clear-form-btn").addEventListener("click", async () => {
+    if (!confirmDiscardIfDirty()) {
+      return;
+    }
+    formSnapshot = null;
     if (selectedLinkId) {
       selectLink(selectedLinkId);
       return;
@@ -340,6 +401,13 @@ async function init() {
     const file = importFileInput.files?.[0];
     importFileInput.value = "";
     await importLinksFromFile(file);
+  });
+
+  window.addEventListener("beforeunload", (event) => {
+    if (isFormDirty()) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
   });
 
   browser.storage.onChanged.addListener((changes, area) => {

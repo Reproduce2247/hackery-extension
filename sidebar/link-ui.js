@@ -53,7 +53,32 @@ export function handleDocumentClickForCombobox(event) {
   }
 }
 
-function showLinkContextMenu(event, node, row, { copyLink, exportLinkJson, editCustomLink }) {
+function addMenuItem(menu, label, onClick) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "link-context-menu-item";
+  item.setAttribute("role", "menuitem");
+  item.textContent = label;
+  item.addEventListener("mousedown", (mousedownEvent) => {
+    mousedownEvent.preventDefault();
+    mousedownEvent.stopPropagation();
+  });
+  item.addEventListener("click", (clickEvent) => {
+    clickEvent.preventDefault();
+    clickEvent.stopPropagation();
+    closeOpenContextMenu();
+    onClick();
+  });
+  menu.appendChild(item);
+  return item;
+}
+
+function showLinkContextMenu(
+  event,
+  node,
+  row,
+  { copyLink, exportLinkJson, editCustomLink, assignShortcut, getShortcutSlots }
+) {
   event.preventDefault();
   event.stopPropagation();
   closeOpenCombobox();
@@ -63,58 +88,35 @@ function showLinkContextMenu(event, node, row, { copyLink, exportLinkJson, editC
   menu.className = "link-context-menu";
   menu.setAttribute("role", "menu");
 
-  const copyItem = document.createElement("button");
-  copyItem.type = "button";
-  copyItem.className = "link-context-menu-item";
-  copyItem.setAttribute("role", "menuitem");
-  copyItem.textContent = "Copy";
-  copyItem.addEventListener("mousedown", (mousedownEvent) => {
-    mousedownEvent.preventDefault();
-    mousedownEvent.stopPropagation();
-  });
-  copyItem.addEventListener("click", (clickEvent) => {
-    clickEvent.preventDefault();
-    clickEvent.stopPropagation();
-    closeOpenContextMenu();
-    copyLink(node, row);
-  });
-  menu.appendChild(copyItem);
-
-  const exportItem = document.createElement("button");
-  exportItem.type = "button";
-  exportItem.className = "link-context-menu-item";
-  exportItem.setAttribute("role", "menuitem");
-  exportItem.textContent = "Export JSON";
-  exportItem.addEventListener("mousedown", (mousedownEvent) => {
-    mousedownEvent.preventDefault();
-    mousedownEvent.stopPropagation();
-  });
-  exportItem.addEventListener("click", (clickEvent) => {
-    clickEvent.preventDefault();
-    clickEvent.stopPropagation();
-    closeOpenContextMenu();
-    exportLinkJson(node);
-  });
-  menu.appendChild(exportItem);
+  addMenuItem(menu, "Copy", () => copyLink(node, row));
+  addMenuItem(menu, "Export JSON", () => exportLinkJson(node));
 
   if (editCustomLink && node.id) {
-    const editItem = document.createElement("button");
-    editItem.type = "button";
-    editItem.className = "link-context-menu-item";
-    editItem.setAttribute("role", "menuitem");
-    editItem.textContent = "Edit in builder";
-    editItem.addEventListener("mousedown", (mousedownEvent) => {
-      mousedownEvent.preventDefault();
-      mousedownEvent.stopPropagation();
-    });
-    editItem.addEventListener("click", (clickEvent) => {
-      clickEvent.preventDefault();
-      clickEvent.stopPropagation();
-      closeOpenContextMenu();
-      editCustomLink(node);
-    });
-    menu.appendChild(editItem);
+    addMenuItem(menu, "Edit in builder", () => editCustomLink(node));
   }
+
+  if (assignShortcut && globalThis.SnLinksLinkShortcuts) {
+    const Shortcuts = globalThis.SnLinksLinkShortcuts;
+    const slots = getShortcutSlots?.() || {};
+    const current = Shortcuts.slotForKey(slots, row.dataset.stableKey);
+    const sep = document.createElement("div");
+    sep.className = "link-context-menu-sep";
+    sep.setAttribute("role", "separator");
+    menu.appendChild(sep);
+    for (const cmd of Shortcuts.SLOT_COMMANDS) {
+      const label = Shortcuts.SLOT_LABELS[cmd];
+      const assigned = slots[cmd]
+        ? cmd === current
+          ? `Alt+${label} (this)`
+          : `Alt+${label} (taken)`
+        : `Assign Alt+${label}`;
+      addMenuItem(menu, assigned, () => assignShortcut(node, cmd, row));
+    }
+    if (current) {
+      addMenuItem(menu, "Clear shortcut", () => assignShortcut(node, null, row));
+    }
+  }
+
   document.body.appendChild(menu);
 
   const menuRect = menu.getBoundingClientRect();
@@ -387,11 +389,26 @@ function createLinkListHeader({
   return header;
 }
 
-export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCustomLink, setInjectOnLoad }) {
+export function createLinkUi({
+  activateLink,
+  copyLink,
+  exportLinkJson,
+  editCustomLink,
+  setInjectOnLoad,
+  assignShortcut,
+  getShortcutSlots,
+  onReorderSiblings,
+}) {
   function createLinkRow(node, options = {}) {
     const parameterDefs = getUiParameterDefs(node);
     const linkKey = linkStorageKey(node);
     const savedValues = options.savedParamValues?.[linkKey] || {};
+    const Order = globalThis.SnLinksCatalogOrder;
+    const Shortcuts = globalThis.SnLinksLinkShortcuts;
+    const stableKey =
+      options.stableKey ||
+      Order?.linkStableKey?.(node.sectionName, options.pathParts || [], node) ||
+      linkKey;
 
     const row = document.createElement("div");
     row.className = "link-row";
@@ -405,6 +422,43 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
       row.classList.add("search-exact-match");
     }
     row.dataset.linkKey = linkKey;
+    row.dataset.stableKey = stableKey;
+    if (options.enableDrag && onReorderSiblings) {
+      row.draggable = true;
+      row.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData("text/stable-key", stableKey);
+        event.dataTransfer.effectAllowed = "move";
+        row.classList.add("is-dragging");
+      });
+      row.addEventListener("dragend", () => row.classList.remove("is-dragging"));
+      row.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      });
+      row.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const fromKey = event.dataTransfer.getData("text/stable-key");
+        if (!fromKey || fromKey === stableKey) {
+          return;
+        }
+        const parent = row.parentElement;
+        if (!parent) {
+          return;
+        }
+        const siblings = [...parent.querySelectorAll(":scope > .link-row, :scope > .folder")]
+          .map((el) => el.dataset.stableKey)
+          .filter(Boolean);
+        const fromIndex = siblings.indexOf(fromKey);
+        const toIndex = siblings.indexOf(stableKey);
+        if (fromIndex < 0 || toIndex < 0) {
+          return;
+        }
+        siblings.splice(fromIndex, 1);
+        siblings.splice(toIndex, 0, fromKey);
+        await onReorderSiblings(siblings);
+      });
+    }
 
     const actionCell = document.createElement("div");
     actionCell.className = "link-row-action";
@@ -423,7 +477,16 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
 
     const labelWrap = document.createElement("span");
     labelWrap.className = "link-label";
-    labelWrap.textContent = displayLabel(node);
+    labelWrap.appendChild(document.createTextNode(displayLabel(node)));
+
+    const slotCmd = Shortcuts?.slotForKey?.(getShortcutSlots?.() || {}, stableKey);
+    if (slotCmd) {
+      const slotBadge = document.createElement("span");
+      slotBadge.className = "link-shortcut-badge";
+      slotBadge.textContent = `Alt+${Shortcuts.SLOT_LABELS[slotCmd]}`;
+      slotBadge.title = "Keyboard shortcut";
+      labelWrap.prepend(slotBadge);
+    }
 
     const hint = document.createElement("span");
     hint.className = "link-hint";
@@ -456,6 +519,8 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
         copyLink,
         exportLinkJson,
         editCustomLink: options.isCustom ? editCustomLink : null,
+        assignShortcut,
+        getShortcutSlots,
       });
     });
     actionCell.appendChild(button);
@@ -539,12 +604,59 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
     options = {}
   ) {
     const { isCustomLink } = globalThis.SnLinksLinkCatalog;
+    const Order = globalThis.SnLinksCatalogOrder;
+    const pathParts = options.pathParts || [];
 
     for (const node of nodes) {
       const matchPattern = resolveMatch(node, inheritedMatch);
       if (node.children) {
         const folder = document.createElement("section");
         folder.className = "folder";
+        const folderKey = Order?.folderStableKey?.(sectionName, pathParts, node.name);
+        if (folderKey) {
+          folder.dataset.stableKey = folderKey;
+        }
+        if (options.enableDrag && onReorderSiblings) {
+          folder.draggable = true;
+          folder.addEventListener("dragstart", (event) => {
+            if (event.target !== folder && event.target !== folder.firstChild) {
+              return;
+            }
+            event.dataTransfer.setData("text/stable-key", folderKey);
+            event.dataTransfer.effectAllowed = "move";
+            folder.classList.add("is-dragging");
+          });
+          folder.addEventListener("dragend", () =>
+            folder.classList.remove("is-dragging")
+          );
+          folder.addEventListener("dragover", (event) => {
+            event.preventDefault();
+          });
+          folder.addEventListener("drop", async (event) => {
+            if (event.target.closest(".link-row")) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            const fromKey = event.dataTransfer.getData("text/stable-key");
+            if (!fromKey || fromKey === folderKey) {
+              return;
+            }
+            const siblings = [
+              ...container.querySelectorAll(":scope > .link-row, :scope > .folder"),
+            ]
+              .map((el) => el.dataset.stableKey)
+              .filter(Boolean);
+            const fromIndex = siblings.indexOf(fromKey);
+            const toIndex = siblings.indexOf(folderKey);
+            if (fromIndex < 0 || toIndex < 0) {
+              return;
+            }
+            siblings.splice(fromIndex, 1);
+            siblings.splice(toIndex, 0, fromKey);
+            await onReorderSiblings(siblings);
+          });
+        }
 
         const title = document.createElement("div");
         title.className = "folder-title";
@@ -558,7 +670,10 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
           matchPattern,
           sectionName,
           injectOnLoad,
-          options
+          {
+            ...options,
+            pathParts: [...pathParts, node.name],
+          }
         );
         container.appendChild(folder);
         continue;
@@ -572,6 +687,9 @@ export function createLinkUi({ activateLink, copyLink, exportLinkJson, editCusto
             injectOnLoad,
             showRemove: options.showRemoveColumn,
             isCustom: isCustomLink(node),
+            enableDrag: options.enableDrag,
+            pathParts,
+            stableKey: Order?.linkStableKey?.(sectionName, pathParts, node),
             onDelete:
               isCustomLink(node) && node.id && options.onDeleteCustom
                 ? async (event) => {
