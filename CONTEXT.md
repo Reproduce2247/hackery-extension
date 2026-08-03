@@ -4,9 +4,9 @@
 
 **Primary:** A Firefox extension for **reverse-engineering and interacting with arbitrary websites**. It stores reusable JavaScript actions (bookmarklets), runs them in the page's MAIN world, and supports persistent on-load injection — useful for debugging DOM behavior, intercepting events, disabling redirects, tracing network calls, and similar site interaction work.
 
-**Secondary:** A **ServiceNow productivity tool**. The original use case was the a bookmarks folder: relative instance-independent paths and scriptlets that resolve against whichever `*.service-now.com` tab is active (or the last visited instance). ServiceNow-specific helpers (navigator URLs, app logs, upload XML, etc.) live in the `ServiceNow` section of link data. Support for matching other URL patterns in the json is required.
+**Secondary:** A **ServiceNow productivity tool**. The original use case was a bookmarks folder: relative instance-independent paths and scriptlets that resolve against whichever pattern-matching tab is active (or the last visited instance). Support for matching all URL regex patterns in the json is required.
 
-The UI still says "ServiceNow Links" in places (`manifest.json`, README); treat that as legacy naming. New work should reflect the broader reverse-engineering scope unless explicitly ServiceNow-only.
+The repo still says "ServiceNow" in places (`manifest.json`, README); treat that as legacy naming. New work should reflect the broader scope and be renamed accordingly.
 
 ## Platform
 
@@ -306,7 +306,7 @@ Popup **Add action** panel quick-adds scriptlets or URLs (name + script/path). *
 ## Conventions for changes
 
 - **New reverse-engineering tools:** add to `Reverse-engineering tools` in `data/links.json`; prefer scriptlets that log to `console` and are idempotent where possible (many check a `window.__…` guard).
-- **New ServiceNow links:** edit `links.json` directly, or update `bookmarks.html` and run `node scripts/parse-bookmarks.js` (only imports the SN links folder into the ServiceNow section).
+- **New ServiceNow links:** edit `data/links.json` ServiceNow section.
 - **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.).
 - **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
 - **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.

@@ -1,4 +1,4 @@
-# ServiceNow Links (Firefox extension)
+Firefox extension
 
 Firefox extension for reusable page actions: run JavaScript in the page MAIN world, open derived or declared URLs, and optionally inject scriptlets at document start. Includes a large **ServiceNow** section and a **Reverse-engineering tools** section for general site debugging.
 
@@ -17,7 +17,7 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 
 ## Usage
 
-1. Open a tab on the site the action targets (for ServiceNow sections, any `*.service-now.com` instance tab).
+1. Open a tab on the site the action targets (for any item with a regex "match" that matches the URL, active tab will switch automatically).
 2. Click the extension toolbar button.
 3. Choose an action (badge indicates type):
    - **Run** — script injected into the target tab
@@ -163,17 +163,11 @@ Saved values live under `linkParamValues`. See `CONTEXT.md` and [ADR 0001](docs/
 
 ### Sections in the current catalog
 
-| Section | `match` | Contents |
-|---|---|---|
-| ServiceNow | `\.service-now\.com$` | Instance links, scriptlets, external docs (`match: null`) |
-| Reverse-engineering tools | (none) | General DOM/event/network debugging scriptlets |
-| Misc | per-link | e.g. Chrome Web Store CRX download |
-
 See `data/links.json` for the full list. `CONTEXT.md` has architecture detail, network rules, and deferred sandbox notes.
 
 ## Updating links from bookmarks
 
-Legacy import from the **SN links** bookmarks folder only:
+Legacy import for bookmarks html:
 
 ```bash
 node scripts/parse-bookmarks.js
