@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <title>Network Rules</title>
     <link rel="stylesheet" href="rules.css" />
-    <link rel="stylesheet" href="../lib/codemirror-fields.css" />
+    <link rel="stylesheet" href="../../lib/codemirror-fields.css" />
   </head>
   <body>
     <header class="page-header">
@@ -18,14 +18,14 @@
         ></span>
       </h1>
       <p class="page-header-desc">
-        fetch/XHR + webRequest; re-injects on save. Global on/off: popup Network toggle.
+        fetch/XHR + webRequest; re-injects on save. Global on/off: sidebar Network toggle.
       </p>
       <div class="page-header-actions">
         <label class="toggle-field">
           <input id="rules-enabled" type="checkbox" checked />
           <span>Enabled</span>
         </label>
-        <select id="rule-template-select" class="template-select" title="Insert a preset rule from data/network-rule-templates.json">
+        <select id="rule-template-select" class="template-select" title="Insert a preset rule from network/data/network-rule-templates.json">
           <option value="">Insert from template…</option>
         </select>
         <button id="add-rule-btn" type="button">Add rule</button>
@@ -392,11 +392,6 @@
       </section>
     </main>
 
-    <script src="../lib/storage-keys.js"></script>
-    <script src="../lib/network-rule-engine-core.js"></script>
-    <script src="../lib/network-rules-shared.js"></script>
-    <script src="../lib/ui-message.js"></script>
-    <script src="../lib/network-rule-templates.js"></script>
     <script type="module" src="rules.js"></script>
   </body>
 </html>

@@ -4,13 +4,13 @@ browser.devtools.panels
   .create(
     "Network Rules",
     "/icons/devtools-icon-default-16.png",
-    "/rules/rules.html"
+    "/network/ui/rules.html"
   )
   .catch((error) => {
     console.error("Complex Linker: failed to create Network Rules panel", error);
     return browser.devtools.panels.create(
       "Network Rules",
       "",
-      "/rules/rules.html"
+      "/network/ui/rules.html"
     );
   });

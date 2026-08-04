@@ -1,26 +1,26 @@
+import { saveParamValue, readParamValuesFromRow } from "../lib/activate-link.js";
+import { folderStableKey, linkStableKey } from "../lib/catalog-order.js";
+import { isCustomLink } from "../lib/link-catalog.js";
 import {
-  loadParamValues,
-  saveParamValue,
-  readParamValuesFromRow,
-} from "./activate-link.js";
-import { getTargetTab } from "./tab-target.js";
-
-const {
-  linkBadgeLabel,
-  linkBadgeClass,
   displayHint,
-  matchBehavior,
   formatOpenHint,
-} = globalThis.SnLinksBehaviors;
-
-const {
-  INJECT_ON_LOAD_KEY,
+  linkBadgeClass,
+  linkBadgeLabel,
+  matchBehavior,
+} from "../lib/link-behaviors.js";
+import {
   getEditableValueDefs,
   linkStorageKey,
+  nodeHasOnLoad,
   resolveMatch,
   resolveParamValues,
-  nodeHasOnLoad,
-} = globalThis.SnLinksLinkModel;
+} from "../lib/link-model.js";
+import { SLOT_COMMANDS, SLOT_LABELS, slotForKey } from "../lib/link-shortcuts.js";
+import { resolveNavScriptletUrl } from "../lib/navigation-shared.js";
+import { StorageKeys } from "../lib/storage-keys.js";
+import { getTargetTab } from "../lib/tab-target.js";
+
+const { INJECT_ON_LOAD_KEY } = StorageKeys;
 
 let openCombobox = null;
 let openContextMenu = null;
@@ -95,16 +95,15 @@ function showLinkContextMenu(
     addMenuItem(menu, "Edit in builder", () => editCustomLink(node));
   }
 
-  if (assignShortcut && globalThis.SnLinksLinkShortcuts) {
-    const Shortcuts = globalThis.SnLinksLinkShortcuts;
+  if (assignShortcut) {
     const slots = getShortcutSlots?.() || {};
-    const current = Shortcuts.slotForKey(slots, row.dataset.stableKey);
+    const current = slotForKey(slots, row.dataset.stableKey);
     const sep = document.createElement("div");
     sep.className = "link-context-menu-sep";
     sep.setAttribute("role", "separator");
     menu.appendChild(sep);
-    for (const cmd of Shortcuts.SLOT_COMMANDS) {
-      const label = Shortcuts.SLOT_LABELS[cmd];
+    for (const cmd of SLOT_COMMANDS) {
+      const label = SLOT_LABELS[cmd];
       const assigned = slots[cmd]
         ? cmd === current
           ? `Alt+${label} (this)`
@@ -153,8 +152,6 @@ function displayLabel(node) {
 }
 
 async function resolveNavScriptletHint(node, row, parameterDefs) {
-  const { resolveNavScriptletUrl } = globalThis.SnLinksNav;
-  const { formatOpenHint } = globalThis.SnLinksBehaviors;
   const paramValues = resolveParamValues(
     parameterDefs,
     readParamValuesFromRow(row, parameterDefs)
@@ -403,11 +400,9 @@ export function createLinkUi({
     const parameterDefs = getUiParameterDefs(node);
     const linkKey = linkStorageKey(node);
     const savedValues = options.savedParamValues?.[linkKey] || {};
-    const Order = globalThis.SnLinksCatalogOrder;
-    const Shortcuts = globalThis.SnLinksLinkShortcuts;
     const stableKey =
       options.stableKey ||
-      Order?.linkStableKey?.(node.sectionName, options.pathParts || [], node) ||
+      linkStableKey(node.sectionName, options.pathParts || [], node) ||
       linkKey;
 
     const row = document.createElement("div");
@@ -479,11 +474,11 @@ export function createLinkUi({
     labelWrap.className = "link-label";
     labelWrap.appendChild(document.createTextNode(displayLabel(node)));
 
-    const slotCmd = Shortcuts?.slotForKey?.(getShortcutSlots?.() || {}, stableKey);
+    const slotCmd = slotForKey(getShortcutSlots?.() || {}, stableKey);
     if (slotCmd) {
       const slotBadge = document.createElement("span");
       slotBadge.className = "link-shortcut-badge";
-      slotBadge.textContent = `Alt+${Shortcuts.SLOT_LABELS[slotCmd]}`;
+      slotBadge.textContent = `Alt+${SLOT_LABELS[slotCmd]}`;
       slotBadge.title = "Keyboard shortcut";
       labelWrap.prepend(slotBadge);
     }
@@ -603,8 +598,6 @@ export function createLinkUi({
     injectOnLoad = {},
     options = {}
   ) {
-    const { isCustomLink } = globalThis.SnLinksLinkCatalog;
-    const Order = globalThis.SnLinksCatalogOrder;
     const pathParts = options.pathParts || [];
 
     for (const node of nodes) {
@@ -612,7 +605,7 @@ export function createLinkUi({
       if (node.children) {
         const folder = document.createElement("section");
         folder.className = "folder";
-        const folderKey = Order?.folderStableKey?.(sectionName, pathParts, node.name);
+        const folderKey = folderStableKey(sectionName, pathParts, node.name);
         if (folderKey) {
           folder.dataset.stableKey = folderKey;
         }
@@ -689,7 +682,7 @@ export function createLinkUi({
             isCustom: isCustomLink(node),
             enableDrag: options.enableDrag,
             pathParts,
-            stableKey: Order?.linkStableKey?.(sectionName, pathParts, node),
+            stableKey: linkStableKey(sectionName, pathParts, node),
             onDelete:
               isCustomLink(node) && node.id && options.onDeleteCustom
                 ? async (event) => {

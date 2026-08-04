@@ -2,7 +2,28 @@ import {
   attachCodeMirrorAll,
   getFieldValue,
   setFieldValue,
-} from "../lib/codemirror-fields.bundle.js";
+} from "../../lib/codemirror-fields.bundle.js";
+import { MessageTypes } from "../../lib/message-types.js";
+import { createUiMessage } from "../../lib/ui-message.js";
+import {
+  createEmptyRule,
+  defaultNetworkRulesState,
+  HTTP_METHODS,
+  WEBREQUEST_RESOURCE_TYPES,
+} from "../engine/network-rules-shared.js";
+import {
+  instantiateNetworkRuleTemplate,
+  loadNetworkRuleTemplates,
+} from "../engine/network-rule-templates.js";
+import { NetworkMessageTypes } from "../message-types.js";
+import {
+  NETWORK_HOOKS_ENABLED_KEY,
+  NETWORK_RULES_KEY,
+  NETWORK_RULES_LOG_KEY,
+} from "../storage-keys.js";
+
+const NT = NetworkMessageTypes;
+const HT = MessageTypes;
 
 const rulesListEl = document.getElementById("rules-list");
 const rulesLogEl = document.getElementById("rules-log");
@@ -482,7 +503,7 @@ function renderLog(entries) {
 
 async function persistRulesState() {
   const response = await browser.runtime.sendMessage({
-    type: "SAVE_NETWORK_RULES",
+    type: NT.SAVE_NETWORK_RULES,
     state: rulesState,
   });
   if (!response?.ok) {
@@ -594,7 +615,7 @@ function readRuleFromForm(existingRule) {
 }
 
 async function loadState() {
-  const response = await browser.runtime.sendMessage({ type: "GET_NETWORK_RULES" });
+  const response = await browser.runtime.sendMessage({ type: NT.GET_NETWORK_RULES });
   if (response?.ok) {
     rulesState = response.state || defaultNetworkRulesState();
     lastPersistedRulesSnapshot = JSON.stringify(rulesState);
@@ -619,7 +640,7 @@ async function updateNetworkStatusDot(logEntries = null) {
   }
 
   const settingsResponse = await browser.runtime.sendMessage({
-    type: "GET_EXTENSION_SETTINGS",
+    type: HT.GET_EXTENSION_SETTINGS,
   });
   const hooksEnabled =
     settingsResponse?.ok && settingsResponse.settings?.networkHooksEnabled !== false;
@@ -748,7 +769,7 @@ if (ruleTemplateSelectEl) {
 document.getElementById("reinject-btn").addEventListener("click", async () => {
   hideMessage();
   const response = await browser.runtime.sendMessage({
-    type: "REFRESH_NETWORK_RULES",
+    type: NT.REFRESH_NETWORK_RULES,
   });
   if (response?.ok) {
     showMessage("Re-injected network hook on open tabs.");
@@ -814,7 +835,7 @@ if (testRuleBtn) {
       return;
     }
     const response = await browser.runtime.sendMessage({
-      type: "TEST_NETWORK_RULE",
+      type: NT.TEST_NETWORK_RULE,
       ruleId: rule.id,
       url,
     });
@@ -827,7 +848,7 @@ if (testRuleBtn) {
 }
 
 document.getElementById("clear-log-btn").addEventListener("click", async () => {
-  await browser.runtime.sendMessage({ type: "CLEAR_NETWORK_RULE_LOG" });
+  await browser.runtime.sendMessage({ type: NT.CLEAR_NETWORK_RULE_LOG });
   renderLog([]);
 });
 

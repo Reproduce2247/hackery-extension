@@ -1,6 +1,6 @@
-async function loadNetworkRuleTemplates() {
+export async function loadNetworkRuleTemplates() {
   const response = await fetch(
-    browser.runtime.getURL("data/network-rule-templates.json")
+    browser.runtime.getURL("network/data/network-rule-templates.json")
   );
   if (!response.ok) {
     throw new Error("Failed to load rule templates.");
@@ -9,7 +9,7 @@ async function loadNetworkRuleTemplates() {
   return Array.isArray(data.templates) ? data.templates : [];
 }
 
-function instantiateNetworkRuleTemplate(template) {
+export function instantiateNetworkRuleTemplate(template) {
   if (!template?.rule || typeof template.rule !== "object") {
     throw new Error("Invalid rule template.");
   }

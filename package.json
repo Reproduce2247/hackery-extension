@@ -2,7 +2,7 @@
   "name": "complex-linker",
   "private": true,
   "scripts": {
-    "build:network-hook": "node scripts/build-network-hook.js",
+    "build:network-hook": "node network/scripts/build-network-hook.js",
     "build:codemirror": "node scripts/build-codemirror.js",
     "build": "npm run build:network-hook && npm run build:codemirror"
   },

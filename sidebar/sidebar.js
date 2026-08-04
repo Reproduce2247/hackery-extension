@@ -1,5 +1,4 @@
-import { getActiveTab } from "./tab-target.js";
-import { createActivateLink, loadParamValues } from "./activate-link.js";
+import { createActivateLink } from "./activate-link.js";
 import { createCopyLink } from "./copy-link.js";
 import { createSearchController } from "./search.js";
 import {
@@ -23,25 +22,35 @@ import {
   setFieldValue,
   focusField,
 } from "../lib/codemirror-fields.bundle.js";
-
-if (!globalThis.SnLinksLinkModel) {
-  throw new Error("sn-links: lib/link-model.js must load before sidebar.js");
-}
-if (!globalThis.SnLinksLinkCatalog) {
-  throw new Error("sn-links: lib/link-catalog.js must load before sidebar.js");
-}
+import { loadParamValues } from "../lib/activate-link.js";
+import { isCatalogChangedMessage } from "../lib/catalog-events.js";
+import {
+  linkStableKey,
+  loadCatalogOrder,
+  moveKeysInOrder,
+  saveCatalogOrder,
+} from "../lib/catalog-order.js";
+import { isCustomLink } from "../lib/link-catalog.js";
+import { flattenLinkNodes, parseLinkSections } from "../lib/link-model.js";
+import {
+  LINK_SHORTCUT_SLOTS_KEY,
+  loadShortcutSlots,
+  assignSlot,
+  slotForKey,
+  SLOT_LABELS,
+} from "../lib/link-shortcuts.js";
+import { MessageTypes } from "../lib/message-types.js";
+import { StorageKeys } from "../lib/storage-keys.js";
+import { getActiveTab } from "../lib/tab-target.js";
+import { createUiMessage } from "../lib/ui-message.js";
 
 const {
   SECTION_TAB_KEY,
   ADD_SCRIPT_EXPANDED_KEY,
   LINKS_OVERLAY_KEY,
   CATALOG_ORDER_KEY,
-} = globalThis.SnLinksStorageKeys;
-
-const { parseLinkSections, flattenLinkNodes } = globalThis.SnLinksLinkModel;
-const { isCustomLink } = globalThis.SnLinksLinkCatalog;
-const Order = () => globalThis.SnLinksCatalogOrder;
-const Shortcuts = () => globalThis.SnLinksLinkShortcuts;
+  INJECT_ON_LOAD_KEY,
+} = StorageKeys;
 
 const sectionTabsEl = document.getElementById("section-tabs");
 const linksEl = document.getElementById("links");
@@ -87,7 +96,7 @@ function updateStickyOffsets() {
   );
 }
 
-const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl, {
+const { showMessage, hideMessage } = createUiMessage(messageEl, {
   onChange: updateStickyOffsets,
 });
 
@@ -111,21 +120,21 @@ function editCustomLink(node) {
 async function assignShortcut(node, commandName, row = null) {
   const key =
     row?.dataset?.stableKey ||
-    Order().linkStableKey(node.sectionName || getActiveSection()?.name, [], node);
+    linkStableKey(node.sectionName || getActiveSection()?.name, [], node);
   if (!commandName) {
-    const map = await Shortcuts().loadShortcutSlots();
-    const current = Shortcuts().slotForKey(map, key);
+    const map = await loadShortcutSlots();
+    const current = slotForKey(map, key);
     if (current) {
-      await Shortcuts().assignSlot(current, null);
+      await assignSlot(current, null);
     }
   } else {
-    await Shortcuts().assignSlot(commandName, key);
+    await assignSlot(commandName, key);
   }
-  shortcutSlots = await Shortcuts().loadShortcutSlots();
+  shortcutSlots = await loadShortcutSlots();
   await renderAll();
   showMessage(
     commandName
-      ? `Assigned Alt+${Shortcuts().SLOT_LABELS[commandName]} to “${node.displayName || node.name}”.`
+      ? `Assigned Alt+${SLOT_LABELS[commandName]} to “${node.displayName || node.name}”.`
       : "Shortcut cleared."
   );
 }
@@ -172,9 +181,9 @@ async function reloadLinkSections() {
  * Persist DnD sibling order into catalogOrder.linkKeys.
  */
 async function persistSiblingOrder(orderedStableKeys) {
-  const order = await Order().loadCatalogOrder();
-  const linkKeys = Order().moveKeysInOrder(order.linkKeys, orderedStableKeys);
-  await Order().saveCatalogOrder({
+  const order = await loadCatalogOrder();
+  const linkKeys = moveKeysInOrder(order.linkKeys, orderedStableKeys);
+  await saveCatalogOrder({
     linkKeys,
     sectionOrder: order.sectionOrder,
   });
@@ -182,8 +191,8 @@ async function persistSiblingOrder(orderedStableKeys) {
 }
 
 async function persistSectionOrder(orderedSectionNames) {
-  const order = await Order().loadCatalogOrder();
-  await Order().saveCatalogOrder({
+  const order = await loadCatalogOrder();
+  await saveCatalogOrder({
     linkKeys: order.linkKeys,
     sectionOrder: orderedSectionNames,
   });
@@ -257,7 +266,7 @@ async function renderAll() {
 
   try {
     await reloadLinkSections();
-    shortcutSlots = await Shortcuts().loadShortcutSlots();
+    shortcutSlots = await loadShortcutSlots();
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
     const injectOnLoad = await loadInjectOnLoad();
@@ -296,7 +305,7 @@ async function renderAll() {
               injectOnLoad,
               showRemove: showRemove,
               isCustom: isCustomLink(node),
-              stableKey: Order().linkStableKey(section.name, [], node),
+              stableKey: linkStableKey(section.name, [], node),
               enableDrag: false,
               onDelete:
                 isCustomLink(node) && node.id
@@ -306,7 +315,7 @@ async function renderAll() {
                       const nextInject = await loadInjectOnLoad();
                       delete nextInject[node.id];
                       await browser.storage.local.set({
-                        [globalThis.SnLinksLinkModel.INJECT_ON_LOAD_KEY]: nextInject,
+                        [INJECT_ON_LOAD_KEY]: nextInject,
                       });
                       await renderAll();
                     }
@@ -332,7 +341,7 @@ async function renderAll() {
               const nextInject = await loadInjectOnLoad();
               delete nextInject[linkId];
               await browser.storage.local.set({
-                [globalThis.SnLinksLinkModel.INJECT_ON_LOAD_KEY]: nextInject,
+                [INJECT_ON_LOAD_KEY]: nextInject,
               });
               await renderAll();
             },
@@ -433,7 +442,7 @@ async function syncCspDisableUi(tab) {
   }
 
   const response = await browser.runtime.sendMessage({
-    type: "GET_CSP_DISABLED",
+    type: MessageTypes.GET_CSP_DISABLED,
     tabId: tab.id,
   });
   cspDisableCheckbox.checked = Boolean(response?.disabled);
@@ -441,7 +450,7 @@ async function syncCspDisableUi(tab) {
 
 async function initExtensionSettingsControls() {
   const response = await browser.runtime.sendMessage({
-    type: "GET_EXTENSION_SETTINGS",
+    type: MessageTypes.GET_EXTENSION_SETTINGS,
   });
   const settings = response?.settings || {
     networkHooksEnabled: true,
@@ -452,7 +461,7 @@ async function initExtensionSettingsControls() {
     injectOnLoadEnabledEl.checked = settings.injectOnLoadEnabled !== false;
     injectOnLoadEnabledEl.addEventListener("change", async () => {
       await browser.runtime.sendMessage({
-        type: "SET_EXTENSION_SETTINGS",
+        type: MessageTypes.SET_EXTENSION_SETTINGS,
         settings: { injectOnLoadEnabled: injectOnLoadEnabledEl.checked },
       });
     });
@@ -462,7 +471,7 @@ async function initExtensionSettingsControls() {
     networkHooksEnabledEl.checked = settings.networkHooksEnabled !== false;
     networkHooksEnabledEl.addEventListener("change", async () => {
       await browser.runtime.sendMessage({
-        type: "SET_EXTENSION_SETTINGS",
+        type: MessageTypes.SET_EXTENSION_SETTINGS,
         settings: { networkHooksEnabled: networkHooksEnabledEl.checked },
       });
     });
@@ -493,7 +502,7 @@ async function initCspDisableControl() {
     }
 
     await browser.runtime.sendMessage({
-      type: "SET_CSP_DISABLED",
+      type: MessageTypes.SET_CSP_DISABLED,
       tabId: tab.id,
       disabled: cspDisableCheckbox.checked,
     });
@@ -564,18 +573,18 @@ async function init() {
       area === "local" &&
       (changes[LINKS_OVERLAY_KEY] ||
         changes[CATALOG_ORDER_KEY] ||
-        changes[Shortcuts().LINK_SHORTCUT_SLOTS_KEY])
+        changes[LINK_SHORTCUT_SLOTS_KEY])
     ) {
       renderAll();
     }
   });
 
   browser.runtime.onMessage.addListener((message) => {
-    if (globalThis.SnLinksCatalogEvents?.isCatalogChangedMessage?.(message)) {
+    if (isCatalogChangedMessage(message)) {
       void renderAll();
       return;
     }
-    if (message?.type === "FOCUS_SIDEBAR_LINK") {
+    if (message?.type === MessageTypes.FOCUS_SIDEBAR_LINK) {
       void focusLinkFromMessage(message.stableKey, message.query);
     }
   });

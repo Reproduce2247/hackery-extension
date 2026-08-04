@@ -1,20 +1,18 @@
-import { getTargetTab } from "./tab-target.js";
 import {
   readParamValuesFromRow,
   saveParamValue,
   validateParamValues,
-} from "./activate-link.js";
-
-const { resolveNavScriptletUrl, resolveUrlAction } = globalThis.SnLinksNav;
-const { matchBehavior } = globalThis.SnLinksBehaviors;
-
-const {
-  getRuntimeValueDefs,
+} from "../lib/activate-link.js";
+import { matchBehavior } from "../lib/link-behaviors.js";
+import {
   getEditableValueDefs,
+  getRuntimeValueDefs,
   linkStorageKey,
   resolveParamValues,
   seedNavParamValues,
-} = globalThis.SnLinksLinkModel;
+} from "../lib/link-model.js";
+import { resolveNavScriptletUrl, resolveUrlAction } from "../lib/navigation-shared.js";
+import { getTargetTab } from "../lib/tab-target.js";
 
 async function resolveCopyText(node, row) {
   const behavior = matchBehavior(node);

@@ -1,4 +1,4 @@
-const { serializeLinkNode, overlayExport } = globalThis.SnLinksLinkCatalog;
+import { overlayExport, serializeLinkNode } from "../lib/link-catalog.js";
 
 function writeClipboardText(text) {
   if (navigator.clipboard?.writeText) {

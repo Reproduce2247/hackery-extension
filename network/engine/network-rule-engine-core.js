@@ -1,4 +1,3 @@
-(function () {
 const WILDCARD_PREFIX = "w:";
 const MAX_PATTERN_INPUT_LENGTH = 65536;
 
@@ -100,7 +99,7 @@ function testCompiledPattern(value, compiled) {
   return compiled.regex.test(input);
 }
 
-function createSnLinksNetworkRuleEngine(options = {}) {
+function createNetworkRuleEngine(options = {}) {
   const {
     resolveBaseUrl = (ctx) => ctx.pageUrl || "https://example.invalid/",
     afterRuleScript = () => {},
@@ -522,8 +521,9 @@ function createSnLinksNetworkRuleEngine(options = {}) {
   };
 }
 
-globalThis.createSnLinksNetworkRuleEngine = createSnLinksNetworkRuleEngine;
-globalThis.compileNetworkRulePatterns = compileRulePatterns;
-globalThis.compileNetworkRulesCache = compileRulesCache;
-globalThis.attachCompiledNetworkRules = attachCompiledPatterns;
-})();
+export {
+  createNetworkRuleEngine,
+  compileRulePatterns as compileNetworkRulePatterns,
+  compileRulesCache as compileNetworkRulesCache,
+  attachCompiledPatterns as attachCompiledNetworkRules,
+};

@@ -1,8 +1,8 @@
 import { captureTabPrefillForBuilder } from "./link-builder.js";
+import { StorageKeys } from "../lib/storage-keys.js";
 
 const BUILDER_PAGE = "builder/builder.html";
-const { LINK_BUILDER_PREFILL_KEY, LINK_BUILDER_SECTION_KEY } =
-  globalThis.SnLinksStorageKeys;
+const { LINK_BUILDER_PREFILL_KEY, LINK_BUILDER_SECTION_KEY } = StorageKeys;
 
 async function stashBuilderPrefill(sectionName) {
   const prefill = await captureTabPrefillForBuilder();

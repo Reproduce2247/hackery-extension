@@ -21,10 +21,12 @@ import {
   updateBuilderFieldVisibility,
 } from "../sidebar/link-builder.js";
 import { downloadOverlayJson } from "../sidebar/link-export.js";
+import { linkBadgeLabel } from "../lib/link-behaviors.js";
+import { overlayExport } from "../lib/link-catalog.js";
+import { StorageKeys } from "../lib/storage-keys.js";
+import { createUiMessage } from "../lib/ui-message.js";
 
-const { overlayExport } = globalThis.SnLinksLinkCatalog;
-
-const { LINKS_OVERLAY_KEY, LINK_BUILDER_SECTION_KEY } = globalThis.SnLinksStorageKeys;
+const { LINKS_OVERLAY_KEY, LINK_BUILDER_SECTION_KEY } = StorageKeys;
 
 const linksListEl = document.getElementById("links-list");
 const linkCountEl = document.getElementById("link-count");
@@ -58,9 +60,7 @@ let defaultSectionName = null;
 /** @type {string|null} */
 let formSnapshot = null;
 
-const { showMessage, hideMessage } = globalThis.createUiMessage(messageEl);
-
-const { linkBadgeLabel } = globalThis.SnLinksBehaviors;
+const { showMessage, hideMessage } = createUiMessage(messageEl);
 
 function typeBadge(node) {
   return linkBadgeLabel(node);

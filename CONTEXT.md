@@ -39,7 +39,11 @@ manifest.json
 │   ├── search.js            # Explicit / / Ctrl+K search
 │   └── …
 ├── builder/                 # Advanced link editor window
-├── rules/                   # Network rules editor
+├── network/                 # Network-rules plugin (engine, UI, inject, host API)
+│   ├── plugin.js            # ESM network-rules host API
+│   ├── background.js        # Hook/webRequest orchestration
+│   ├── ui/                  # DevTools rules editor
+│   └── engine/              # Rule engine + page hook + webRequest
 ├── data/links.json          # Canonical bundled catalog
 └── scripts/
 ```
@@ -219,7 +223,7 @@ Future `sandbox` on `code` actions: `"main"` (default), `"isolated"`, `"readonly
 
 Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navParams`. Scriptlet bookmarklets should use the same binding model as the extension, not string substitution into `code`.
 
-### Network rules (`rules/`)
+### Network rules (`network/`)
 
 | Action | Behavior |
 |---|---|
@@ -250,7 +254,7 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 
 ### Untested intent: header forwarding on redirect (#10)
 
-When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. `Authorization`) may not carry the way Requestly’s session DNR rules do. Header **modify** rules on fetch/XHR apply in the page hook; **webRequest** header rules apply to other resource types. Preserving auth across redirect rewritten URLs is **not implemented** — documented for future work in `rules/rules.html`.
+When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. `Authorization`) may not carry the way Requestly’s session DNR rules do. Header **modify** rules on fetch/XHR apply in the page hook; **webRequest** header rules apply to other resource types. Preserving auth across redirect rewritten URLs is **not implemented** — documented for future work in `network/ui/rules.html`.
 
 When matching tabs in the current window: the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
 

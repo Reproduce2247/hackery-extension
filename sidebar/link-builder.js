@@ -14,9 +14,9 @@ import {
   setFieldVisible,
 } from "./link-builder-fields.js";
 import { getFieldValue, setFieldValue } from "../lib/codemirror-fields.bundle.js";
-
-const { ensureLinkId } = globalThis.SnLinksLinkCatalog;
-const { normalizeScriptInput, defaultScriptName } = globalThis.SnLinksLinkModel;
+import { ensureLinkId } from "../lib/link-catalog.js";
+import { defaultScriptName, normalizeLeafNode, normalizeScriptInput } from "../lib/link-model.js";
+import { StorageKeys } from "../lib/storage-keys.js";
 
 const NAV_OPTIONS = {
   scriptlet: [
@@ -228,7 +228,7 @@ export async function getBrowsingTabPrefill() {
 }
 
 export async function consumeBuilderPrefill() {
-  const key = globalThis.SnLinksStorageKeys.LINK_BUILDER_PREFILL_KEY;
+  const key = StorageKeys.LINK_BUILDER_PREFILL_KEY;
   const stored = await browser.storage.session.get(key);
   if (Object.prototype.hasOwnProperty.call(stored, key)) {
     const prefill = stored[key];
@@ -360,7 +360,7 @@ export function buildLinkNodeFromForm(form) {
     throw new Error(`Unknown link type: ${type}`);
   }
 
-  const node = globalThis.SnLinksLinkModel.normalizeLeafNode(draft);
+  const node = normalizeLeafNode(draft);
   return form.editId ? node : ensureLinkId(node);
 }
 
@@ -441,7 +441,7 @@ export function readBuilderForm(elements) {
 }
 
 export function populateBuilderForm(elements, node, sectionName, sectionNames) {
-  const normalized = globalThis.SnLinksLinkModel.normalizeLeafNode(node);
+  const normalized = normalizeLeafNode(node);
   elements.editIdInput.value = normalized.id || "";
   populateSectionSelect(elements, sectionNames, sectionName);
   elements.typeSelect.value = inferBuilderType(normalized);
@@ -516,7 +516,7 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
     } else if (prefill.navParams) {
       populateNavParamsFields(elements.fieldElements, prefill.navParams);
     } else if (prefill.params || prefill.parameters || prefill.parameter) {
-      const normalized = globalThis.SnLinksLinkModel.normalizeLeafNode({
+      const normalized = normalizeLeafNode({
         name: prefill.name || "prefill",
         url: prefill.url || prefill.path || "/",
         open: "tab",

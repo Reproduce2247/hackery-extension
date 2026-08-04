@@ -1,5 +1,0 @@
-(function () {
-  browser.runtime
-    .sendMessage({ type: "INSTALL_NETWORK_HOOK" })
-    .catch(() => {});
-})();

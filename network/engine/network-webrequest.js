@@ -1,13 +1,38 @@
-/* global browser, getMatchingRules, applyModifyReplacementsToContext, runNetworkRuleScript,
-  NETWORK_RULES_LOG_KEY, NETWORK_SHARED_STATE_KEY, appendNetworkLogQueue, getSortedEnabledRules,
-  rulesForPageHook, applyStringReplacements, objectToWebRequestHeaders, webRequestHeadersToObject,
-  isTextLikeContentType, sanitizeLogEntry, createSharedStateView, compileRulesForMatching */
+import { isCspDisabledForTab, stripCspHeaders } from "../../lib/csp-disable.js";
+import {
+  applyModifyReplacementsToContext,
+  applyStringReplacements,
+  appendNetworkLogQueue,
+  compileRulesForMatching,
+  createSharedStateView,
+  getMatchingRules,
+  getSortedEnabledRules,
+  isTextLikeContentType,
+  objectToWebRequestHeaders,
+  runNetworkRuleScript,
+  rulesForPageHook,
+  sanitizeLogEntry,
+  webRequestHeadersToObject,
+} from "./network-rules-shared.js";
+import { NETWORK_RULES_LOG_KEY, NETWORK_SHARED_STATE_KEY } from "../storage-keys.js";
 
 let webRequestRules = [];
 let webRequestEnabled = false;
 let webRequestListenersRegistered = false;
 let webRequestPageHookActive = false;
 let webRequestSharedState = {};
+
+/** @type {((entry: object, tabId?: number) => Promise<void>) | null} */
+let appendNetworkRuleLogFn = null;
+
+/**
+ * Wire in the shared append-log function owned by network/background.js so
+ * webRequest-originated matches land in the same log queue as page-hook matches.
+ * @param {{ appendNetworkRuleLog: (entry: object, tabId?: number) => Promise<void> }} deps
+ */
+export function configureNetworkWebRequest({ appendNetworkRuleLog }) {
+  appendNetworkRuleLogFn = appendNetworkRuleLog || null;
+}
 
 function webRequestStateView() {
   return createSharedStateView(webRequestSharedState, {});
@@ -23,8 +48,8 @@ function persistWebRequestSharedState() {
 }
 
 async function logWebRequestRule(entry, tabId) {
-  if (typeof globalThis.snLinksAppendNetworkRuleLog === "function") {
-    await globalThis.snLinksAppendNetworkRuleLog({ ...entry, via: "webRequest" }, tabId);
+  if (typeof appendNetworkRuleLogFn === "function") {
+    await appendNetworkRuleLogFn({ ...entry, via: "webRequest" }, tabId);
     return;
   }
   const sanitized = sanitizeLogEntry({ ...entry, via: "webRequest" });
@@ -350,7 +375,7 @@ function onBeforeSendHeaders(details) {
 function onHeadersReceived(details) {
   let responseHeaders = details.responseHeaders;
 
-  if (typeof isCspDisabledForTab === "function" && isCspDisabledForTab(details.tabId)) {
+  if (isCspDisabledForTab(details.tabId)) {
     const stripped = stripCspHeaders(responseHeaders);
     if (stripped) {
       responseHeaders = stripped;
@@ -470,7 +495,7 @@ function registerWebRequestListeners() {
   webRequestListenersRegistered = true;
 }
 
-function syncNetworkWebRequest(state, hooksEnabled = true, sharedState = {}) {
+export function syncNetworkWebRequest(state, hooksEnabled = true, sharedState = {}) {
   webRequestSharedState =
     sharedState && typeof sharedState === "object" ? sharedState : {};
   webRequestEnabled = Boolean(hooksEnabled && state?.enabled);

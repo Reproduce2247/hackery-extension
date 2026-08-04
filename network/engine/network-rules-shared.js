@@ -1,10 +1,16 @@
-const NETWORK_MAIN_HOOK_SCRIPT_ID = "sn-links-network-hook-main";
-const NETWORK_LOG_BRIDGE_SCRIPT_ID = "sn-links-network-log-bridge";
+import {
+  attachCompiledNetworkRules,
+  compileNetworkRulesCache,
+  createNetworkRuleEngine,
+} from "./network-rule-engine-core.js";
+
+export const NETWORK_MAIN_HOOK_SCRIPT_ID = "complex-linker-network-hook-main";
+export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "complex-linker-network-log-bridge";
 const NETWORK_LOG_LIMIT = 100;
 
-const NETWORK_ACTIONS = ["block", "redirect", "modify", "mock"];
-const NETWORK_PHASES = ["request", "response"];
-const HTTP_METHODS = [
+export const NETWORK_ACTIONS = ["block", "redirect", "modify", "mock"];
+export const NETWORK_PHASES = ["request", "response"];
+export const HTTP_METHODS = [
   "GET",
   "POST",
   "PUT",
@@ -14,7 +20,7 @@ const HTTP_METHODS = [
   "OPTIONS",
 ];
 
-const WEBREQUEST_RESOURCE_TYPES = [
+export const WEBREQUEST_RESOURCE_TYPES = [
   "main_frame",
   "sub_frame",
   "stylesheet",
@@ -30,20 +36,13 @@ const WEBREQUEST_RESOURCE_TYPES = [
   "other",
 ];
 
-const sharedRuleEngine = createSnLinksNetworkRuleEngine();
+const sharedRuleEngine = createNetworkRuleEngine();
 
-function defaultNetworkRulesState() {
+export function defaultNetworkRulesState() {
   return { enabled: true, rules: [] };
 }
 
-function defaultExtensionSettings() {
-  return {
-    networkHooksEnabled: true,
-    injectOnLoadEnabled: true,
-  };
-}
-
-function createEmptyRule() {
+export function createEmptyRule() {
   return {
     id: crypto.randomUUID(),
     name: "New rule",
@@ -78,32 +77,32 @@ function createEmptyRule() {
   };
 }
 
-function ruleMatchesContext(rule, ctx) {
+export function ruleMatchesContext(rule, ctx) {
   return sharedRuleEngine.ruleMatches(rule, ctx);
 }
 
-function applyStringReplacements(value, replacements) {
+export function applyStringReplacements(value, replacements) {
   return sharedRuleEngine.applyStringReplacements(value, replacements);
 }
 
-function getSortedEnabledRules(rules) {
+export function getSortedEnabledRules(rules) {
   return sharedRuleEngine.getSortedEnabledRules(rules);
 }
 
-function getMatchingRules(rules, ctx) {
+export function getMatchingRules(rules, ctx) {
   return getSortedEnabledRules(rules).filter((rule) => ruleMatchesContext(rule, ctx));
 }
 
-function compileRulesForMatching(rules) {
+export function compileRulesForMatching(rules) {
   const compiledById = compileNetworkRulesCache(rules);
   return attachCompiledNetworkRules(rules, compiledById);
 }
 
-function applyModifyReplacementsToContext(ctx, rule) {
+export function applyModifyReplacementsToContext(ctx, rule) {
   return sharedRuleEngine.applyModifyReplacements(ctx, rule);
 }
 
-function createSharedStateView(persistentState, tabState) {
+export function createSharedStateView(persistentState, tabState) {
   return {
     persistent: persistentState || {},
     tab: tabState || {},
@@ -113,13 +112,13 @@ function createSharedStateView(persistentState, tabState) {
   };
 }
 
-function attachSharedStateToContext(ctx, stateView) {
+export function attachSharedStateToContext(ctx, stateView) {
   return sharedRuleEngine.attachSharedState(ctx, stateView);
 }
 
-function runNetworkRuleScript(ctx, script, rule, onError, stateView) {
+export function runNetworkRuleScript(ctx, script, rule, onError, stateView) {
   const engine = onError
-    ? createSnLinksNetworkRuleEngine({
+    ? createNetworkRuleEngine({
         afterRuleScript: ({ error }) => {
           if (error) {
             onError(error);
@@ -130,11 +129,11 @@ function runNetworkRuleScript(ctx, script, rule, onError, stateView) {
   return engine.runRuleScript(ctx, script, rule, stateView);
 }
 
-function ruleServesWithoutRequest(rule) {
+export function ruleServesWithoutRequest(rule) {
   return sharedRuleEngine.ruleServesWithoutRequest(rule);
 }
 
-function buildMockResponseContext(rule, requestCtx, stateView) {
+export function buildMockResponseContext(rule, requestCtx, stateView) {
   return sharedRuleEngine.buildMockResponseContext(rule, requestCtx, stateView);
 }
 
@@ -157,11 +156,11 @@ function ruleNeedsPageHook(rule) {
   );
 }
 
-function rulesForPageHook(rules) {
+export function rulesForPageHook(rules) {
   return (rules || []).filter(ruleNeedsPageHook);
 }
 
-function webRequestHeadersToObject(headers) {
+export function webRequestHeadersToObject(headers) {
   const out = {};
   if (!headers) {
     return out;
@@ -172,11 +171,11 @@ function webRequestHeadersToObject(headers) {
   return out;
 }
 
-function objectToWebRequestHeaders(headers) {
+export function objectToWebRequestHeaders(headers) {
   return Object.entries(headers || {}).map(([name, value]) => ({ name, value }));
 }
 
-function getNetworkHookVersion(state) {
+export function getNetworkHookVersion(state) {
   const payload = {
     enabled: Boolean(state?.enabled),
     sharedState: state?.sharedState || {},
@@ -206,11 +205,7 @@ function getNetworkHookVersion(state) {
   return JSON.stringify(payload);
 }
 
-function buildNetworkHookMatches() {
-  return ["http://*/*", "https://*/*"];
-}
-
-function buildInjectContentScriptMatches() {
+export function buildNetworkHookMatches() {
   return ["http://*/*", "https://*/*"];
 }
 
@@ -221,7 +216,7 @@ function trimLogEntries(entries) {
 /**
  * Append one sanitized entry to a FIFO log queue capped at maxEntries.
  */
-function appendNetworkLogQueue(existing, entry, { maxEntries = NETWORK_LOG_LIMIT } = {}) {
+export function appendNetworkLogQueue(existing, entry, { maxEntries = NETWORK_LOG_LIMIT } = {}) {
   const sanitized = sanitizeLogEntry(entry);
   if (!sanitized) {
     return existing || [];
@@ -230,7 +225,7 @@ function appendNetworkLogQueue(existing, entry, { maxEntries = NETWORK_LOG_LIMIT
   return next.slice(-maxEntries);
 }
 
-function sanitizeLogEntry(entry) {
+export function sanitizeLogEntry(entry) {
   if (!entry || typeof entry !== "object") {
     return null;
   }
@@ -260,7 +255,7 @@ function sanitizeLogEntry(entry) {
   };
 }
 
-function isTextLikeContentType(headers) {
+export function isTextLikeContentType(headers) {
   const contentType = String(
     headers?.["Content-Type"] || headers?.["content-type"] || ""
   ).toLowerCase();
@@ -277,14 +272,14 @@ function isTextLikeContentType(headers) {
   );
 }
 
-function decodeBasicAuthCredentials(ctx) {
+export function decodeBasicAuthCredentials(ctx) {
   return sharedRuleEngine.decodeBasicAuthCredentials(ctx);
 }
 
-function matchesNetworkPattern(value, pattern) {
+export function matchesNetworkPattern(value, pattern) {
   return sharedRuleEngine.matchesNetworkPattern(value, pattern);
 }
 
-function getHeaderValue(headers, name) {
+export function getHeaderValue(headers, name) {
   return sharedRuleEngine.getHeaderValue(headers, name);
 }

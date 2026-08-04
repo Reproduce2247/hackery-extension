@@ -1,10 +1,10 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
-  const prevHook = root.__snLinksNetworkHook;
+  const prevHook = root.__ComplexLinkerNetworkHook;
   if (prevHook?.version === version) {
     return;
   }
 
-  const patternEngine = createSnLinksNetworkRuleEngine();
+  const patternEngine = createNetworkRuleEngine();
   const compiledById = {};
   for (const rule of rules || []) {
     if (rule?.id) {
@@ -27,7 +27,7 @@
   let hookDepth = 0;
   const activeRuleStack = [];
 
-  const engine = createSnLinksNetworkRuleEngine({
+  const engine = createNetworkRuleEngine({
     resolveBaseUrl: (ctx) => ctx.pageUrl || root.location.href,
     afterRuleScript: ({ error, ctx, rule }) => {
       postSharedStateUpdate();
@@ -63,7 +63,7 @@
   function postSharedStateUpdate() {
     root.postMessage(
       {
-        source: "sn-links-network-hook",
+        source: "complex-linker-network-hook",
         type: "sharedState",
         token: logToken,
         persistent: stateView.persistent,
@@ -76,7 +76,7 @@
   function postLog(entry) {
     root.postMessage(
       {
-        source: "sn-links-network-hook",
+        source: "complex-linker-network-hook",
         type: "log",
         token: logToken,
         entry: { ...entry, ts: Date.now() },
@@ -321,7 +321,7 @@
   XMLHttpRequest.prototype.setRequestHeader = natives.xhrSetRequestHeader;
 
   const origFetch = natives.fetch;
-  root.fetch = async function snLinksFetch(input, init) {
+  root.fetch = async function ComplexLinkerFetch(input, init) {
     const isHookOriginated = hookDepth > 0;
     hookDepth += 1;
     try {
@@ -450,14 +450,14 @@
   const origSend = natives.xhrSend;
   const origSetRequestHeader = natives.xhrSetRequestHeader;
 
-  XMLHttpRequest.prototype.open = function snLinksOpen(
+  XMLHttpRequest.prototype.open = function ComplexLinkerOpen(
     method,
     url,
     async,
     user,
     password
   ) {
-    this.__snLinks = {
+    this.__ComplexLinker = {
       method: String(method || "GET").toUpperCase(),
       url: String(url),
       async: async !== false,
@@ -468,21 +468,21 @@
     return origOpen.call(this, method, url, async, user, password);
   };
 
-  XMLHttpRequest.prototype.setRequestHeader = function snLinksSetHeader(
+  XMLHttpRequest.prototype.setRequestHeader = function ComplexLinkerSetHeader(
     name,
     value
   ) {
-    if (this.__snLinks) {
-      this.__snLinks.headers[name] = value;
+    if (this.__ComplexLinker) {
+      this.__ComplexLinker.headers[name] = value;
     }
     return origSetRequestHeader.call(this, name, value);
   };
 
-  XMLHttpRequest.prototype.send = function snLinksSend(body) {
+  XMLHttpRequest.prototype.send = function ComplexLinkerSend(body) {
     const isHookOriginated = hookDepth > 0;
     hookDepth += 1;
     try {
-    const meta = this.__snLinks || {
+    const meta = this.__ComplexLinker || {
       method: "GET",
       url: "",
       headers: {},
@@ -568,7 +568,7 @@
 
     const xhr = this;
     const origReady = xhr.onreadystatechange;
-    xhr.onreadystatechange = function snLinksReadyState() {
+    xhr.onreadystatechange = function ComplexLinkerReadyState() {
       if (xhr.readyState === 4) {
         try {
           const responseCtx = processRules(
@@ -616,7 +616,7 @@
     }
   };
 
-  root.__snLinksNetworkHook = {
+  root.__ComplexLinkerNetworkHook = {
     version,
     rulesCount: compiledRules.length,
     natives,

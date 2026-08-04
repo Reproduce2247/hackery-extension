@@ -1,15 +1,26 @@
-const {
+import { emitCatalogChanged } from "../lib/catalog-events.js";
+import {
+  appendMissingKeys,
+  applyOrder,
+  CATALOG_ORDER_KEY,
+  linkStableKey,
+  loadCatalogOrder,
+  saveCatalogOrder,
+} from "../lib/catalog-order.js";
+import {
+  ensureLinkId,
+  ensureLinksOverlayInStorage,
+  importOverlayIntoExisting,
   LEGACY_CUSTOM_MIGRATION_SECTION,
   mergeLinksCatalog,
-  importOverlayIntoExisting,
-  ensureLinksOverlayInStorage,
-} = globalThis.SnLinksLinkCatalog;
+} from "../lib/link-catalog.js";
+import { StorageKeys } from "../lib/storage-keys.js";
 
-const { LINKS_OVERLAY_KEY, CATALOG_ORDER_KEY } = globalThis.SnLinksStorageKeys;
+const { LINKS_OVERLAY_KEY } = StorageKeys;
 
 async function persistOverlay(overlay, reason = "overlay") {
   await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
-  globalThis.SnLinksCatalogEvents?.emitCatalogChanged?.({ reason });
+  emitCatalogChanged({ reason });
 }
 
 export async function loadBundledLinksJson() {
@@ -25,12 +36,11 @@ export async function ensureLinksOverlay() {
  * Merged catalog with user catalogOrder applied.
  */
 export async function loadMergedLinkCatalog() {
-  const Order = globalThis.SnLinksCatalogOrder;
   const bundled = await loadBundledLinksJson();
   const overlay = await ensureLinksOverlay();
   const merged = mergeLinksCatalog(bundled, overlay);
-  let order = await Order.loadCatalogOrder();
-  const next = Order.appendMissingKeys(order, merged);
+  let order = await loadCatalogOrder();
+  const next = appendMissingKeys(order, merged);
   if (
     next.linkKeys.length !== order.linkKeys.length ||
     next.sectionOrder.length !== order.sectionOrder.length
@@ -38,7 +48,7 @@ export async function loadMergedLinkCatalog() {
     order = next;
     await browser.storage.local.set({ [CATALOG_ORDER_KEY]: order });
   }
-  return Order.applyOrder(merged, order);
+  return applyOrder(merged, order);
 }
 
 /** Raw merge without order (for order editing / export helpers). */
@@ -69,7 +79,6 @@ export async function saveSectionOverlayChildren(sectionName, children) {
 }
 
 export async function addLinksToSection(sectionName, nodes) {
-  const { ensureLinkId } = globalThis.SnLinksLinkCatalog;
   const children = await getSectionOverlayChildren(sectionName);
   await saveSectionOverlayChildren(
     sectionName,
@@ -78,13 +87,12 @@ export async function addLinksToSection(sectionName, nodes) {
 }
 
 export async function importLinksOverlay(raw) {
-  const Order = globalThis.SnLinksCatalogOrder;
   const overlay = await ensureLinksOverlay();
   const result = importOverlayIntoExisting(overlay, raw);
   await persistOverlay(result.overlay, "import");
   const merged = mergeLinksCatalog(await loadBundledLinksJson(), result.overlay);
-  const order = Order.appendMissingKeys(await Order.loadCatalogOrder(), merged);
-  await Order.saveCatalogOrder(order);
+  const order = appendMissingKeys(await loadCatalogOrder(), merged);
+  await saveCatalogOrder(order);
   return result;
 }
 
@@ -153,9 +161,8 @@ export async function updateCustomLink(linkId, nextNode, targetSectionName) {
 }
 
 export async function getAllCustomLinks() {
-  const Order = globalThis.SnLinksCatalogOrder;
   const overlay = await ensureLinksOverlay();
-  const order = await Order.loadCatalogOrder();
+  const order = await loadCatalogOrder();
   const orderIndex = new Map(
     (order.linkKeys || []).map((key, i) => [key, i])
   );
@@ -167,7 +174,7 @@ export async function getAllCustomLinks() {
     }
     for (const node of section.children) {
       if (node.id && !node.children) {
-        const key = Order.linkStableKey(sectionName, [], node);
+        const key = linkStableKey(sectionName, [], node);
         results.push({
           ...node,
           sectionName,
@@ -190,10 +197,9 @@ export async function getCatalogSectionNames() {
 }
 
 export async function getLinksOverlayForExport() {
-  const Order = globalThis.SnLinksCatalogOrder;
   const overlay = await ensureLinksOverlay();
-  const order = await Order.loadCatalogOrder();
-  return Order.applyOrder(overlay, order);
+  const order = await loadCatalogOrder();
+  return applyOrder(overlay, order);
 }
 
 /** @deprecated use addLinksToSection */

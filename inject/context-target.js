@@ -1,7 +1,13 @@
 /**
  * Capture last contextmenu target and build a usable CSS selector for builder prefill.
+ * Must be present before the contextmenu event (registered as a content script).
  */
 (function () {
+  if (globalThis.__complexLinkerContextTargetInstalled) {
+    return;
+  }
+  globalThis.__complexLinkerContextTargetInstalled = true;
+
   let lastTarget = null;
 
   function cssEscapeIdent(value) {
@@ -55,6 +61,7 @@
   );
 
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    // Must match MessageTypes.GET_CONTEXT_TARGET in lib/message-types.js.
     if (message?.type !== "GET_CONTEXT_TARGET") {
       return false;
     }

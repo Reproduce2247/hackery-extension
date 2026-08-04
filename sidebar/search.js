@@ -2,12 +2,14 @@
  * Explicit sidebar search (/ or Ctrl+K). Scoring from lib/link-search.js.
  * No type-anywhere capture — omnibox is the page-focused launcher.
  */
-const Search = () => globalThis.SnLinksLinkSearch;
-const { flattenLinkNodes } = globalThis.SnLinksLinkModel;
+import {
+  normalizeSearchQuery,
+  nodeHasExactSearchMatch,
+  nodeSearchScore,
+} from "../lib/link-search.js";
+import { flattenLinkNodes } from "../lib/link-model.js";
 
-export function normalizeSearchQuery(raw) {
-  return Search().normalizeSearchQuery(raw);
-}
+export { normalizeSearchQuery };
 
 export function createSearchController({
   searchInputEl,
@@ -19,14 +21,6 @@ export function createSearchController({
   renderAll,
 }) {
   let searchQuery = "";
-
-  function nodeSearchScore(node, query) {
-    return Search().nodeSearchScore(node, query);
-  }
-
-  function nodeHasExactSearchMatch(node, query) {
-    return Search().nodeHasExactSearchMatch(node, query);
-  }
 
   function sectionHasExactMatch(section, query) {
     if (!query) {
