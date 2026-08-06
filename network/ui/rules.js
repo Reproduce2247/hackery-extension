@@ -71,6 +71,9 @@ const networkStatusDotEl = document.getElementById("network-status-dot");
 const networkStatusTooltipEl = document.getElementById("network-status-tooltip");
 const deleteRuleBtn = document.getElementById("delete-rule-btn");
 const ruleTemplateSelectEl = document.getElementById("rule-template-select");
+const exportRulesBtn = document.getElementById("export-rules-btn");
+const importRulesBtn = document.getElementById("import-rules-btn");
+const importRulesFileEl = document.getElementById("import-rules-file");
 
 const PATTERN_FIELDS = [
   {
@@ -719,6 +722,101 @@ async function persistRulesState() {
   lastPersistedRulesSnapshot = JSON.stringify(rulesState);
 }
 
+/**
+ * Download the current rules state as network-rules.json.
+ */
+function exportRulesToFile() {
+  hideMessage();
+  const payload = {
+    enabled: rulesState.enabled !== false,
+    rules: Array.isArray(rulesState.rules) ? rulesState.rules : [],
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "network-rules.json";
+  anchor.click();
+  URL.revokeObjectURL(url);
+  showMessage(
+    `Downloaded network-rules.json (${payload.rules.length} rule${
+      payload.rules.length === 1 ? "" : "s"
+    }).`
+  );
+}
+
+/**
+ * Parse imported JSON into a normalized network rules state.
+ * Accepts `{ enabled?, rules }` or a bare rules array.
+ * @param {string} raw File text.
+ * @returns {{ enabled: boolean, rules: object[] }}
+ */
+function parseNetworkRulesImport(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) {
+    throw new Error("Choose a JSON file to import.");
+  }
+  let data;
+  try {
+    data = JSON.parse(trimmed);
+  } catch {
+    throw new Error("Invalid JSON.");
+  }
+  if (Array.isArray(data)) {
+    return normalizeNetworkRulesState({ enabled: true, rules: data });
+  }
+  if (data && typeof data === "object" && Array.isArray(data.rules)) {
+    return normalizeNetworkRulesState(data);
+  }
+  throw new Error('Invalid network rules JSON (expected { "rules": [...] }).');
+}
+
+/**
+ * Replace the current rule set with JSON from a file and persist.
+ * @param {File|null|undefined} file Selected JSON file.
+ */
+async function importRulesFromFile(file) {
+  if (!file) {
+    return;
+  }
+  hideMessage();
+  if (importRulesBtn) {
+    importRulesBtn.disabled = true;
+  }
+  try {
+    const next = parseNetworkRulesImport(await file.text());
+    const currentCount = rulesState.rules.length;
+    if (
+      currentCount > 0 &&
+      !confirm(
+        `Replace ${currentCount} current rule(s) with ${next.rules.length} from "${file.name}"?`
+      )
+    ) {
+      return;
+    }
+    rulesState = next;
+    selectedRuleId = rulesState.rules[0]?.id || null;
+    await persistRulesState();
+    rulesEnabledEl.checked = rulesState.enabled !== false;
+    renderRulesList();
+    loadRuleIntoForm(getSelectedRule());
+    updateNetworkStatusDot();
+    showMessage(
+      `Imported ${rulesState.rules.length} rule${
+        rulesState.rules.length === 1 ? "" : "s"
+      } from "${file.name}".`
+    );
+  } catch (error) {
+    showMessage(error.message || String(error));
+  } finally {
+    if (importRulesBtn) {
+      importRulesBtn.disabled = false;
+    }
+  }
+}
+
 async function deleteRuleById(ruleId) {
   hideMessage();
   const existing = rulesState.rules.find((rule) => rule.id === ruleId);
@@ -995,6 +1093,21 @@ document.getElementById("reinject-btn").addEventListener("click", async () => {
     showMessage(response?.error || "Re-inject failed.");
   }
 });
+
+if (exportRulesBtn) {
+  exportRulesBtn.addEventListener("click", exportRulesToFile);
+}
+
+if (importRulesBtn && importRulesFileEl) {
+  importRulesBtn.addEventListener("click", () => {
+    importRulesFileEl.click();
+  });
+  importRulesFileEl.addEventListener("change", async () => {
+    const file = importRulesFileEl.files?.[0];
+    importRulesFileEl.value = "";
+    await importRulesFromFile(file);
+  });
+}
 
 rulesEnabledEl.addEventListener("change", async () => {
   hideMessage();

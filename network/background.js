@@ -425,15 +425,11 @@ export function scheduleRefreshNetworkRulesState() {
 }
 
 /**
- * Badge mark for this tab: ● when hooks are on and rules exist, or a rule matched.
- * @param {number} tabId
+ * Badge mark for this tab: ● only while at least one network rule is active.
+ * @param {number} _tabId
  */
-export function getBadgeMark(tabId) {
-  const flags = getTabFlags(tabId);
-  if (flags.networkMatched) {
-    return "●";
-  }
-  if (networkHooksEnabled && networkRulesCompiled.length) {
+export function getBadgeMark(_tabId) {
+  if (networkHooksEnabled && enabledNetworkRules().length) {
     return "●";
   }
   return "";
