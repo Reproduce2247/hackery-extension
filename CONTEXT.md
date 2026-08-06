@@ -232,7 +232,7 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 | `block` | Abort matching requests |
 | `redirect` | Replace request URL |
 
-**Filters:** regex on request host, page host, page URL, request URL, Content-Type, request body; optional `w:` wildcard prefix (e.g. `w:*/api/now/table/*`); HTTP methods; resource types; response status range.
+**Filters:** page URL, request URL, Content-Type, request body — `*` wildcards by default, optional per-field **regex** mode; HTTP methods; resource types; response status range. Legacy `w:` prefixes migrate to wildcard mode on load.
 
 **Shared state:** request/response scripts receive `ctx.sharedState` (persisted in `networkSharedState`) and `ctx.tabState` (per-tab session). Mutations from page hooks sync back via `NETWORK_SHARED_STATE` messages.
 
@@ -242,13 +242,15 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 
 **Pattern compilation:** filter regexes compile once on rules refresh in the background and once per hook install in the page. Rule refresh is debounced (300ms).
 
+**Scripts vs webRequest:** request/response scripts run in the page hook (fetch/XHR). webRequest applies declarative block/redirect/header/body actions only — Firefox MV3 CSP blocks `new Function()` in extension pages. A CSP-safe interpreter can be wired later in `network-webrequest.js`.
+
 **Hook reentrancy:** fetch/XHR triggered from inside a rule script skips other rules unless they set **`matchHookOriginated: true`**. A rule never matches its own request while its script is running.
 
 **Hook idempotency:** re-install restores native `fetch`/XHR from the first install before re-wrapping, so in-tab re-inject does not stack wrappers.
 
 **Rule test:** DevTools rules editor **Test** opens a URL in a new tab and shows an in-page toast when that rule matches (8s timeout).
 
-**DevTools status:** the Network Rules panel header dot reflects hooks disabled (grey), enabled (teal), or a recent match on the inspected tab (green). The toolbar extension icon is unchanged.
+**DevTools status:** the Network Rules panel header dot reflects hooks disabled (grey), enabled (teal), or a recent match on the inspected tab (green). The toolbar badge `●` tooltip explains active hooks / recent match / inject-on-load.
 
 **Auto re-inject:** saving rules or toggling hooks re-runs the page hook on open http(s) tabs (manual **Re-inject** still available).
 

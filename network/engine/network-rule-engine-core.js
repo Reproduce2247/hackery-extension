@@ -10,26 +10,26 @@ function wildcardPatternToRegExp(pattern) {
 
 /**
  * Compile a pattern string into a RegExp, or null when the pattern is empty/absent.
+ * Default mode is wildcard (`*`); pass isRegex true for RegExp syntax.
+ * Legacy `w:` prefixes are still accepted and treated as wildcards.
  * Returns { empty, invalid, regex }.
  */
-function compilePatternString(pattern) {
+function compilePatternString(pattern, isRegex = false) {
   if (!pattern) {
     return { empty: true, invalid: false, regex: null };
   }
   const text = String(pattern);
-  if (text.startsWith(WILDCARD_PREFIX)) {
-    try {
-      return {
-        empty: false,
-        invalid: false,
-        regex: wildcardPatternToRegExp(text.slice(WILDCARD_PREFIX.length)),
-      };
-    } catch {
-      return { empty: false, invalid: true, regex: null };
-    }
-  }
+  const legacyWildcard = text.startsWith(WILDCARD_PREFIX);
+  const body = legacyWildcard ? text.slice(WILDCARD_PREFIX.length) : text;
+  const useRegex = isRegex && !legacyWildcard;
   try {
-    return { empty: false, invalid: false, regex: new RegExp(text, "i") };
+    return {
+      empty: false,
+      invalid: false,
+      regex: useRegex
+        ? new RegExp(body, "i")
+        : wildcardPatternToRegExp(body),
+    };
   } catch {
     return { empty: false, invalid: true, regex: null };
   }
@@ -41,28 +41,38 @@ function compilePatternString(pattern) {
 function compileRulePatterns(rule) {
   const mod = rule.modify || {};
   return {
-    hostPattern: compilePatternString(rule.hostPattern),
-    pageHostPattern: compilePatternString(rule.pageHostPattern),
-    pageUrlPattern: compilePatternString(rule.pageUrlPattern),
-    requestUrlPattern: compilePatternString(rule.requestUrlPattern),
-    requestBodyPattern: compilePatternString(rule.requestBodyPattern),
-    requestContentTypePattern: compilePatternString(rule.requestContentTypePattern),
+    pageUrlPattern: compilePatternString(
+      rule.pageUrlPattern,
+      rule.pageUrlPatternIsRegex
+    ),
+    requestUrlPattern: compilePatternString(
+      rule.requestUrlPattern,
+      rule.requestUrlPatternIsRegex
+    ),
+    requestBodyPattern: compilePatternString(
+      rule.requestBodyPattern,
+      rule.requestBodyPatternIsRegex
+    ),
+    requestContentTypePattern: compilePatternString(
+      rule.requestContentTypePattern,
+      rule.requestContentTypePatternIsRegex
+    ),
     urlReplacements: (mod.urlReplacements || []).map((replacement) => ({
       ...replacement,
       compiledFind: replacement.isRegex
-        ? compilePatternString(replacement.find)
+        ? compilePatternString(replacement.find, true)
         : null,
     })),
     bodyReplacements: (mod.bodyReplacements || []).map((replacement) => ({
       ...replacement,
       compiledFind: replacement.isRegex
-        ? compilePatternString(replacement.find)
+        ? compilePatternString(replacement.find, true)
         : null,
     })),
     headerReplacements: (mod.headerReplacements || []).map((replacement) => ({
       ...replacement,
       compiledFind: replacement.isRegex
-        ? compilePatternString(replacement.find)
+        ? compilePatternString(replacement.find, true)
         : null,
     })),
   };
@@ -107,25 +117,17 @@ function createNetworkRuleEngine(options = {}) {
 
   const NETWORK_PHASES = ["request", "response"];
 
-  function matchesNetworkPattern(value, pattern, compiledPattern) {
+  function matchesNetworkPattern(value, pattern, compiledPattern, isRegex) {
     if (compiledPattern) {
       return testCompiledPattern(value, compiledPattern);
     }
     if (!pattern) {
       return true;
     }
-    return testCompiledPattern(value, compilePatternString(pattern));
-  }
-
-  function getPageHost(pageUrl) {
-    if (!pageUrl) {
-      return "";
-    }
-    try {
-      return new URL(pageUrl).hostname;
-    } catch {
-      return "";
-    }
+    return testCompiledPattern(
+      value,
+      compilePatternString(pattern, isRegex)
+    );
   }
 
   function normalizeMethods(methods) {
@@ -243,24 +245,11 @@ function createNetworkRuleEngine(options = {}) {
 
     if (
       !matchesNetworkPattern(
-        requestUrl.hostname,
-        rule.hostPattern,
-        compiled?.hostPattern
+        pageUrl,
+        rule.pageUrlPattern,
+        compiled?.pageUrlPattern,
+        rule.pageUrlPatternIsRegex
       )
-    ) {
-      return false;
-    }
-    if (
-      !matchesNetworkPattern(
-        getPageHost(pageUrl),
-        rule.pageHostPattern,
-        compiled?.pageHostPattern
-      )
-    ) {
-      return false;
-    }
-    if (
-      !matchesNetworkPattern(pageUrl, rule.pageUrlPattern, compiled?.pageUrlPattern)
     ) {
       return false;
     }
@@ -268,7 +257,8 @@ function createNetworkRuleEngine(options = {}) {
       !matchesNetworkPattern(
         requestUrl.href,
         rule.requestUrlPattern,
-        compiled?.requestUrlPattern
+        compiled?.requestUrlPattern,
+        rule.requestUrlPatternIsRegex
       )
     ) {
       return false;
@@ -279,7 +269,8 @@ function createNetworkRuleEngine(options = {}) {
         !matchesNetworkPattern(
           String(ctx.body ?? ""),
           rule.requestBodyPattern,
-          compiled?.requestBodyPattern
+          compiled?.requestBodyPattern,
+          rule.requestBodyPatternIsRegex
         )
       ) {
         return false;
@@ -297,7 +288,8 @@ function createNetworkRuleEngine(options = {}) {
         !matchesNetworkPattern(
           getHeaderValue(ctx.headers, "Content-Type"),
           rule.requestContentTypePattern,
-          compiled?.requestContentTypePattern
+          compiled?.requestContentTypePattern,
+          rule.requestContentTypePatternIsRegex
         )
       ) {
         return false;
@@ -338,7 +330,7 @@ function createNetworkRuleEngine(options = {}) {
       }
       if (replacement.isRegex) {
         const compiledFind =
-          compiledReplacement?.compiledFind || compilePatternString(find);
+          compiledReplacement?.compiledFind || compilePatternString(find, true);
         if (compiledFind.invalid || !compiledFind.regex) {
           continue;
         }
@@ -431,6 +423,17 @@ function createNetworkRuleEngine(options = {}) {
       return ctx;
     }
 
+    // Snapshot wire fields so a no-return script cannot keep in-place mutations.
+    // Regex replacements are applied before this runs and stay on ctx.
+    const before = {
+      method: ctx.method,
+      url: ctx.url,
+      headers: ctx.headers ? { ...ctx.headers } : ctx.headers,
+      body: ctx.body,
+      status: ctx.status,
+      statusText: ctx.statusText,
+    };
+
     try {
       const trimmed = script.trim();
       const runner = trimmed.startsWith("function")
@@ -446,9 +449,24 @@ function createNetworkRuleEngine(options = {}) {
       if (result === null) {
         return null;
       }
-      return result || ctx;
+      if (result === undefined) {
+        ctx.method = before.method;
+        ctx.url = before.url;
+        ctx.headers = before.headers;
+        ctx.body = before.body;
+        ctx.status = before.status;
+        ctx.statusText = before.statusText;
+        return ctx;
+      }
+      return result;
     } catch (error) {
       afterRuleScript({ error, ctx, rule });
+      ctx.method = before.method;
+      ctx.url = before.url;
+      ctx.headers = before.headers;
+      ctx.body = before.body;
+      ctx.status = before.status;
+      ctx.statusText = before.statusText;
       return ctx;
     }
   }
@@ -505,7 +523,6 @@ function createNetworkRuleEngine(options = {}) {
     compileRulesCache,
     attachCompiledPatterns,
     matchesNetworkPattern,
-    getPageHost,
     matchesResourceType,
     getHeaderValue,
     decodeBasicAuthCredentials,

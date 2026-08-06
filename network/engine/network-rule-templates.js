@@ -1,3 +1,5 @@
+import { normalizeRulePatternModes } from "./network-rules-shared.js";
+
 export async function loadNetworkRuleTemplates() {
   const response = await fetch(
     browser.runtime.getURL("network/data/network-rule-templates.json")
@@ -13,7 +15,7 @@ export function instantiateNetworkRuleTemplate(template) {
   if (!template?.rule || typeof template.rule !== "object") {
     throw new Error("Invalid rule template.");
   }
-  const rule = JSON.parse(JSON.stringify(template.rule));
+  const rule = normalizeRulePatternModes(JSON.parse(JSON.stringify(template.rule)));
   rule.id = crypto.randomUUID();
   return rule;
 }

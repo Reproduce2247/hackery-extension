@@ -1,7 +1,33 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
   const prevHook = root.__ComplexLinkerNetworkHook;
-  if (prevHook?.version === version) {
+  const injectedTabUrl =
+    typeof sharedStateBundle?.tabUrl === "string" ? sharedStateBundle.tabUrl : "";
+  if (
+    prevHook?.version === version &&
+    prevHook?.logToken === logToken &&
+    prevHook?.tabUrl === injectedTabUrl
+  ) {
     return;
+  }
+
+  /**
+   * PAGE URL uses the top-level tab URL when readable; otherwise the URL from
+   * the background inject, then this frame's location.
+   * @returns {string}
+   */
+  function resolveMatchingPageUrl() {
+    try {
+      const topHref = root.top?.location?.href;
+      if (topHref) {
+        return topHref;
+      }
+    } catch {
+      // Cross-origin iframe cannot read top.location.
+    }
+    if (injectedTabUrl) {
+      return injectedTabUrl;
+    }
+    return root.location.href;
   }
 
   const patternEngine = createNetworkRuleEngine();
@@ -13,6 +39,12 @@
   }
 
   const compiledRules = patternEngine.attachCompiledPatterns(rules || [], compiledById);
+  const inspectRequestBody = compiledRules.some(
+    (rule) =>
+      rule.requestBodyPattern ||
+      rule.modify?.bodyReplacements?.length ||
+      rule.modify?.requestScript?.trim()
+  );
 
   const persistentState = sharedStateBundle?.persistent
     ? { ...sharedStateBundle.persistent }
@@ -115,7 +147,7 @@
   }
 
   function processRules(phase, baseCtx, isHookOriginated = false) {
-    const pageUrl = root.location.href;
+    const pageUrl = resolveMatchingPageUrl();
     let ctx = attachSharedState({ ...baseCtx, phase, pageUrl });
 
     for (const rule of sortedRules()) {
@@ -158,11 +190,31 @@
         }
 
         if (rule.action === "mock") {
+          postLog({
+            ruleId: rule.id,
+            ruleName: rule.name,
+            phase,
+            method: ctx.method,
+            url: ctx.url,
+            pageUrl,
+            outcome: "matched",
+            action: "mock",
+          });
           continue;
         }
 
         if (rule.action === "modify") {
           if (rule.modify?.serveWithoutRequest) {
+            postLog({
+              ruleId: rule.id,
+              ruleName: rule.name,
+              phase,
+              method: ctx.method,
+              url: ctx.url,
+              pageUrl,
+              outcome: "matched",
+              action: "modify",
+            });
             continue;
           }
           const snapshot = JSON.stringify({
@@ -195,19 +247,21 @@
               headers: ctx.headers,
               body: ctx.body,
             }) !== snapshot;
-          if (ctx.logDetail || changed) {
-            postLog({
-              ruleId: rule.id,
-              ruleName: rule.name,
-              phase,
-              method: ctx.method,
-              url: ctx.url,
-              pageUrl,
-              outcome: ctx.logDetail ? "observed" : "modified",
-              action: "modify",
-              detail: ctx.logDetail,
-            });
-          }
+          postLog({
+            ruleId: rule.id,
+            ruleName: rule.name,
+            phase,
+            method: ctx.method,
+            url: ctx.url,
+            pageUrl,
+            outcome: ctx.logDetail
+              ? "observed"
+              : changed
+                ? "modified"
+                : "matched",
+            action: "modify",
+            detail: ctx.logDetail,
+          });
         }
       } finally {
         activeRuleStack.pop();
@@ -261,7 +315,7 @@
   }
 
   function deliverMockXhr(xhr, mockCtx, rule, requestCtx) {
-    const pageUrl = root.location.href;
+    const pageUrl = resolveMatchingPageUrl();
     postLog({
       ruleId: rule.id,
       ruleName: rule.name,
@@ -308,7 +362,8 @@
     }, 0);
   }
 
-  const natives = prevHook?.natives || {
+  const earlyHook = root.__ComplexLinkerNetworkEarlyHook;
+  const natives = prevHook?.natives || earlyHook?.natives || {
     fetch: root.fetch.bind(root),
     xhrOpen: XMLHttpRequest.prototype.open,
     xhrSend: XMLHttpRequest.prototype.send,
@@ -326,29 +381,38 @@
     hookDepth += 1;
     try {
     const request = input instanceof Request ? input : null;
-    let url =
+    const url =
       typeof input === "string"
         ? input
         : input instanceof URL
           ? input.href
           : request.url;
     const baseInit = init ? { ...init } : {};
-    let method = (
-      baseInit.method ||
+    const method = (
+      init?.method ||
       request?.method ||
       "GET"
     ).toUpperCase();
-    let body = baseInit.body ?? undefined;
-    let headers = headersToObject(baseInit.headers || request?.headers);
-
-    if (body != null && typeof body !== "string") {
-      body = bodyToString(body);
+    let bodyForRules = init?.body;
+    if (inspectRequestBody) {
+      try {
+        // Reconstruct from the original arguments so inherited RequestInit
+        // properties and encoded FormData/Blob bodies are available to rules.
+        const inspectionInput = request ? request.clone() : input;
+        bodyForRules = await new Request(inspectionInput, init).text();
+      } catch {
+        // Used or non-cloneable streams still pass through unchanged.
+      }
     }
+    if (bodyForRules != null && typeof bodyForRules !== "string") {
+      bodyForRules = bodyToString(bodyForRules);
+    }
+    const headers = headersToObject(init?.headers || request?.headers);
 
     const requestBase = {
       method,
       url,
-      body,
+      body: bodyForRules,
       headers,
       resourceType: "fetch",
     };
@@ -358,18 +422,23 @@
       throw new DOMException("Blocked by network rule", "AbortError");
     }
 
-    method = ctx.method || method;
-    url = ctx.url || url;
-    body = ctx.body ?? body;
-    headers = ctx.headers || headers;
+    const nextMethod = ctx.method || method;
+    const nextUrl = ctx.url || url;
+    const nextHeaders = ctx.headers || headers;
+    const nextBodyForRules = ctx.body ?? bodyForRules;
+    const requestChanged =
+      nextMethod !== method ||
+      nextUrl !== url ||
+      JSON.stringify(nextHeaders) !== JSON.stringify(headers) ||
+      nextBodyForRules !== bodyForRules;
 
     const mockRule = findMockRule(
       {
         ...requestBase,
-        method,
-        url,
-        body,
-        headers,
+        method: nextMethod,
+        url: nextUrl,
+        body: nextBodyForRules,
+        headers: nextHeaders,
       },
       isHookOriginated
     );
@@ -378,10 +447,10 @@
         mockRule,
         {
           ...requestBase,
-          method,
-          url,
-          body,
-          headers,
+          method: nextMethod,
+          url: nextUrl,
+          body: nextBodyForRules,
+          headers: nextHeaders,
         },
         stateView
       );
@@ -392,9 +461,9 @@
         ruleId: mockRule.id,
         ruleName: mockRule.name,
         phase: "response",
-        method,
-        url,
-        pageUrl: root.location.href,
+        method: nextMethod,
+        url: nextUrl,
+        pageUrl: resolveMatchingPageUrl(),
         outcome: "mocked",
         action: mockRule.action,
       });
@@ -405,19 +474,22 @@
       });
     }
 
-    const response = await origFetch(url, {
-      ...baseInit,
-      method,
-      body,
-      headers,
-    });
+    // Unchanged request: pass original args so Request/FormData/Blob bodies stay intact.
+    const response = requestChanged
+      ? await origFetch(nextUrl, {
+          ...baseInit,
+          method: nextMethod,
+          body: nextBodyForRules,
+          headers: nextHeaders,
+        })
+      : await origFetch(input, init);
 
     let responseBody = await response.clone().text();
     const responseCtx = processRules(
       "response",
       {
-        method,
-        url,
+        method: nextMethod,
+        url: nextUrl,
         status: response.status,
         headers: headersToObject(response.headers),
         body: responseBody,
@@ -430,16 +502,22 @@
       throw new DOMException("Blocked by network rule", "AbortError");
     }
 
-    const nextStatus = responseCtx.status ?? response.status;
-    const nextHeaders = responseCtx.headers
-      ? objectToHeaders(responseCtx.headers)
-      : response.headers;
-    const nextBody = responseCtx.body ?? responseBody;
+    const responseChanged =
+      (responseCtx.status ?? response.status) !== response.status ||
+      JSON.stringify(responseCtx.headers || {}) !==
+        JSON.stringify(headersToObject(response.headers)) ||
+      (responseCtx.body ?? responseBody) !== responseBody;
 
-    return new Response(nextBody, {
-      status: nextStatus,
+    if (!responseChanged) {
+      return response;
+    }
+
+    return new Response(responseCtx.body ?? responseBody, {
+      status: responseCtx.status ?? response.status,
       statusText: response.statusText,
-      headers: nextHeaders,
+      headers: responseCtx.headers
+        ? objectToHeaders(responseCtx.headers)
+        : response.headers,
     });
     } finally {
       hookDepth -= 1;
@@ -488,7 +566,7 @@
       headers: {},
     };
 
-    const requestBody =
+    const bodyForRules =
       body != null && typeof body !== "string" ? bodyToString(body) : body;
 
     let ctx = processRules(
@@ -496,7 +574,7 @@
       {
         method: meta.method,
         url: meta.url,
-        body: requestBody,
+        body: bodyForRules,
         headers: { ...meta.headers },
         resourceType: "xmlhttprequest",
       },
@@ -509,12 +587,22 @@
       return;
     }
 
+    const nextMethod = ctx.method || meta.method;
+    const nextUrl = ctx.url || meta.url;
+    const nextHeaders = ctx.headers || meta.headers;
+    const nextBodyForRules = ctx.body ?? bodyForRules;
+    const requestChanged =
+      nextMethod !== meta.method ||
+      nextUrl !== meta.url ||
+      JSON.stringify(nextHeaders) !== JSON.stringify(meta.headers) ||
+      nextBodyForRules !== bodyForRules;
+
     const mockRule = findMockRule(
       {
-        method: ctx.method || meta.method,
-        url: ctx.url || meta.url,
-        body: ctx.body ?? requestBody,
-        headers: ctx.headers || meta.headers,
+        method: nextMethod,
+        url: nextUrl,
+        body: nextBodyForRules,
+        headers: nextHeaders,
         resourceType: "xmlhttprequest",
       },
       isHookOriginated
@@ -523,10 +611,10 @@
       const mockCtx = buildMockResponseContext(
         mockRule,
         {
-          method: ctx.method || meta.method,
-          url: ctx.url || meta.url,
-          body: ctx.body ?? requestBody,
-          headers: ctx.headers || meta.headers,
+          method: nextMethod,
+          url: nextUrl,
+          body: nextBodyForRules,
+          headers: nextHeaders,
           resourceType: "xmlhttprequest",
         },
         stateView
@@ -538,31 +626,29 @@
         return;
       }
       deliverMockXhr(this, mockCtx, mockRule, {
-        method: ctx.method || meta.method,
-        url: ctx.url || meta.url,
+        method: nextMethod,
+        url: nextUrl,
       });
       return;
     }
 
-    const nextMethod = ctx.method || meta.method;
-    const nextUrl = ctx.url || meta.url;
-    const nextHeaders = ctx.headers || meta.headers;
-    const urlChanged = nextUrl !== meta.url;
-    const methodChanged = nextMethod !== meta.method;
-    const headersChanged =
-      JSON.stringify(nextHeaders) !== JSON.stringify(meta.headers);
-
-    if (urlChanged || methodChanged || headersChanged) {
-      origOpen.call(
-        this,
-        nextMethod,
-        nextUrl,
-        meta.async,
-        meta.user,
-        meta.password
-      );
-      for (const [name, value] of Object.entries(nextHeaders)) {
-        origSetRequestHeader.call(this, name, value);
+    if (requestChanged) {
+      const urlChanged = nextUrl !== meta.url;
+      const methodChanged = nextMethod !== meta.method;
+      const headersChanged =
+        JSON.stringify(nextHeaders) !== JSON.stringify(meta.headers);
+      if (urlChanged || methodChanged || headersChanged) {
+        origOpen.call(
+          this,
+          nextMethod,
+          nextUrl,
+          meta.async,
+          meta.user,
+          meta.password
+        );
+        for (const [name, value] of Object.entries(nextHeaders)) {
+          origSetRequestHeader.call(this, name, value);
+        }
       }
     }
 
@@ -574,8 +660,8 @@
           const responseCtx = processRules(
             "response",
             {
-              method: ctx.method || meta.method,
-              url: ctx.url || meta.url,
+              method: nextMethod,
+              url: nextUrl,
               status: xhr.status,
               headers: parseXhrResponseHeaders(xhr.getAllResponseHeaders()),
               body: xhr.responseText,
@@ -610,7 +696,8 @@
       }
     };
 
-    return origSend.call(this, ctx.body ?? requestBody);
+    // Unchanged request: pass original body so FormData/Blob stay intact.
+    return origSend.call(this, requestChanged ? nextBodyForRules : body);
     } finally {
       hookDepth -= 1;
     }
@@ -618,6 +705,9 @@
 
   root.__ComplexLinkerNetworkHook = {
     version,
+    logToken,
+    tabUrl: injectedTabUrl,
     rulesCount: compiledRules.length,
     natives,
   };
+  earlyHook?.release();

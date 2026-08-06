@@ -8,8 +8,6 @@
         "name": "Decode Basic Auth",
         "enabled": true,
         "priority": 50,
-        "hostPattern": "",
-        "pageHostPattern": "",
         "pageUrlPattern": "",
         "requestUrlPattern": "",
         "requestContentTypePattern": "",

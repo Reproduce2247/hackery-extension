@@ -3,18 +3,20 @@
  * Host wires this via network/plugin.js.
  */
 import { patchTabFlags, clearTabFlags, getTabFlags } from "../lib/action-badge.js";
-import { buildLogBridgeBootstrap, installNetworkHook } from "./engine/network-hook-install.js";
+import { installNetworkHook } from "./engine/network-hook-install.js";
 import {
   appendNetworkLogQueue,
   buildNetworkHookMatches,
   compileRulesForMatching,
   defaultNetworkRulesState,
   getNetworkHookVersion,
+  NETWORK_EARLY_HOOK_SCRIPT_ID,
   NETWORK_LOG_BRIDGE_SCRIPT_ID,
   NETWORK_MAIN_HOOK_SCRIPT_ID,
+  normalizeNetworkRulesState,
   rulesForPageHook,
 } from "./engine/network-rules-shared.js";
-import { configureNetworkWebRequest, syncNetworkWebRequest } from "./engine/network-webrequest.js";
+import { configureNetworkWebRequest, syncNetworkWebRequest, rememberNetworkTabUrl, forgetNetworkTabUrl } from "./engine/network-webrequest.js";
 import { createNetworkMessageHandlers } from "./messages.js";
 import {
   NETWORK_HOOKS_ENABLED_KEY,
@@ -92,9 +94,13 @@ async function persistSharedState(persistent, tabStateFromPage, tabId) {
 
 async function loadNetworkRulesState() {
   const stored = await browser.storage.local.get(NETWORK_RULES_KEY);
-  networkRulesState = stored[NETWORK_RULES_KEY] || defaultNetworkRulesState();
+  const raw = stored[NETWORK_RULES_KEY] || defaultNetworkRulesState();
+  networkRulesState = normalizeNetworkRulesState(raw);
   if (!Array.isArray(networkRulesState.rules)) {
     networkRulesState.rules = [];
+  }
+  if (JSON.stringify(raw) !== JSON.stringify(networkRulesState)) {
+    await browser.storage.local.set({ [NETWORK_RULES_KEY]: networkRulesState });
   }
   networkRulesCompiled = compileRulesForMatching(networkRulesState.rules);
   networkHookVersion = getNetworkHookVersion({
@@ -130,6 +136,15 @@ function enabledNetworkRules() {
   return networkRulesCompiled.filter((rule) => rule.enabled);
 }
 
+/**
+ * Accept bridge messages only when they carry the current hook token.
+ * @param {string} token Token forwarded from the page-world network hook.
+ * @returns {boolean} Whether the token belongs to the active hook installation.
+ */
+function validateNetworkLogToken(token) {
+  return Boolean(networkLogToken) && token === networkLogToken;
+}
+
 async function installNetworkHookInTab(tabId, frameId) {
   const rules = pageHookRules();
   if (!rules.length) {
@@ -139,10 +154,32 @@ async function installNetworkHookInTab(tabId, frameId) {
   const target = { tabId };
   if (frameId != null) {
     target.frameIds = [frameId];
+  } else {
+    // Re-inject / tab-wide refresh must cover iframes that issue fetch/XHR.
+    target.allFrames = true;
   }
 
-  const sharedStateBundle = getSharedStateBundleForTab(tabId);
+  let tabUrl = "";
+  try {
+    const tab = await browser.tabs.get(tabId);
+    tabUrl = tab?.url || "";
+  } catch {
+    // restricted / closed tab
+  }
+  rememberNetworkTabUrl(tabId, tabUrl);
+
+  const sharedStateBundle = {
+    ...getSharedStateBundleForTab(tabId),
+    tabUrl,
+  };
   const hookVersion = getHookVersionForTab(tabId);
+
+  // Isolated bridge must exist before MAIN-world logs are accepted.
+  await browser.scripting.executeScript({
+    target,
+    files: ["network/inject/network-log-bridge.js"],
+    injectImmediately: true,
+  });
 
   await browser.scripting.executeScript({
     target,
@@ -155,6 +192,7 @@ async function installNetworkHookInTab(tabId, frameId) {
 
 async function syncNetworkHookRegistration() {
   const scriptIds = [
+    NETWORK_EARLY_HOOK_SCRIPT_ID,
     NETWORK_MAIN_HOOK_SCRIPT_ID,
     NETWORK_LOG_BRIDGE_SCRIPT_ID,
   ];
@@ -184,18 +222,26 @@ async function syncNetworkHookRegistration() {
 
   await browser.scripting.registerContentScripts([
     {
+      id: NETWORK_EARLY_HOOK_SCRIPT_ID,
+      matches,
+      runAt: "document_start",
+      allFrames: true,
+      world: "MAIN",
+      js: ["network/inject/network-early-hook.js"],
+    },
+    {
       id: NETWORK_MAIN_HOOK_SCRIPT_ID,
       matches,
       runAt: "document_start",
       allFrames: true,
-      js: [{ file: "network/inject/network-hook-bootstrap.js" }],
+      js: ["network/inject/network-hook-bootstrap.js"],
     },
     {
       id: NETWORK_LOG_BRIDGE_SCRIPT_ID,
       matches,
       runAt: "document_start",
       allFrames: true,
-      js: [{ code: buildLogBridgeBootstrap(networkLogToken) }],
+      js: ["network/inject/network-log-bridge.js"],
     },
   ]);
 }
@@ -341,9 +387,19 @@ async function onNavigationCommitted(details) {
     return;
   }
 
+  if (details.frameId === 0) {
+    rememberNetworkTabUrl(details.tabId, details.url);
+  }
+
   await loadNetworkTabState();
   try {
-    await installNetworkHookInTab(details.tabId);
+    // Top-frame navigations refresh every frame so PAGE URL (tab URL) stays current
+    // for cross-origin iframes that cannot read top.location.
+    if (details.frameId === 0) {
+      await installNetworkHookInTab(details.tabId);
+    } else {
+      await installNetworkHookInTab(details.tabId, details.frameId);
+    }
   } catch {
     // restricted tab — skip
   }
@@ -408,12 +464,23 @@ export function handleTabRemoved(tabId) {
   if (testRuleSession?.tabId === tabId) {
     clearTestRuleSession();
   }
+  forgetNetworkTabUrl(tabId);
   clearTabFlags(tabId);
 }
 
 export async function init(options = {}) {
   onRulesChanged = options.onRulesChanged || null;
   initNetworkNavigationHook();
+  try {
+    const tabs = await browser.tabs.query({ url: ["http://*/*", "https://*/*"] });
+    for (const tab of tabs) {
+      if (tab.id != null && tab.url) {
+        rememberNetworkTabUrl(tab.id, tab.url);
+      }
+    }
+  } catch {
+    // ignore
+  }
   await refreshNetworkRulesState();
 }
 
@@ -429,7 +496,7 @@ export function createMessageHandlers() {
     appendNetworkRuleLog,
     persistSharedState,
     pageHookRules,
-    defaultNetworkRulesState,
+    validateNetworkLogToken,
     startTestRuleSession,
   });
 }

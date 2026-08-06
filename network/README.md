@@ -43,6 +43,45 @@ npm run build:network-hook
 
 Regenerates `engine/network-hook-install.js` from the engine core + page hook source.
 
+## Matching and logging
+
+Filters alone determine whether a rule matches. All configured filters must
+match; scripts run afterward as actions and are not scripting conditions.
+Recent matches records each filter match even when replacements and scripts
+leave the request unchanged.
+
+Page URL matches the top-level tab URL. Same-origin frames read
+`top.location.href`; cross-origin frames use the tab URL supplied at inject
+time (refreshed on top-frame navigation and Re-inject). Hooks are still
+installed on all frames; Page URL does not gate injection.
+
+## Request / response script contract
+
+Scripts run in the page hook (fetch/XHR). webRequest stays declarative —
+block, redirect, header/body replacements — because Firefox MV3 CSP blocks
+`new Function()` in extension pages. Revisit with a CSP-safe interpreter in
+`network-webrequest.js` (`applyHeaderRules` / `applyResponseBodyRules`) if
+non-fetch scripting is needed later.
+
+Modify rules run field replacements first, then the phase script.
+
+| Script return | Effect |
+| --- | --- |
+| modified `ctx` | Apply script changes to method/url/headers/body/status |
+| `null` | Block the request/response |
+| `undefined` / no return | Discard in-place script mutations; keep only prior regex replacements |
+| throw | Same as no return (wire fields restored; error logged) |
+
+If nothing changed the request after replacements + script, the page hook calls the native `fetch` / `XHR.send` with the original arguments so `Request`, `FormData`, `Blob`, and similar bodies pass through untouched.
+
+Re-inject installs both the isolated-world log bridge and the MAIN-world hook into existing frames (`allFrames`), not only the top frame. The bridge is idempotent so repeated injects do not stack listeners.
+
+For future navigations, `network-early-hook.js` is registered directly in the
+MAIN world at `document_start`. It queues fetch and asynchronous XHR calls until
+the configured hook arrives, then replays them through the matcher. The gate
+fails open to native APIs after 250 ms if configuration does not arrive;
+synchronous XHR always passes through immediately.
+
 ## Standalone extraction checklist
 
 - Copy `network/` (and `lib/csp-disable.js` if CSP stripping stays).

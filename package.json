@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build:network-hook": "node network/scripts/build-network-hook.js",
+    "test:network-hook": "npm run build:network-hook && node network/scripts/test-early-hook.js",
     "build:codemirror": "node scripts/build-codemirror.js",
     "build": "npm run build:network-hook && npm run build:codemirror"
   },

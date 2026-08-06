@@ -1,4 +1,8 @@
 import { respondAsync } from "../lib/message-router.js";
+import {
+  defaultNetworkRulesState,
+  normalizeNetworkRulesState,
+} from "./engine/network-rules-shared.js";
 import { NetworkMessageTypes } from "./message-types.js";
 
 /**
@@ -17,7 +21,7 @@ export function createNetworkMessageHandlers(ctx) {
     appendNetworkRuleLog,
     persistSharedState,
     pageHookRules,
-    defaultNetworkRulesState,
+    validateNetworkLogToken,
     startTestRuleSession,
   } = ctx;
 
@@ -65,10 +69,9 @@ export function createNetworkMessageHandlers(ctx) {
     },
 
     [T.SAVE_NETWORK_RULES](message, _sender, sendResponse) {
-      const nextState = message.state || defaultNetworkRulesState();
-      if (!Array.isArray(nextState.rules)) {
-        nextState.rules = [];
-      }
+      const nextState = normalizeNetworkRulesState(
+        message.state || defaultNetworkRulesState()
+      );
       respondAsync(
         browser.storage.local
           .set({ [NETWORK_RULES_KEY]: nextState })
@@ -79,6 +82,10 @@ export function createNetworkMessageHandlers(ctx) {
     },
 
     [T.NETWORK_RULE_LOG](message, sender, sendResponse) {
+      if (!validateNetworkLogToken(message.token)) {
+        sendResponse({ ok: false, error: "Invalid network hook token." });
+        return false;
+      }
       respondAsync(
         appendNetworkRuleLog(message.entry, sender.tab?.id).then(() => ({ ok: true })),
         sendResponse
@@ -87,6 +94,10 @@ export function createNetworkMessageHandlers(ctx) {
     },
 
     [T.NETWORK_SHARED_STATE](message, sender, sendResponse) {
+      if (!validateNetworkLogToken(message.token)) {
+        sendResponse({ ok: false, error: "Invalid network hook token." });
+        return false;
+      }
       const tabId = sender.tab?.id;
       respondAsync(
         (async () => {

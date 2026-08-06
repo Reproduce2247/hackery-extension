@@ -6,6 +6,7 @@ import {
 
 export const NETWORK_MAIN_HOOK_SCRIPT_ID = "complex-linker-network-hook-main";
 export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "complex-linker-network-log-bridge";
+export const NETWORK_EARLY_HOOK_SCRIPT_ID = "complex-linker-network-early-hook";
 const NETWORK_LOG_LIMIT = 100;
 
 export const NETWORK_ACTIONS = ["block", "redirect", "modify", "mock"];
@@ -48,12 +49,14 @@ export function createEmptyRule() {
     name: "New rule",
     enabled: true,
     priority: 100,
-    hostPattern: "",
-    pageHostPattern: "",
     pageUrlPattern: "",
+    pageUrlPatternIsRegex: false,
     requestUrlPattern: "",
+    requestUrlPatternIsRegex: false,
     requestContentTypePattern: "",
+    requestContentTypePatternIsRegex: false,
     requestBodyPattern: "",
+    requestBodyPatternIsRegex: false,
     methods: [],
     resourceTypes: [],
     phases: ["request"],
@@ -74,6 +77,63 @@ export function createEmptyRule() {
       mockStatusText: "OK",
       mockBody: "",
     },
+  };
+}
+
+/** Filter pattern field → isRegex flag pairs. */
+export const FILTER_PATTERN_FIELDS = [
+  ["pageUrlPattern", "pageUrlPatternIsRegex"],
+  ["requestUrlPattern", "requestUrlPatternIsRegex"],
+  ["requestBodyPattern", "requestBodyPatternIsRegex"],
+  ["requestContentTypePattern", "requestContentTypePatternIsRegex"],
+];
+
+/**
+ * Normalize legacy `w:` patterns and missing isRegex flags onto the checkbox model.
+ * Empty/default is wildcard; bare legacy patterns (no `w:`) stay regex.
+ * Drops removed pageHostPattern / hostPattern fields.
+ * @param {object} rule Network rule.
+ * @returns {object} Rule with explicit pattern-mode flags.
+ */
+export function normalizeRulePatternModes(rule) {
+  if (!rule || typeof rule !== "object") {
+    return rule;
+  }
+  const next = { ...rule };
+  delete next.pageHostPattern;
+  delete next.pageHostPatternIsRegex;
+  delete next.hostPattern;
+  delete next.hostPatternIsRegex;
+  for (const [patternKey, flagKey] of FILTER_PATTERN_FIELDS) {
+    let value = next[patternKey] == null ? "" : String(next[patternKey]);
+    if (value.startsWith("w:")) {
+      next[patternKey] = value.slice(2);
+      next[flagKey] = false;
+      continue;
+    }
+    if (typeof next[flagKey] === "boolean") {
+      continue;
+    }
+    next[flagKey] = Boolean(value);
+  }
+  return next;
+}
+
+/**
+ * Normalize every rule in a network-rules state blob.
+ * @param {object} state Stored network rules state.
+ * @returns {object} Normalized state.
+ */
+export function normalizeNetworkRulesState(state) {
+  const base = defaultNetworkRulesState();
+  const next = state && typeof state === "object" ? state : base;
+  return {
+    ...base,
+    ...next,
+    enabled: next.enabled !== false,
+    rules: Array.isArray(next.rules)
+      ? next.rules.map((rule) => normalizeRulePatternModes(rule))
+      : [],
   };
 }
 
@@ -185,12 +245,16 @@ export function getNetworkHookVersion(state) {
       .map((rule) => ({
         id: rule.id,
         priority: rule.priority,
-        hostPattern: rule.hostPattern,
-        pageHostPattern: rule.pageHostPattern,
         pageUrlPattern: rule.pageUrlPattern,
+        pageUrlPatternIsRegex: Boolean(rule.pageUrlPatternIsRegex),
         requestUrlPattern: rule.requestUrlPattern,
+        requestUrlPatternIsRegex: Boolean(rule.requestUrlPatternIsRegex),
         requestContentTypePattern: rule.requestContentTypePattern,
+        requestContentTypePatternIsRegex: Boolean(
+          rule.requestContentTypePatternIsRegex
+        ),
         requestBodyPattern: rule.requestBodyPattern,
+        requestBodyPatternIsRegex: Boolean(rule.requestBodyPatternIsRegex),
         methods: rule.methods,
         resourceTypes: rule.resourceTypes,
         phases: rule.phases,

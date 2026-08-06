@@ -1,4 +1,4 @@
-import { clearTabFlags, refresh as refreshBadge, setBadgeText } from "./lib/action-badge.js";
+import { clearTabFlags, refresh as refreshBadge } from "./lib/action-badge.js";
 import { activateLinkNode } from "./lib/activate-link.js";
 import { createBackgroundMessageHandlers } from "./lib/background-messages.js";
 import { appendMissingKeys, applyOrder, loadCatalogOrder } from "./lib/catalog-order.js";
@@ -128,7 +128,7 @@ async function syncInjectRegistration() {
       matches: HTTP_CONTENT_SCRIPT_MATCHES,
       runAt: "document_start",
       allFrames: true,
-      js: [{ file: "inject/on-load.js" }],
+      js: ["inject/on-load.js"],
     },
   ]);
 }
@@ -152,7 +152,7 @@ async function syncContextTargetRegistration() {
       matches: HTTP_CONTENT_SCRIPT_MATCHES,
       runAt: "document_start",
       allFrames: true,
-      js: [{ file: "inject/context-target.js" }],
+      js: ["inject/context-target.js"],
     },
   ]);
 }
@@ -316,7 +316,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 browser.tabs.onRemoved.addListener((tabId) => {
   Network.handleTabRemoved(tabId);
   clearTabFlags(tabId);
-  void setBadgeText(tabId, "");
+  void refreshBadge(tabId, {});
 });
 
 browser.runtime.onInstalled.addListener(() => {

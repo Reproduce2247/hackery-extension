@@ -1,15 +1,12 @@
 import { isCspDisabledForTab, stripCspHeaders } from "../../lib/csp-disable.js";
 import {
   applyModifyReplacementsToContext,
-  applyStringReplacements,
   appendNetworkLogQueue,
   compileRulesForMatching,
-  createSharedStateView,
   getMatchingRules,
   getSortedEnabledRules,
   isTextLikeContentType,
   objectToWebRequestHeaders,
-  runNetworkRuleScript,
   rulesForPageHook,
   sanitizeLogEntry,
   webRequestHeadersToObject,
@@ -21,6 +18,8 @@ let webRequestEnabled = false;
 let webRequestListenersRegistered = false;
 let webRequestPageHookActive = false;
 let webRequestSharedState = {};
+/** @type {Map<number, string>} */
+const networkTabUrls = new Map();
 
 /** @type {((entry: object, tabId?: number) => Promise<void>) | null} */
 let appendNetworkRuleLogFn = null;
@@ -34,8 +33,28 @@ export function configureNetworkWebRequest({ appendNetworkRuleLog }) {
   appendNetworkRuleLogFn = appendNetworkRuleLog || null;
 }
 
-function webRequestStateView() {
-  return createSharedStateView(webRequestSharedState, {});
+/**
+ * Cache the top-level tab URL for PAGE URL matching in blocking webRequest.
+ * @param {number} tabId
+ * @param {string} url
+ */
+export function rememberNetworkTabUrl(tabId, url) {
+  if (tabId == null || tabId < 0) {
+    return;
+  }
+  if (!url || !/^https?:/i.test(url)) {
+    networkTabUrls.delete(tabId);
+    return;
+  }
+  networkTabUrls.set(tabId, url);
+}
+
+/**
+ * Drop a cached tab URL when the tab closes.
+ * @param {number} tabId
+ */
+export function forgetNetworkTabUrl(tabId) {
+  networkTabUrls.delete(tabId);
 }
 
 function persistWebRequestSharedState() {
@@ -62,11 +81,14 @@ async function logWebRequestRule(entry, tabId) {
 }
 
 function buildWebRequestContext(details, phase) {
+  const tabUrl =
+    details.tabId >= 0 ? networkTabUrls.get(details.tabId) || "" : "";
   return {
     phase,
     method: details.method || "GET",
     url: details.url,
-    pageUrl: details.documentUrl || details.originUrl || "",
+    // Prefer top-level tab URL for PAGE URL filters.
+    pageUrl: tabUrl || details.documentUrl || details.originUrl || "",
     resourceType: details.type || "",
     tabId: details.tabId,
     headers: webRequestHeadersToObject(
@@ -96,7 +118,8 @@ function responseNeedsBodyFilter(rule, resourceType) {
     return true;
   }
   const mod = rule.modify || {};
-  return Boolean(mod.bodyReplacements?.length || mod.responseScript?.trim());
+  // Scripts are page-hook only today; keep body replacements declarative here.
+  return Boolean(mod.bodyReplacements?.length);
 }
 
 function processRequestControlRules(rules, ctx) {
@@ -177,6 +200,7 @@ function applyHeaderRules(rules, ctx, headerList) {
         { ...ctx, headers: { ...headers } },
         rule
       ).headers;
+      // Future (CSP-safe interpreter): apply requestScript via webRequest here.
       if (JSON.stringify(headers) !== before) {
         changed = true;
         logWebRequestRule({
@@ -189,56 +213,6 @@ function applyHeaderRules(rules, ctx, headerList) {
           resourceType: ctx.resourceType,
           outcome: "modified",
           action: "modify",
-        }, ctx.tabId);
-      }
-    }
-
-    if (mod.requestScript?.trim()) {
-      const before = JSON.stringify(headers);
-      let nextCtx = applyModifyReplacementsToContext(
-        { ...ctx, headers: { ...headers } },
-        rule
-      );
-      nextCtx = runNetworkRuleScript(
-        nextCtx,
-        mod.requestScript,
-        rule,
-        (error) => {
-          logWebRequestRule({
-            ruleId: rule.id,
-            ruleName: rule.name,
-            phase: ctx.phase,
-            method: ctx.method,
-            url: ctx.url,
-            pageUrl: ctx.pageUrl,
-            resourceType: ctx.resourceType,
-            outcome: "error",
-            action: "modify",
-            detail: String(error),
-          }, ctx.tabId);
-        },
-        webRequestStateView()
-      );
-      if (nextCtx === null) {
-        continue;
-      }
-      headers = nextCtx.headers || headers;
-      const headerChanged = JSON.stringify(headers) !== before;
-      if (headerChanged) {
-        changed = true;
-      }
-      if (nextCtx.logDetail || headerChanged) {
-        logWebRequestRule({
-          ruleId: rule.id,
-          ruleName: rule.name,
-          phase: ctx.phase,
-          method: ctx.method,
-          url: ctx.url,
-          pageUrl: ctx.pageUrl,
-          resourceType: ctx.resourceType,
-          outcome: nextCtx.logDetail ? "observed" : "modified",
-          action: "modify",
-          detail: nextCtx.logDetail,
         }, ctx.tabId);
       }
     }
@@ -272,32 +246,16 @@ function applyResponseBodyRules(rules, ctx, bodyText) {
       continue;
     }
 
-    let nextCtx = applyModifyReplacementsToContext(
+    const before = { body, status };
+    const nextCtx = applyModifyReplacementsToContext(
       { ...ctx, body, status },
       rule
     );
-    nextCtx = runNetworkRuleScript(
-      nextCtx,
-      rule.modify?.responseScript,
-      rule,
-      (error) => {
-        logWebRequestRule({
-          ruleId: rule.id,
-          ruleName: rule.name,
-          phase: "response",
-          method: ctx.method,
-          url: ctx.url,
-          pageUrl: ctx.pageUrl,
-          resourceType: ctx.resourceType,
-          outcome: "error",
-          action: "modify",
-          detail: String(error),
-        }, ctx.tabId);
-      },
-      webRequestStateView()
-    );
+    // Future (CSP-safe interpreter): apply responseScript via webRequest here.
 
-    if (nextCtx === null) {
+    body = nextCtx.body ?? body;
+    status = nextCtx.status ?? status;
+    if (body !== before.body || status !== before.status) {
       logWebRequestRule({
         ruleId: rule.id,
         ruleName: rule.name,
@@ -306,25 +264,10 @@ function applyResponseBodyRules(rules, ctx, bodyText) {
         url: ctx.url,
         pageUrl: ctx.pageUrl,
         resourceType: ctx.resourceType,
-        outcome: "blocked",
+        outcome: "modified",
         action: "modify",
       }, ctx.tabId);
-      return { blocked: true, body: "" };
     }
-
-    body = nextCtx.body ?? body;
-    status = nextCtx.status ?? status;
-    logWebRequestRule({
-      ruleId: rule.id,
-      ruleName: rule.name,
-      phase: "response",
-      method: ctx.method,
-      url: ctx.url,
-      pageUrl: ctx.pageUrl,
-      resourceType: ctx.resourceType,
-      outcome: "modified",
-      action: "modify",
-    }, ctx.tabId);
   }
 
   persistWebRequestSharedState();
@@ -365,8 +308,7 @@ function onBeforeSendHeaders(details) {
     (rule) =>
       rule.action === "modify" &&
       (rule.modify?.headerReplacements?.length ||
-        rule.modify?.setHeaders?.length ||
-        rule.modify?.requestScript?.trim())
+        rule.modify?.setHeaders?.length)
   );
   const headers = applyHeaderRules(matching, ctx, details.requestHeaders);
   return headers ? { requestHeaders: headers } : {};

@@ -1,6 +1,8 @@
 import {
   attachCodeMirrorAll,
   getFieldValue,
+  setFieldLanguage,
+  setFieldPlaceholder,
   setFieldValue,
 } from "../../lib/codemirror-fields.bundle.js";
 import { MessageTypes } from "../../lib/message-types.js";
@@ -9,6 +11,7 @@ import {
   createEmptyRule,
   defaultNetworkRulesState,
   HTTP_METHODS,
+  normalizeNetworkRulesState,
   WEBREQUEST_RESOURCE_TYPES,
 } from "../engine/network-rules-shared.js";
 import {
@@ -32,16 +35,17 @@ const messageEl = document.getElementById("message");
 const rulesEnabledEl = document.getElementById("rules-enabled");
 const ruleFormEl = document.getElementById("rule-form");
 const editorTitleEl = document.getElementById("editor-title");
+const editorPanelEl = document.getElementById("editor-panel");
+const logPanelEl = document.getElementById("log-panel");
+const logToolbarEl = document.getElementById("log-toolbar");
+const logSearchEl = document.getElementById("log-search");
+const editorTabEl = document.getElementById("editor-tab");
+const logTabEl = document.getElementById("log-tab");
+const recentMatchCountEl = document.getElementById("recent-match-count");
 
 const ruleNameEl = document.getElementById("rule-name");
 const rulePriorityEl = document.getElementById("rule-priority");
 const ruleEnabledEl = document.getElementById("rule-enabled");
-const ruleHostPatternEl = document.getElementById("rule-host-pattern");
-const rulePageHostPatternEl = document.getElementById("rule-page-host-pattern");
-const rulePageUrlPatternEl = document.getElementById("rule-page-url-pattern");
-const ruleRequestUrlPatternEl = document.getElementById("rule-request-url-pattern");
-const ruleBodyPatternEl = document.getElementById("rule-body-pattern");
-const ruleContentTypePatternEl = document.getElementById("rule-content-type-pattern");
 const ruleMethodsEl = document.getElementById("rule-methods");
 const ruleResourceTypesEl = document.getElementById("rule-resource-types");
 const phaseRequestEl = document.getElementById("phase-request");
@@ -64,32 +68,62 @@ const ruleMatchHookOriginatedEl = document.getElementById("rule-match-hook-origi
 const ruleTestUrlEl = document.getElementById("rule-test-url");
 const testRuleBtn = document.getElementById("test-rule-btn");
 const networkStatusDotEl = document.getElementById("network-status-dot");
+const networkStatusTooltipEl = document.getElementById("network-status-tooltip");
 const deleteRuleBtn = document.getElementById("delete-rule-btn");
 const ruleTemplateSelectEl = document.getElementById("rule-template-select");
 
+const PATTERN_FIELDS = [
+  {
+    key: "pageUrlPattern",
+    flagKey: "pageUrlPatternIsRegex",
+    element: document.getElementById("rule-page-url-pattern"),
+    regexEl: document.getElementById("rule-page-url-pattern-regex"),
+    placeholders: { wildcard: "*/now/nav/*", regex: "/now/nav/.*" },
+  },
+  {
+    key: "requestUrlPattern",
+    flagKey: "requestUrlPatternIsRegex",
+    element: document.getElementById("rule-request-url-pattern"),
+    regexEl: document.getElementById("rule-request-url-pattern-regex"),
+    placeholders: {
+      wildcard: "*/api/now/table/*",
+      regex: "/api/now/table/.*",
+    },
+  },
+  {
+    key: "requestBodyPattern",
+    flagKey: "requestBodyPatternIsRegex",
+    element: document.getElementById("rule-body-pattern"),
+    regexEl: document.getElementById("rule-body-pattern-regex"),
+    placeholders: {
+      wildcard: "*sysparm_query=*active=true*",
+      regex: "sysparm_query=.*active=true",
+    },
+  },
+  {
+    key: "requestContentTypePattern",
+    flagKey: "requestContentTypePatternIsRegex",
+    element: document.getElementById("rule-content-type-pattern"),
+    regexEl: document.getElementById("rule-content-type-pattern-regex"),
+    placeholders: {
+      wildcard: "application/json*",
+      regex: "^application/json",
+    },
+  },
+];
+
+const patternEditors = {};
+for (const field of PATTERN_FIELDS) {
+  patternEditors[field.key] = {
+    element: field.element,
+    language: "plain",
+    compact: true,
+    placeholder: field.placeholders.wildcard,
+  };
+}
+
 attachCodeMirrorAll({
-  hostPattern: { element: ruleHostPatternEl, language: "regex", compact: true },
-  pageHostPattern: {
-    element: rulePageHostPatternEl,
-    language: "regex",
-    compact: true,
-  },
-  pageUrlPattern: {
-    element: rulePageUrlPatternEl,
-    language: "regex",
-    compact: true,
-  },
-  requestUrlPattern: {
-    element: ruleRequestUrlPatternEl,
-    language: "regex",
-    compact: true,
-  },
-  bodyPattern: { element: ruleBodyPatternEl, language: "regex", compact: true },
-  contentTypePattern: {
-    element: ruleContentTypePatternEl,
-    language: "regex",
-    compact: true,
-  },
+  ...patternEditors,
   mockBody: {
     element: ruleMockBodyEl,
     language: "json",
@@ -111,18 +145,67 @@ attachCodeMirrorAll({
   },
 });
 
+/**
+ * Sync a filter field's checkbox, placeholder, and CodeMirror language.
+ * @param {object} field Pattern field config.
+ * @param {boolean} isRegex Whether the field is in regex mode.
+ * @returns {void}
+ */
+function applyPatternFieldMode(field, isRegex) {
+  field.regexEl.checked = Boolean(isRegex);
+  const placeholder = isRegex
+    ? field.placeholders.regex
+    : field.placeholders.wildcard;
+  setFieldPlaceholder(field.element, placeholder);
+  setFieldLanguage(field.element, isRegex ? "regex" : "plain");
+}
+
+for (const field of PATTERN_FIELDS) {
+  applyPatternFieldMode(field, false);
+  field.regexEl.addEventListener("change", () => {
+    applyPatternFieldMode(field, field.regexEl.checked);
+  });
+}
+
 let rulesState = defaultNetworkRulesState();
 let selectedRuleId = null;
 let highlightedRuleId = null;
 let ruleTemplates = [];
 let lastPersistedRulesSnapshot = "";
+let logEntries = [];
+let logSearchQuery = "";
 
 const { showMessage, hideMessage } = createUiMessage(messageEl);
 
+/**
+ * Select a workspace tab and synchronize its accessible state.
+ * @param {"editor" | "log"} tabName Workspace view to display.
+ * @returns {void}
+ */
+function selectWorkspaceTab(tabName) {
+  const showLog = tabName === "log";
+  editorTabEl.setAttribute("aria-selected", String(!showLog));
+  editorTabEl.tabIndex = showLog ? -1 : 0;
+  editorPanelEl.hidden = showLog;
+  logTabEl.setAttribute("aria-selected", String(showLog));
+  logTabEl.tabIndex = showLog ? 0 : -1;
+  logPanelEl.hidden = !showLog;
+  editorTitleEl.hidden = showLog;
+  logToolbarEl.hidden = !showLog;
+}
+
+/**
+ * Update the status indicator's contextual and accessible tooltip text.
+ * @param {string} text Current network-hook status.
+ * @returns {void}
+ */
+function setNetworkStatusText(text) {
+  networkStatusDotEl.setAttribute("aria-label", text);
+  networkStatusTooltipEl.textContent = text;
+}
+
 function summarizeRule(rule) {
   const filters = [];
-  if (rule.hostPattern) filters.push("host");
-  if (rule.pageHostPattern) filters.push("pageHost");
   if (rule.pageUrlPattern) filters.push("page");
   if (rule.requestUrlPattern) filters.push("url");
   if (rule.requestBodyPattern) filters.push("body");
@@ -300,25 +383,59 @@ function readSetHeaders(container) {
   }));
 }
 
-function updateActionSections() {
+/**
+ * Whether the current resource-type filter can hit the page hook (fetch/XHR).
+ * Empty selection means all types, including XHR.
+ * @param {string[]} resourceTypes Selected resource types.
+ * @returns {boolean}
+ */
+function allowsPageHook(resourceTypes) {
+  if (!resourceTypes?.length) {
+    return true;
+  }
+  return resourceTypes.includes("xmlhttprequest");
+}
+
+/**
+ * Hide form sections that do not apply to the current action, phases, and
+ * resource-type selection. Values stay in the form and reappear when options change.
+ * @returns {void}
+ */
+function updateFormVisibility() {
   const action = ruleActionEl.value;
-  document.querySelector(".action-redirect").classList.toggle(
-    "hidden",
-    action !== "redirect"
-  );
-  document.querySelector(".action-modify").classList.toggle(
-    "hidden",
-    action !== "modify"
-  );
-  document.querySelectorAll(".action-mock-fields").forEach((el) => {
-    el.classList.toggle("hidden", action !== "mock" && action !== "modify");
-  });
-  document.querySelector(".action-mock").classList.toggle(
-    "hidden",
-    action !== "modify"
-  );
+  const requestPhase = phaseRequestEl.checked;
+  const responsePhase = phaseResponseEl.checked;
+  const isModify = action === "modify";
+  const isMock = action === "mock";
+  const isRedirect = action === "redirect";
+  const pageHook = allowsPageHook(readSelectedResourceTypes());
+  const serveWithout = Boolean(ruleServeWithoutRequestEl?.checked);
+  const showMockFields =
+    isMock || (isModify && serveWithout && pageHook);
+  const scriptsVisible =
+    isModify && pageHook && (requestPhase || responsePhase);
+
+  const visibility = {
+    "request-phase": requestPhase,
+    "response-phase": responsePhase,
+    modify: isModify,
+    redirect: isRedirect,
+    "page-hook": pageHook,
+    "mock-fields": showMockFields,
+    "serve-without-toggle": isModify && pageHook,
+    "hook-behavior": isModify && pageHook,
+    "scripts-hint": scriptsVisible,
+    "untested-intent": isModify || isRedirect,
+  };
+
+  for (const el of ruleFormEl.querySelectorAll("[data-show]")) {
+    const keys = el.dataset.show.trim().split(/\s+/).filter(Boolean);
+    const visible = keys.every((key) => visibility[key] !== false);
+    el.classList.toggle("hidden", !visible);
+  }
+
   if (ruleServeWithoutRequestEl) {
-    ruleServeWithoutRequestEl.disabled = action !== "modify";
+    ruleServeWithoutRequestEl.disabled = !(isModify && pageHook);
   }
 }
 
@@ -329,7 +446,7 @@ function getSelectedRule() {
 function loadRuleIntoForm(rule) {
   if (!rule) {
     ruleFormEl.classList.add("hidden");
-    editorTitleEl.textContent = "Rule editor";
+    editorTitleEl.textContent = "No rule selected";
     deleteRuleBtn.disabled = true;
     return;
   }
@@ -341,12 +458,10 @@ function loadRuleIntoForm(rule) {
   ruleNameEl.value = rule.name || "";
   rulePriorityEl.value = String(rule.priority ?? 100);
   ruleEnabledEl.checked = Boolean(rule.enabled);
-  setFieldValue(ruleHostPatternEl, rule.hostPattern || "");
-  setFieldValue(rulePageHostPatternEl, rule.pageHostPattern || "");
-  setFieldValue(rulePageUrlPatternEl, rule.pageUrlPattern || "");
-  setFieldValue(ruleRequestUrlPatternEl, rule.requestUrlPattern || "");
-  setFieldValue(ruleBodyPatternEl, rule.requestBodyPattern || "");
-  setFieldValue(ruleContentTypePatternEl, rule.requestContentTypePattern || "");
+  for (const field of PATTERN_FIELDS) {
+    setFieldValue(field.element, rule[field.key] || "");
+    applyPatternFieldMode(field, Boolean(rule[field.flagKey]));
+  }
   renderMethodChecks(rule.methods);
   renderResourceTypeChecks(rule.resourceTypes);
   phaseRequestEl.checked = (rule.phases || ["request"]).includes("request");
@@ -372,7 +487,7 @@ function loadRuleIntoForm(rule) {
   if (ruleMatchHookOriginatedEl) {
     ruleMatchHookOriginatedEl.checked = Boolean(rule.matchHookOriginated);
   }
-  updateActionSections();
+  updateFormVisibility();
 }
 
 function createRuleDeleteButton(rule) {
@@ -446,6 +561,7 @@ function renderRulesList() {
       selectedRuleId = rule.id;
       renderRulesList();
       loadRuleIntoForm(rule);
+      selectWorkspaceTab("editor");
       defaultTestUrl().then((url) => {
         if (ruleTestUrlEl && url && !ruleTestUrlEl.value.trim()) {
           ruleTestUrlEl.value = url;
@@ -465,9 +581,69 @@ function renderRulesList() {
   }
 }
 
+/**
+ * Build the searchable text for a recent-match entry.
+ * @param {object} entry Recent network rule match.
+ * @returns {string}
+ */
+function logEntrySearchText(entry) {
+  return [
+    entry.ruleName,
+    entry.ruleId,
+    entry.outcome,
+    entry.method,
+    entry.url,
+    entry.resourceType,
+    entry.via,
+    entry.detail,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/**
+ * Open a matched rule in the Rule editor tab.
+ * @param {string} ruleId Rule id from a log entry.
+ * @returns {void}
+ */
+function openRuleFromLog(ruleId) {
+  if (!ruleId) {
+    return;
+  }
+  const rule = rulesState.rules.find((item) => item.id === ruleId);
+  if (!rule) {
+    showMessage("That rule is no longer in this rule set.");
+    return;
+  }
+  selectedRuleId = rule.id;
+  renderRulesList();
+  loadRuleIntoForm(rule);
+  selectWorkspaceTab("editor");
+  defaultTestUrl().then((url) => {
+    if (ruleTestUrlEl && url && !ruleTestUrlEl.value.trim()) {
+      ruleTestUrlEl.value = url;
+    }
+  });
+}
+
+/**
+ * Render recent rule matches and update the tab's count.
+ * @param {Array<object>} [entries] Recent network rule matches; omit to re-render the cached list.
+ * @returns {void}
+ */
 function renderLog(entries) {
+  const entriesUpdated = entries != null;
+  if (entriesUpdated) {
+    logEntries = entries;
+  }
+
   rulesLogEl.replaceChildren();
-  if (!entries?.length) {
+  const hasEntries = Boolean(logEntries.length);
+  recentMatchCountEl.textContent = hasEntries ? String(logEntries.length) : "";
+  recentMatchCountEl.hidden = !hasEntries;
+
+  if (!hasEntries) {
     const empty = document.createElement("p");
     empty.className = "log-empty";
     empty.textContent = "No matches yet.";
@@ -475,13 +651,28 @@ function renderLog(entries) {
     return;
   }
 
-  const newest = entries[entries.length - 1];
-  if (newest?.ruleId) {
-    highlightedRuleId = newest.ruleId;
-    renderRulesList();
+  if (entriesUpdated) {
+    const newest = logEntries[logEntries.length - 1];
+    if (newest?.ruleId) {
+      highlightedRuleId = newest.ruleId;
+      renderRulesList();
+    }
   }
 
-  for (const entry of [...entries].reverse()) {
+  const query = logSearchQuery.trim().toLowerCase();
+  const visible = query
+    ? logEntries.filter((entry) => logEntrySearchText(entry).includes(query))
+    : logEntries;
+
+  if (!visible.length) {
+    const empty = document.createElement("p");
+    empty.className = "log-empty";
+    empty.textContent = "No matches for this search.";
+    rulesLogEl.appendChild(empty);
+    return;
+  }
+
+  for (const entry of [...visible].reverse()) {
     const line = document.createElement("div");
     line.className = "log-entry";
     if (entry.ruleId && entry.ruleId === highlightedRuleId) {
@@ -490,13 +681,29 @@ function renderLog(entries) {
     if (entry.ruleId && entry.ruleId === selectedRuleId) {
       line.classList.add("log-entry-selected");
     }
+
     const time = new Date(entry.ts || Date.now()).toLocaleTimeString();
+    const ruleLabel = entry.ruleName || entry.ruleId || "rule";
+    const ruleBtn = document.createElement("button");
+    ruleBtn.type = "button";
+    ruleBtn.className = "log-entry-rule";
+    ruleBtn.textContent = ruleLabel;
+    if (entry.ruleId) {
+      ruleBtn.title = `Open "${ruleLabel}" in Rule editor`;
+      ruleBtn.addEventListener("click", () => openRuleFromLog(entry.ruleId));
+    } else {
+      ruleBtn.disabled = true;
+    }
+
+    const suffix = document.createElement("span");
     const detail = entry.detail ? ` · ${entry.detail}` : "";
-    line.textContent = `[${time}] ${entry.ruleName || entry.ruleId || "rule"} · ${
-      entry.outcome
-    } · ${entry.method || "?"} ${entry.url || ""}${
-      entry.resourceType ? ` · ${entry.resourceType}` : ""
-    }${entry.via ? ` · ${entry.via}` : ""}${detail}`;
+    suffix.textContent = ` · ${entry.outcome} · ${entry.method || "?"} ${
+      entry.url || ""
+    }${entry.resourceType ? ` · ${entry.resourceType}` : ""}${
+      entry.via ? ` · ${entry.via}` : ""
+    }${detail}`;
+
+    line.append(`[${time}] `, ruleBtn, suffix);
     rulesLogEl.appendChild(line);
   }
 }
@@ -578,17 +785,18 @@ function readRuleFromForm(existingRule) {
   const statusMinRaw = ruleStatusMinEl.value.trim();
   const statusMaxRaw = ruleStatusMaxEl.value.trim();
 
+  const patterns = {};
+  for (const field of PATTERN_FIELDS) {
+    patterns[field.key] = getFieldValue(field.element).trim();
+    patterns[field.flagKey] = field.regexEl.checked;
+  }
+
   return {
     ...existingRule,
     name: ruleNameEl.value.trim() || "Untitled rule",
     enabled: ruleEnabledEl.checked,
     priority: Number(rulePriorityEl.value) || 100,
-    hostPattern: getFieldValue(ruleHostPatternEl).trim(),
-    pageHostPattern: getFieldValue(rulePageHostPatternEl).trim(),
-    pageUrlPattern: getFieldValue(rulePageUrlPatternEl).trim(),
-    requestUrlPattern: getFieldValue(ruleRequestUrlPatternEl).trim(),
-    requestBodyPattern: getFieldValue(ruleBodyPatternEl).trim(),
-    requestContentTypePattern: getFieldValue(ruleContentTypePatternEl).trim(),
+    ...patterns,
     methods: readSelectedMethods(),
     resourceTypes: readSelectedResourceTypes(),
     phases,
@@ -617,7 +825,9 @@ function readRuleFromForm(existingRule) {
 async function loadState() {
   const response = await browser.runtime.sendMessage({ type: NT.GET_NETWORK_RULES });
   if (response?.ok) {
-    rulesState = response.state || defaultNetworkRulesState();
+    rulesState = normalizeNetworkRulesState(
+      response.state || defaultNetworkRulesState()
+    );
     lastPersistedRulesSnapshot = JSON.stringify(rulesState);
   }
   rulesEnabledEl.checked = rulesState.enabled !== false;
@@ -626,8 +836,10 @@ async function loadState() {
 
 async function loadLog() {
   const stored = await browser.storage.session.get(NETWORK_RULES_LOG_KEY);
-  renderLog(stored[NETWORK_RULES_LOG_KEY] || []);
-  updateNetworkStatusDot(stored[NETWORK_RULES_LOG_KEY] || []);
+  const entries = stored[NETWORK_RULES_LOG_KEY] || [];
+  renderLog(entries);
+  selectWorkspaceTab(entries.length ? "log" : "editor");
+  updateNetworkStatusDot(entries);
 }
 
 function getInspectedTabId() {
@@ -649,7 +861,9 @@ async function updateNetworkStatusDot(logEntries = null) {
 
   if (!hooksEnabled || rulesState.enabled === false) {
     networkStatusDotEl.classList.add("is-disabled");
-    networkStatusDotEl.title = "Network hooks disabled";
+    setNetworkStatusText(
+      "Network hooks or this rule set is disabled. Check the sidebar Network toggle and the Enabled checkbox."
+    );
     return;
   }
 
@@ -671,9 +885,13 @@ async function updateNetworkStatusDot(logEntries = null) {
 
   if (hasTabMatch) {
     networkStatusDotEl.classList.add("is-matched");
-    networkStatusDotEl.title = "Recent rule match on this tab";
+    setNetworkStatusText(
+      "Network hooks are enabled. A rule matched on this inspected tab within the last 60 seconds."
+    );
   } else {
-    networkStatusDotEl.title = "Network hooks enabled";
+    setNetworkStatusText(
+      "Network hooks are enabled. No rule has matched on this inspected tab within the last 60 seconds."
+    );
   }
 }
 
@@ -786,7 +1004,13 @@ rulesEnabledEl.addEventListener("change", async () => {
   showMessage(rulesState.enabled ? "Rules enabled." : "Rules disabled.");
 });
 
-ruleActionEl.addEventListener("change", updateActionSections);
+ruleActionEl.addEventListener("change", updateFormVisibility);
+phaseRequestEl.addEventListener("change", updateFormVisibility);
+phaseResponseEl.addEventListener("change", updateFormVisibility);
+if (ruleServeWithoutRequestEl) {
+  ruleServeWithoutRequestEl.addEventListener("change", updateFormVisibility);
+}
+ruleResourceTypesEl.addEventListener("change", updateFormVisibility);
 
 ruleFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -849,8 +1073,34 @@ if (testRuleBtn) {
 
 document.getElementById("clear-log-btn").addEventListener("click", async () => {
   await browser.runtime.sendMessage({ type: NT.CLEAR_NETWORK_RULE_LOG });
+  logSearchQuery = "";
+  logSearchEl.value = "";
   renderLog([]);
+  selectWorkspaceTab("editor");
 });
+
+logSearchEl.addEventListener("input", () => {
+  logSearchQuery = logSearchEl.value;
+  renderLog();
+});
+
+editorTabEl.addEventListener("click", () => selectWorkspaceTab("editor"));
+logTabEl.addEventListener("click", () => {
+  selectWorkspaceTab("log");
+  logSearchEl.focus();
+});
+
+for (const tab of [editorTabEl, logTabEl]) {
+  tab.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    const nextTab = tab === editorTabEl ? logTabEl : editorTabEl;
+    selectWorkspaceTab(nextTab === logTabEl ? "log" : "editor");
+    nextTab.focus();
+  });
+}
 
 document.querySelectorAll("[data-add-replacement]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -895,8 +1145,8 @@ browser.storage.onChanged.addListener((changes, area) => {
     ) {
       return;
     }
-    rulesState = incoming;
-    lastPersistedRulesSnapshot = incomingSnapshot;
+    rulesState = normalizeNetworkRulesState(incoming);
+    lastPersistedRulesSnapshot = JSON.stringify(rulesState);
     rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
     loadRuleIntoForm(getSelectedRule());
