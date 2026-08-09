@@ -405,6 +405,16 @@
           }
         },
         "url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=999.0&acceptformat=crx2,crx3&x=id%3D{id}%26uc"
+      },
+      {
+        "name": "Complete ServiceNow University course",
+        "match": "^https:\\\/\\\/learning\\.servicenow\\.com\\/lxp.*\\?id=learning_course&course_id=.*",
+        "searchTags": [
+          "learning",
+          "now university",
+          "credential"
+        ],
+        "code": "var injector = angular.element(document.body).injector();\nvar $http = injector.get('$http');\nvar $rootScope = injector.get('$rootScope');\n\n// use current content id from your data\nvar scope = angular.element(document.querySelector('[sn-atf-area=\"Learning Course Content Header\"]')).scope();\nObject.keys(scope.lxpConsumingContent.itemMap).forEach(function(v){\nif (v.child_sys_class_name = \"sn_lxp_content_item\") { //fails for child_interactive = true I think\nvar contentId = v;//scope.c.data.content_id;\n\n$http.post(\n  '/api/sn_lxp/learner/' + $rootScope.user.sys_id + '/setProgress',\n  {\n    content_id: contentId,\n    progress: '100',\n    result: \"\",\n    score: \"100\"\n  }\n).then(console.log);\n}\n});"
       }
     ]
   }
