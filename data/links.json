@@ -28,6 +28,72 @@
         "code": "var gFormRef = globalThis.g_form ?? globalThis.gsft_main?.g_form ?? globalThis.GlideForm ?? globalThis.gsft_main?.GlideForm; if (!gFormRef.getTableName || !gFormRef.getTableName()) { var formInput = document.querySelector('input[name=\"sysparm_form\"]'); var formName = formInput && formInput.value; if (!formName) { var formEl = document.querySelector('form[id$=\".form\"]'); formName = formEl && formEl.id.replace(/\\.form$/, ''); } if (formName) gFormRef = new GlideForm(formName); } if (!gFormRef.getTableName || !gFormRef.getTableName()) { console.warn('No g_form found'); } else { var n = 0; gFormRef.elements.forEach(function(element) { gFormRef.setMandatory(element.fieldName, false); n++; }); console.log('Cleared mandatory on ' + n + ' field(s)'); }"
       },
       {
+        "name": "Show hidden fields",
+        "searchTags": [
+          "uh",
+          "hidden",
+          "unhide",
+          "form",
+          "g_form"
+        ],
+        "code": "var gFormRef = globalThis.g_form ?? globalThis.gsft_main?.g_form ?? globalThis.GlideForm ?? globalThis.gsft_main?.GlideForm; if (!gFormRef.getTableName || !gFormRef.getTableName()) { var formInput = document.querySelector('input[name=\"sysparm_form\"]'); var formName = formInput && formInput.value; if (!formName) { var formEl = document.querySelector('form[id$=\".form\"]'); formName = formEl && formEl.id.replace(/\\.form$/, ''); } if (formName) gFormRef = new GlideForm(formName); } if (!gFormRef.getTableName || !gFormRef.getTableName()) { console.warn('No g_form found'); } else { var n = 0; try { var sections = gFormRef.getSectionNames && gFormRef.getSectionNames(); if (sections) sections.forEach(function(s) { gFormRef.setSectionDisplay(s, true); }); } catch (e) {} gFormRef.elements.forEach(function(element) { try { gFormRef.setDisplay(element.fieldName, true); if (gFormRef.setVisible) gFormRef.setVisible(element.fieldName, true); n++; } catch (e) {} }); console.log('Unhid ' + n + ' field(s)'); }"
+      },
+      {
+        "name": "Copy record to new",
+        "searchTags": [
+          "crn",
+          "copy",
+          "duplicate",
+          "new",
+          "form"
+        ],
+        "open": "tab",
+        "code": "var gFormRef = globalThis.g_form ?? globalThis.gsft_main?.g_form ?? globalThis.GlideForm ?? globalThis.gsft_main?.GlideForm; if (!gFormRef.getTableName || !gFormRef.getTableName()) { var formInput = document.querySelector('input[name=\"sysparm_form\"]'); var formName = formInput && formInput.value; if (!formName) { var formEl = document.querySelector('form[id$=\".form\"]'); formName = formEl && formEl.id.replace(/\\.form$/, ''); } if (formName) gFormRef = new GlideForm(formName); } if (!gFormRef.getTableName || !gFormRef.getTableName()) { console.warn('No g_form found'); return; } var blacklist = { number: 1, sys_scope: 1 }; var parts = []; gFormRef.elements.forEach(function(el) { var name = el.fieldName; if (!name || name.indexOf('.') !== -1 || name.indexOf('sys') === 0 || blacklist[name]) return; try { if (gFormRef.isFieldVisible && !gFormRef.isFieldVisible(name)) return; var val = gFormRef.getValue(name); if (val === '' || val == null) return; parts.push(name + '=' + encodeURIComponent(val)); } catch (e) {} }); var view = ''; try { view = gFormRef.getViewName && gFormRef.getViewName(); } catch (e) {} var url = '/' + gFormRef.getTableName() + '.do?sys_id=-1&sysparm_query=' + parts.join('^'); if (view) url += '&sysparm_view=' + encodeURIComponent(view); return url;"
+      },
+      {
+        "name": "Reveal UI actions",
+        "searchTags": [
+          "ui action",
+          "button",
+          "hidden",
+          "navbar"
+        ],
+        "code": "var n = 0; var docs = [document]; try { if (globalThis.gsft_main && gsft_main.document) docs.push(gsft_main.document); } catch (e) {} var sel = 'button.navbar_button, a.navbar_button, button[data-action-name], button[id^=\"sysverb_\"], a[id^=\"sysverb_\"], .context_action, button.form_action_button, a.form_action_button, button.action_context, a.action_context, [gsft_id].action_context'; docs.forEach(function(doc) { doc.querySelectorAll(sel).forEach(function(el) { var cs = getComputedStyle(el); var styleAttr = el.getAttribute('style') || ''; var hidden = el.hidden || cs.display === 'none' || cs.visibility === 'hidden' || /display\\s*:\\s*none/i.test(styleAttr); if (!hidden) return; el.hidden = false; el.style.setProperty('display', 'inline-block', 'important'); el.style.setProperty('visibility', 'visible', 'important'); el.style.setProperty('opacity', '1', 'important'); n++; }); }); console.log('Revealed ' + n + ' UI action control(s)');"
+      },
+      {
+        "name": "Clear instance storage",
+        "searchTags": [
+          "cls",
+          "localStorage",
+          "sessionStorage",
+          "cache"
+        ],
+        "code": "var before = 0; try { before += localStorage.length; localStorage.clear(); } catch (e) { console.warn('localStorage clear failed', e); } try { before += sessionStorage.length; sessionStorage.clear(); } catch (e) { console.warn('sessionStorage clear failed', e); } console.log('Cleared local/session storage (' + before + ' keys before clear)');"
+      },
+      {
+        "name": "Background script (current record)",
+        "searchTags": [
+          "bgc",
+          "background",
+          "gliderecord",
+          "script"
+        ],
+        "open": "tab",
+        "code": "var gFormRef = globalThis.g_form ?? globalThis.gsft_main?.g_form ?? globalThis.GlideForm ?? globalThis.gsft_main?.GlideForm; if (!gFormRef.getTableName || !gFormRef.getTableName()) { var formInput = document.querySelector('input[name=\"sysparm_form\"]'); var formName = formInput && formInput.value; if (!formName) { var formEl = document.querySelector('form[id$=\".form\"]'); formName = formEl && formEl.id.replace(/\\.form$/, ''); } if (formName) gFormRef = new GlideForm(formName); } if (!gFormRef.getTableName || !gFormRef.getTableName()) { console.warn('No g_form found'); return; } var table = gFormRef.getTableName(); var sysId = gFormRef.getUniqueValue(); var camel = table.split('_').map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); }).join(''); var varName = 'gr' + camel; var content = 'var ' + varName + ' = new GlideRecord(\"' + table + '\");\\nif (' + varName + '.get(\"' + sysId + '\")){\\n    gs.info(' + varName + '.getDisplayValue());\\n}'; return '/sys.scripts.modern.do?content=' + encodeURIComponent(content);"
+      },
+      {
+        "name": "Background script (current list)",
+        "searchTags": [
+          "bgl",
+          "background",
+          "gliderecord",
+          "list",
+          "script"
+        ],
+        "open": "tab",
+        "code": "var list = globalThis.g_list ?? globalThis.gsft_main?.g_list; if (!list || !list.getTableName) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); if (!ids.length && globalThis.gsft_main) { try { ids = Array.from(gsft_main.document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); } catch (e) {} } if (ids[0] && typeof GlideList2 !== 'undefined') list = GlideList2.get(ids[0]) || new GlideList2(ids[0]); else if (ids[0] && globalThis.gsft_main?.GlideList2) list = gsft_main.GlideList2.get(ids[0]); } if (!list || !list.getTableName) { console.warn('No g_list found'); return; } var table = list.getTableName(); var query = ''; try { query = (list.getQuery && list.getQuery()) || list.filter || ''; } catch (e) {} var escaped = String(query).replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"'); var content = 'var list = new GlideRecord(\"' + table + '\");\\nlist.addEncodedQuery(\"' + escaped + '\");\\nlist.setLimit(10);\\nlist.query();\\nwhile (list.next()){\\n    gs.info(list.getDisplayValue());\\n}'; return '/sys.scripts.modern.do?content=' + encodeURIComponent(content);"
+      },
+      {
         "name": "SN university complete course",
         "searchTags": [
           "university",
@@ -70,6 +136,25 @@
         "url": "{origin}/{table}.do?sys_id={sys_id}&XML"
       },
       {
+        "name": "Show JSON",
+        "searchTags": [
+          "json",
+          "jsonv2",
+          "record"
+        ],
+        "open": "tab",
+        "match": "^https?://[^/]+/(?:now/nav/ui/classic/params/target/)?[^/?]+(?<!_list)\\.do(?:\\?sys_id=|%3Fsys_id%3D)[0-9a-f]{32}",
+        "navParams": {
+          "table": {
+            "fromUrl": "(?:now/nav/ui/classic/params/target/)?([^/?]+)\\.do(?:\\?sys_id=|%3Fsys_id%3D)[0-9a-f]{32}"
+          },
+          "sys_id": {
+            "fromUrl": "(?:sys_id(?:%3D|=))([0-9a-f]{32})"
+          }
+        },
+        "url": "{origin}/{table}.do?sys_id={sys_id}&JSONv2"
+      },
+      {
         "name": "SN Upload XML",
         "searchTags": [
           "upload",
@@ -86,6 +171,104 @@
         ],
         "open": "tab",
         "url": "/cancel_my_transaction.do"
+      },
+      {
+        "name": "My user profile",
+        "searchTags": [
+          "me",
+          "user",
+          "profile"
+        ],
+        "open": "tab",
+        "url": "/sys_user.do?sys_id=javascript:gs.getUserID()"
+      },
+      {
+        "name": "Find user",
+        "searchTags": [
+          "u",
+          "user",
+          "sys_user"
+        ],
+        "open": "tab",
+        "navParams": {
+          "q": {
+            "placeholder": "username or name"
+          }
+        },
+        "url": "{origin}/sys_user_list.do?sysparm_query=user_nameLIKE{encode:q}^ORnameLIKE{encode:q}^ORDERBYname"
+      },
+      {
+        "name": "Open on environment",
+        "searchTags": [
+          "env",
+          "instance",
+          "cross-instance"
+        ],
+        "open": "tab",
+        "params": {
+          "env": {
+            "placeholder": "subdomain or host (e.g. mydev)"
+          }
+        },
+        "code": "var host = String(env || '').trim(); if (!host) { console.warn('No environment specified'); return; } if (host.indexOf('.') === -1) host += '.service-now.com'; var u = new URL(location.href); try { u.searchParams.delete('sysparm_tiny'); } catch (e) {} u.host = host; return u.href;"
+      },
+      {
+        "name": "Tools",
+        "children": [
+          {
+            "name": "Background Script",
+            "searchTags": [
+              "bg",
+              "scripts"
+            ],
+            "open": "tab",
+            "url": "/sys.scripts.modern.do"
+          },
+          {
+            "name": "Studio",
+            "searchTags": [
+              "st",
+              "studio"
+            ],
+            "open": "tab",
+            "url": "/$studio.do"
+          },
+          {
+            "name": "UI Builder",
+            "searchTags": [
+              "uib",
+              "builder"
+            ],
+            "open": "tab",
+            "url": "/now/builder/ui/"
+          },
+          {
+            "name": "Flow Designer",
+            "searchTags": [
+              "fd",
+              "flow"
+            ],
+            "open": "tab",
+            "url": "/$flow-designer.do"
+          },
+          {
+            "name": "Workflow Studio",
+            "searchTags": [
+              "ws",
+              "workflow"
+            ],
+            "open": "tab",
+            "url": "/now/workflow-studio/home/flow"
+          },
+          {
+            "name": "Script Debugger",
+            "searchTags": [
+              "debug",
+              "debugger"
+            ],
+            "code": "var launch = globalThis.launchScriptDebugger || globalThis.top?.launchScriptDebugger || globalThis.gsft_main?.launchScriptDebugger; if (typeof launch === 'function') launch(); else console.warn('Cannot start Script Debugger from this page');"
+          }
+        ]
       },
       {
         "name": "Source control history/logs",
