@@ -431,9 +431,12 @@
             <p class="fieldset-hint intent-note">
               Header forwarding on redirect (e.g. preserving
               <code>Authorization</code> when a page-hook redirect changes the
-              XHR URL) is not implemented. webRequest header rules apply to
-              non-fetch traffic; fetch/XHR header changes run in the page hook
-              only. This gap is documented for future work.
+              XHR URL) is not implemented. Fetch/XHR header mods for
+              <code>Cookie</code>, <code>Origin</code>, and
+              <code>Referer</code> use a dummy
+              <code>x-complexlinker-*</code> prefix in the page hook; webRequest
+              rewrites them to the real names before the request is sent.
+              Other resource types get header rules directly via webRequest.
             </p>
           </fieldset>
 

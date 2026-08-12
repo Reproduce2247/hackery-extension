@@ -293,7 +293,11 @@
 
   function objectToHeaders(headers) {
     const next = new Headers();
-    for (const [key, value] of Object.entries(headers || {})) {
+    // Cookie/Origin/Referer are forbidden in page JS — send as x-complexlinker-*
+    // and let webRequest rewrite them (see rewritePrivilegedRequestHeaders).
+    for (const [key, value] of Object.entries(
+      encodePrivilegedRequestHeaders(headers)
+    )) {
       next.set(key, value);
     }
     return next;
@@ -646,7 +650,9 @@
           meta.user,
           meta.password
         );
-        for (const [name, value] of Object.entries(nextHeaders)) {
+        for (const [name, value] of Object.entries(
+          encodePrivilegedRequestHeaders(nextHeaders)
+        )) {
           origSetRequestHeader.call(this, name, value);
         }
       }

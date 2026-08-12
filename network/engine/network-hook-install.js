@@ -4,6 +4,90 @@ export function installNetworkHook(rules, version, logToken, sharedStateBundle) 
 const WILDCARD_PREFIX = "w:";
 const MAX_PATTERN_INPUT_LENGTH = 65536;
 
+/**
+ * Page JS cannot set these on fetch/XHR (Fetch "forbidden request headers").
+ * The page hook sends them as x-complexlinker-* and webRequest rewrites them
+ * back before the request leaves the browser (Greasemonkey-style).
+ */
+const PRIVILEGED_REQUEST_HEADER_PREFIX = "x-complexlinker-";
+const PRIVILEGED_REQUEST_HEADER_NAMES = ["cookie", "origin", "referer"];
+
+/**
+ * Whether a header name is rewritten via the privileged dummy-prefix path.
+ * @param {string} name
+ */
+function isPrivilegedRequestHeaderName(name) {
+  return PRIVILEGED_REQUEST_HEADER_NAMES.includes(String(name || "").toLowerCase());
+}
+
+/**
+ * Replace Cookie/Origin/Referer keys with x-complexlinker-* so MAIN-world
+ * Headers / setRequestHeader accept them.
+ * @param {Record<string, string>|null|undefined} headers
+ * @returns {Record<string, string>}
+ */
+function encodePrivilegedRequestHeaders(headers) {
+  const out = {};
+  if (!headers || typeof headers !== "object") {
+    return out;
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = String(name).toLowerCase();
+    if (PRIVILEGED_REQUEST_HEADER_NAMES.includes(lower)) {
+      out[PRIVILEGED_REQUEST_HEADER_PREFIX + lower] = value ?? "";
+    } else {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Find a header by case-insensitive name in a webRequest header list.
+ * @param {{name: string, value?: string}[]} headers
+ * @param {string} name
+ */
+function findWebRequestHeaderIndex(headers, name) {
+  const lower = String(name).toLowerCase();
+  for (let i = 0; i < headers.length; i++) {
+    if (String(headers[i].name).toLowerCase() === lower) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Rewrite x-complexlinker-{cookie|origin|referer} into the real header names.
+ * @param {{name: string, value?: string}[]|null|undefined} headerList
+ * @returns {{ headers: {name: string, value?: string}[], changed: boolean }}
+ */
+function rewritePrivilegedRequestHeaders(headerList) {
+  if (!Array.isArray(headerList) || !headerList.length) {
+    return { headers: headerList || [], changed: false };
+  }
+  const headers = headerList.slice();
+  let changed = false;
+  for (const name of PRIVILEGED_REQUEST_HEADER_NAMES) {
+    const prefixedIndex = findWebRequestHeaderIndex(
+      headers,
+      PRIVILEGED_REQUEST_HEADER_PREFIX + name
+    );
+    if (prefixedIndex < 0) {
+      continue;
+    }
+    const value = headers[prefixedIndex].value;
+    headers.splice(prefixedIndex, 1);
+    const realIndex = findWebRequestHeaderIndex(headers, name);
+    if (realIndex >= 0) {
+      headers.splice(realIndex, 1);
+    }
+    headers.push({ name, value });
+    changed = true;
+  }
+  return { headers, changed };
+}
+
 function wildcardPatternToRegExp(pattern) {
   const escaped = pattern
     .replace(/([?.+^${}()|[\]\\])/g, "\\$1")
@@ -835,7 +919,11 @@ function createNetworkRuleEngine(options = {}) {
 
   function objectToHeaders(headers) {
     const next = new Headers();
-    for (const [key, value] of Object.entries(headers || {})) {
+    // Cookie/Origin/Referer are forbidden in page JS — send as x-complexlinker-*
+    // and let webRequest rewrite them (see rewritePrivilegedRequestHeaders).
+    for (const [key, value] of Object.entries(
+      encodePrivilegedRequestHeaders(headers)
+    )) {
       next.set(key, value);
     }
     return next;
@@ -1188,7 +1276,9 @@ function createNetworkRuleEngine(options = {}) {
           meta.user,
           meta.password
         );
-        for (const [name, value] of Object.entries(nextHeaders)) {
+        for (const [name, value] of Object.entries(
+          encodePrivilegedRequestHeaders(nextHeaders)
+        )) {
           origSetRequestHeader.call(this, name, value);
         }
       }

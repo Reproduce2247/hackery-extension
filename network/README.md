@@ -67,6 +67,12 @@ non-fetch scripting is needed later.
 
 Modify rules run field replacements first, then the phase script.
 
+**Privileged headers:** Set/replace of `Cookie`, `Origin`, or `Referer` on
+fetch/XHR is encoded as `x-complexlinker-*` in the page hook; webRequest
+rewrites those to the real names on `onBeforeSendHeaders` (Greasemonkey-style).
+See `encodePrivilegedRequestHeaders` / `rewritePrivilegedRequestHeaders` in
+`engine/network-rule-engine-core.js`.
+
 | Script return | Effect |
 | --- | --- |
 | modified `ctx` | Apply script changes to method/url/headers/body/status |

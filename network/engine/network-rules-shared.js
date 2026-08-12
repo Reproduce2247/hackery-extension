@@ -2,8 +2,20 @@ import {
   attachCompiledNetworkRules,
   compileNetworkRulesCache,
   createNetworkRuleEngine,
+  encodePrivilegedRequestHeaders,
+  isPrivilegedRequestHeaderName,
+  PRIVILEGED_REQUEST_HEADER_NAMES,
+  PRIVILEGED_REQUEST_HEADER_PREFIX,
+  rewritePrivilegedRequestHeaders,
 } from "./network-rule-engine-core.js";
 
+export {
+  encodePrivilegedRequestHeaders,
+  isPrivilegedRequestHeaderName,
+  PRIVILEGED_REQUEST_HEADER_NAMES,
+  PRIVILEGED_REQUEST_HEADER_PREFIX,
+  rewritePrivilegedRequestHeaders,
+};
 export const NETWORK_MAIN_HOOK_SCRIPT_ID = "complex-linker-network-hook-main";
 export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "complex-linker-network-log-bridge";
 export const NETWORK_EARLY_HOOK_SCRIPT_ID = "complex-linker-network-early-hook";

@@ -339,6 +339,8 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 
 When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. `Authorization`) may not carry the way Requestly’s session DNR rules do. Header **modify** rules on fetch/XHR apply in the page hook; **webRequest** header rules apply to other resource types. Preserving auth across redirect rewritten URLs is **not implemented** — documented for future work in `network/ui/rules.html`.
 
+**Privileged request headers (Cookie / Origin / Referer):** page JS cannot set these on fetch/XHR. The page hook encodes them as `x-complexlinker-{name}`; `network-webrequest.js` always rewrites those dummies to the real header names in `onBeforeSendHeaders` (even when rule matching defers to the page hook). Add more names to `PRIVILEGED_REQUEST_HEADER_NAMES` in `network-rule-engine-core.js` if needed.
+
 When matching tabs in the current window: the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
 
 Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key** derived from section + behavior + name + template.

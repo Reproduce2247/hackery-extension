@@ -12,6 +12,7 @@ import {
   getSortedEnabledRules,
   isTextLikeContentType,
   objectToWebRequestHeaders,
+  rewritePrivilegedRequestHeaders,
   rulesForPageHook,
   sanitizeLogEntry,
   webRequestHeadersToObject,
@@ -301,22 +302,34 @@ function onBeforeRequest(details) {
 }
 
 function onBeforeSendHeaders(details) {
+  // Always rewrite page-hook dummy headers, even when rule matching defers to
+  // the page hook for fetch/XHR — otherwise Cookie/Origin/Referer never land.
+  const rewritten = rewritePrivilegedRequestHeaders(details.requestHeaders);
+  let headers = rewritten.headers;
+  let changed = rewritten.changed;
+
   if (!webRequestEnabled || details.tabId < 0) {
-    return {};
+    return changed ? { requestHeaders: headers } : {};
   }
   if (shouldDeferToPageHook(details.type)) {
-    return {};
+    return changed ? { requestHeaders: headers } : {};
   }
 
-  const ctx = buildWebRequestContext(details, "request");
+  const ctx = buildWebRequestContext(
+    { ...details, requestHeaders: headers },
+    "request"
+  );
   const matching = getMatchingRules(webRequestRules, ctx).filter(
     (rule) =>
       rule.action === "modify" &&
       (rule.modify?.headerReplacements?.length ||
         rule.modify?.setHeaders?.length)
   );
-  const headers = applyHeaderRules(matching, ctx, details.requestHeaders);
-  return headers ? { requestHeaders: headers } : {};
+  const applied = applyHeaderRules(matching, ctx, headers);
+  if (applied) {
+    return { requestHeaders: applied };
+  }
+  return changed ? { requestHeaders: headers } : {};
 }
 
 /**
