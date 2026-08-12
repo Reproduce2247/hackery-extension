@@ -84,6 +84,8 @@ On-load reuses link `match` inheritance from `links.json` (same rules as tab tar
 
 Reverse-engineering tools have no section-level `match` — they run on the active tab.
 
+Sidebar link rows show a **green apply-dot** (tooltip: “Applies to this tab”) when the active tab URL matches the link’s resolved `match` (or when the link has no `match` and therefore always targets the active tab). Dots update on tab switch / URL change without a full catalog re-render.
+
 ## Link data model (`data/links.json`) — schema v3
 
 Top-level keys are **section names** (sidebar tabs):
@@ -104,10 +106,10 @@ Discriminated by properties; [`lib/link-behaviors.js`](lib/link-behaviors.js) pi
 | Behavior | Badge | Shape |
 |---|---|---|
 | `run` | Run | `code` only |
-| `open-from-script` | Open | `code` + `open` (script returns URL) |
+| `open-from-script` | Open | `code` + `open` (script returns URL, evaluated in the page) |
 | `open-url` | Open / Web / Derive | `url` + `open`; optional `navParams` and/or `{…}` templates |
 
-Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParams` or template tokens in `url`).
+Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParams` or template tokens in `url`). Each badge has a descriptive hover tooltip (e.g. Run → “Runs a scriptlet on the page”).
 
 ### Common fields
 
@@ -116,6 +118,7 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 | `code` | Script body; `params` keys are lexical bindings at runtime |
 | `url` | Relative path, absolute URL, or template |
 | `open` | How to open a resolved URL (see below) |
+| `tooltip` | Optional hover text on the link label in the sidebar |
 | `params` | Script/function bindings only (see below) |
 | `navParams` | URL/URI substitution values only (see below) |
 | `match` | Host/URL regex; `null` = active tab |
@@ -217,7 +220,81 @@ One-off file rewrite: `node scripts/migrate-links-json.js`.
 
 ### Deferred: sandbox
 
-Future `sandbox` on `code` actions: `"main"` (default), `"isolated"`, `"readonly-dom"`. Readonly-dom is best-effort (cloned document); not a security boundary. Not implemented.
+Future `sandbox` on `code` actions: `"main"` (default), `"isolated"`, `"readonly-dom"`. Not implemented.
+
+| Value | Intent |
+|---|---|
+| `main` | Current behavior — MAIN-world `executeScript` against the live page |
+| `isolated` | Extension isolated world (no page globals); still the live DOM if the world can see it |
+| `readonly-dom` | Run against a **cloned DOM in its own document scope**, not the live tab |
+
+#### `readonly-dom` design (planned)
+
+**Mechanism:** snapshot page markup into a dedicated iframe document with its own browsing context and JS realm. Preferred shape:
+
+1. Serialize a best-effort DOM snapshot (`documentElement.outerHTML` and/or tree walk; open shadow roots included when reachable; closed shadows / cross-origin iframes omitted).
+2. Create an iframe under a host the extension controls for teardown (extension page preferred; page-inserted frame only if needed for packaging).
+3. Load the snapshot via `srcdoc` (or equivalent) into that iframe.
+4. Evaluate the scriptlet only inside that frame’s `contentWindow` — never rebind the live tab’s `document`.
+
+**Own scope / origin:** give the frame an **opaque origin** so it is neither the page origin nor a privileged extension principal for same-origin access:
+
+- `sandbox` attribute **without** `allow-same-origin` (scripts allowed via `allow-scripts` only as needed to run the scriptlet).
+- Result: unique opaque (`null`) origin — separate security principal from the tab and from `moz-extension://` same-origin privileges.
+
+This is still not a hard security boundary against a hostile scriptlet if the host document mishandles results; treat it as **best-effort isolation** for “don’t mutate the live page,” not as a threat model for untrusted code with extension APIs.
+
+**Lift CSP inside the clone (not the live page):**
+
+- Strip CSP **from the snapshot only** before load: remove `<meta http-equiv="Content-Security-Policy">` (and report-only variants) from serialized HTML; do not rely on the live tab’s Disable CSP toggle for this path.
+- Prefer loading via `srcdoc` / controlled document so the clone does not inherit the page’s HTTP CSP headers.
+- Optionally set a permissive policy on the clone document only if a default opaque-frame policy still blocks `new Function` / inline evaluation — scoped to the iframe, never written back to the tab.
+- Live-page CSP disable (`csp-disable.js` header/meta strip) remains a separate feature for MAIN-world / page-policy cases.
+
+**Prevent interaction with the main page:**
+
+| Guard | Purpose |
+|---|---|
+| Omit `allow-same-origin` | Opaque origin — no `parent.document` / page DOM access |
+| Omit `allow-top-navigation` / `allow-top-navigation-by-user-activation` | No replacing the tab URL |
+| Omit `allow-popups` / `allow-popups-to-escape-sandbox` (unless explicitly required later) | No window.open side channels |
+| Omit `allow-forms` if navigation-via-form is a concern | No form submit to the parent’s network context |
+| Do not pass live `window` / node references into the frame | Avoid bridging the realm via arguments |
+| Return values via structured-cloneable postMessage (or inject-and-read once) | Results cross the boundary as data only |
+| Tear down the iframe after the run | No lingering frame with a copy of page HTML |
+| No `parent` / `top` helpers injected into the scriptlet bindings | Scriptlet sees clone `document` / `window` only |
+
+Scriptlets under `readonly-dom` **cannot** use live page globals (`GlideList2`, Angular injectors, etc.). Those actions stay on `sandbox: "main"` (default).
+
+**Known fidelity limits:** closed shadow DOM, cross-origin iframe trees, framework instance state, and any object graph beyond markup are out of scope — HTML/DOM snapshot only.
+
+### Planned: userscripts + user CSS UI
+
+Add a dedicated management surface (sidebar section and/or builder mode) for **persistent userscripts and user stylesheets**, closer to Greasemonkey / Stylus than one-shot catalog actions.
+
+**Intent**
+
+| Kind | Behavior |
+|---|---|
+| Userscript | Stored JS with `@match`-style host patterns, enable/disable, optional on-load inject (`document_start` / `document_end` / `document_idle`) |
+| User CSS | Stored CSS injected into matching pages (same match model); no page JS |
+
+**UI sketch**
+
+- List installed scripts/styles with enable toggle, match summary, edit, delete (soft-delete/undo welcome)
+- Editor (CodeMirror already in-tree) for source + metadata: name, match patterns, run-at, notes
+- Install/import paths: paste source, import file, optional “save current Run action as userscript”
+- Clear separation from the action catalog: userscripts/CSS are always-on page customizations; catalog links remain explicit activate / optional on-load tools
+
+**Out of scope for v1 of this feature:** `@grant`-style capability menus (only relevant once sandboxed / untrusted install is a goal), `@require` / `@resource`, remote auto-update.
+
+**Relation to today:** on-load Run actions already cover “inject this JS on matching tabs.” Userscripts/CSS would generalize that into a first-class library with stylesheets and a management UI, without requiring each item to be a catalog leaf.
+
+### Idea: page-context clipboard (Greasemonkey `GM_setClipboard`)
+
+Sidebar copy today uses the extension page clipboard APIs (`sidebar/copy-link.js`). That is enough for Copy from the sidebar.
+
+If a **scriptlet running in the page** later needs to write the clipboard (e.g. “copy derived URL from inside the page”), prefer Greasemonkey’s page-context approach: dispatch a synthetic `copy` event / use `document.execCommand('copy')` in MAIN world, rather than assuming `navigator.clipboard` or extension `clipboardWrite` reach the injected realm. Only implement when a concrete action needs in-page copy; do not bridge clipboard through background by default.
 
 ### Bookmark sync contract (future)
 
@@ -245,6 +322,10 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 **Scripts vs webRequest:** request/response scripts run in the page hook (fetch/XHR). webRequest applies declarative block/redirect/header/body actions only — Firefox MV3 CSP blocks `new Function()` in extension pages. A CSP-safe interpreter can be wired later in `network-webrequest.js`.
 
 **Hook reentrancy:** fetch/XHR triggered from inside a rule script skips other rules unless they set **`matchHookOriginated: true`**. A rule never matches its own request while its script is running.
+
+**Event-page listener registration:** `webRequest` listeners register at module load in `network-webrequest.js`, and `initCspDisable()` runs at the top level of `background.js`. Firefox only wakes an event page for listeners added during the background script's first synchronous run, so anything registered after an `await` stops firing once the background suspends.
+
+**Disable CSP (`lib/csp-disable.js`):** per-tab toggle in the sidebar, split across two mechanisms. DNR **session rules** (`tabIds` condition, `modifyHeaders`/`remove`) strip CSP and cross-origin isolation response headers — browser-held, so they apply while the event page is suspended. The **webRequest body filter** removes `<meta http-equiv="content-security-policy">`, which DNR cannot reach; a meta policy takes effect as the parser reads it and cannot be lifted later. The webRequest path also strips headers, so a network header rule cannot hand back a policy the DNR rule already removed. Requires a **hard reload** (`Ctrl+Shift+R`): a cached document can be replayed with its original policy without the headers passing through us. Auto-expires after `CSP_DISABLE_MINUTES` via `alarms` (not `setTimeout`, which dies with the event page).
 
 **Hook idempotency:** re-install restores native `fetch`/XHR from the first install before re-wrapping, so in-tab re-inject does not stack wrappers.
 
@@ -327,12 +408,13 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 | `networkTabState` | Per-tab objects for `ctx.tabState` keyed by tab id |
 | `linkBuilderPrefill` | Tab/context prefill for new builder links |
 | `linkBuilderSection` | Default section for builder |
+| `cspDisabledTabs` | Tab ids with the sidebar "Disable CSP" toggle on |
 
 ## Conventions for changes
 
 - **New reverse-engineering tools:** add to `Reverse-engineering tools` in `data/links.json`; prefer scriptlets that log to `console` and are idempotent where possible (many check a `window.__…` guard).
 - **New ServiceNow links:** edit `data/links.json` ServiceNow section.
-- **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.).
+- **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.). This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them.
 - **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
 - **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.
 - **Schema v3 update:** clears saved parameter values and on-load preferences once; reload preferences after updating.

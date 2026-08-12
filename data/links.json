@@ -339,7 +339,7 @@
   "Reverse-engineering tools": {
     "children": [
       {
-        "name": "Non-default attributes",
+        "name": "Log non-default attributes",
         "code": "var iframe=document.createElement('iframe');iframe.style.display='none';document.documentElement.appendChild(iframe);var added=[];var modified=[];for(const key of Object.getOwnPropertyNames(window)){const current=Object.getOwnPropertyDescriptor(window,key);const clean=Object.getOwnPropertyDescriptor(iframe.contentWindow,key);if(!clean){added.push(key)}else if(current?.value!==clean?.value){modified.push(key)}} console.log('Added:',added.sort());console.log('Modified:',modified.sort());iframe.remove()"
       },
       {
@@ -579,6 +579,7 @@
       {
         "name": "Download Chrome extension",
         "match": "chromewebstore\\.google\\.com/detail/",
+        "tooltip": "Download Chrome extension from the Chrome Web Store (open the extension page first)",
         "open": "download",
         "navParams": {
           "id": {

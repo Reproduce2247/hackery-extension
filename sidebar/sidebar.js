@@ -7,6 +7,7 @@ import {
   createLinkUi,
   loadInjectOnLoad,
   setInjectOnLoad,
+  syncAppliesToTabDots,
 } from "./link-ui.js";
 import {
   loadMergedLinkCatalog,
@@ -24,6 +25,7 @@ import {
 } from "../lib/codemirror-fields.bundle.js";
 import { loadParamValues } from "../lib/activate-link.js";
 import { isCatalogChangedMessage } from "../lib/catalog-events.js";
+import { CSP_DISABLE_MINUTES } from "../lib/csp-disable.js";
 import {
   linkStableKey,
   loadCatalogOrder,
@@ -270,6 +272,8 @@ async function renderAll() {
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
     const injectOnLoad = await loadInjectOnLoad();
+    const activeTab = await getActiveTab();
+    const activeTabUrl = activeTab?.url || null;
     const section = getActiveSection();
     const showRemove = section ? sectionHasCustomLinks(section) : false;
     const showParams = section ? linkUi.treeHasParams(section.children) : false;
@@ -303,6 +307,7 @@ async function renderAll() {
             linkUi.createLinkRow(node, {
               savedParamValues,
               injectOnLoad,
+              activeTabUrl,
               showRemove: showRemove,
               isCustom: isCustomLink(node),
               stableKey: linkStableKey(section.name, [], node),
@@ -335,6 +340,7 @@ async function renderAll() {
           {
             showRemoveColumn: showRemove,
             enableDrag: true,
+            activeTabUrl,
             pathParts: [],
             onDeleteCustom: async (linkId) => {
               await removeCustomLinkById(linkId);
@@ -478,6 +484,25 @@ async function initExtensionSettingsControls() {
   }
 }
 
+/**
+ * Update the active-tab status line and green apply-dots without a full re-render.
+ */
+async function syncActiveTabChrome() {
+  const activeTab = await getActiveTab();
+  if (activeTabStatusEl) {
+    if (activeTab?.url) {
+      try {
+        activeTabStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
+      } catch {
+        activeTabStatusEl.textContent = "Active tab";
+      }
+    } else {
+      activeTabStatusEl.textContent = "No active tab";
+    }
+  }
+  syncAppliesToTabDots(linksEl, activeTab?.url || null);
+}
+
 async function initCspDisableControl() {
   if (!cspDisableCheckbox) {
     return;
@@ -492,6 +517,7 @@ async function initCspDisableControl() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       void syncFromActiveTab();
+      void syncActiveTabChrome();
     }
   });
 
@@ -508,11 +534,35 @@ async function initCspDisableControl() {
     });
 
     if (cspDisableCheckbox.checked) {
-      showMessage("CSP disabled for this tab. Reload the page to apply.");
+      // Ctrl+Shift+R, not a plain reload: a cached document can be replayed
+      // with its original policy without the headers passing through us.
+      showMessage(
+        `CSP disabled for this tab — hard-reload (Ctrl+Shift+R) to apply. Expires in ${CSP_DISABLE_MINUTES} minutes.`
+      );
     } else {
       hideMessage();
     }
   });
+}
+
+function initActiveTabListeners() {
+  const refresh = () => {
+    void syncActiveTabChrome();
+  };
+
+  if (browser.tabs?.onActivated) {
+    browser.tabs.onActivated.addListener(refresh);
+  }
+  if (browser.tabs?.onUpdated) {
+    browser.tabs.onUpdated.addListener((_tabId, changeInfo) => {
+      if (changeInfo.url || changeInfo.status === "complete") {
+        refresh();
+      }
+    });
+  }
+  if (browser.windows?.onFocusChanged) {
+    browser.windows.onFocusChanged.addListener(refresh);
+  }
 }
 
 async function focusLinkFromMessage(stableKey, queryHint) {
@@ -542,16 +592,7 @@ async function init() {
     visibleSections[0]?.name ||
     null;
 
-  const activeTab = await getActiveTab();
-  if (activeTab?.url) {
-    try {
-      activeTabStatusEl.textContent = `Active tab: ${new URL(activeTab.url).origin}`;
-    } catch {
-      activeTabStatusEl.textContent = "Active tab";
-    }
-  } else {
-    activeTabStatusEl.textContent = "No active tab";
-  }
+  await syncActiveTabChrome();
   updateStickyOffsets();
 
   addScriptBtn.addEventListener("click", () => {
@@ -568,6 +609,7 @@ async function init() {
     }
   });
 
+  initActiveTabListeners();
   browser.storage.onChanged.addListener((changes, area) => {
     if (
       area === "local" &&

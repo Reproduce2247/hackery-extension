@@ -960,6 +960,20 @@ h1 {
   background: color-mix(in srgb, #a78bfa 25%, var(--panel));
 }
 
+.link-applies-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #22c55e 45%, transparent);
+}
+
+.link-applies-dot[hidden] {
+  display: none;
+}
+
 .link-label {
   flex: 1 1 auto;
 }

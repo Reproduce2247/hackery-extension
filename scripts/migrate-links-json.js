@@ -82,6 +82,9 @@ function normalizeLeaf(node) {
   if (node.id) out.id = node.id;
   if (node.name) out.name = node.name;
   if (node.displayName) out.displayName = node.displayName;
+  if (typeof node.tooltip === "string" && node.tooltip.trim()) {
+    out.tooltip = node.tooltip.trim();
+  }
   if (Array.isArray(node.searchTags) && node.searchTags.length) {
     out.searchTags = node.searchTags;
   }

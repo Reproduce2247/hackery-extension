@@ -1,4 +1,9 @@
-import { isCspDisabledForTab, stripCspHeaders } from "../../lib/csp-disable.js";
+import {
+  isCspDisabledForTab,
+  stripCspHeaders,
+  stripMetaCspTags,
+  whenCspStateReady,
+} from "../../lib/csp-disable.js";
 import {
   applyModifyReplacementsToContext,
   appendNetworkLogQueue,
@@ -314,23 +319,110 @@ function onBeforeSendHeaders(details) {
   return headers ? { requestHeaders: headers } : {};
 }
 
-function onHeadersReceived(details) {
-  let responseHeaders = details.responseHeaders;
+/**
+ * Whether a response is an HTML document safe to rewrite for meta-CSP stripping.
+ * Missing Content-Type counts as HTML: Firefox sniffs those for documents.
+ * A declared non-UTF-8 charset disqualifies it — the filter decodes and
+ * re-encodes as UTF-8, which would corrupt anything else.
+ * @param {object} details webRequest details for the response.
+ * @param {Record<string, string>} headers Response headers, original casing.
+ */
+function isHtmlDocumentResponse(details, headers) {
+  if (details.type !== "main_frame" && details.type !== "sub_frame") {
+    return false;
+  }
+  const contentType = String(
+    headers?.["Content-Type"] || headers?.["content-type"] || ""
+  ).toLowerCase();
+  if (contentType && !contentType.includes("html")) {
+    return false;
+  }
+  const charset = /charset\s*=\s*"?([^";]+)/.exec(contentType)?.[1]?.trim();
+  return !charset || charset === "utf-8" || charset === "us-ascii";
+}
 
-  if (isCspDisabledForTab(details.tabId)) {
+/**
+ * Buffer the whole response so text rules and meta-CSP stripping can rewrite it.
+ * Note this delays first paint until the response completes, and leaves any
+ * Content-Length header stale — acceptable for opt-in rules and the CSP toggle.
+ * @param {object} details webRequest details for the response.
+ * @param {object[]} bodyRules Rules needing body access (may be empty).
+ * @param {object} ctx Rule-matching context for this response.
+ * @param {boolean} stripMetaCsp Remove meta CSP tags before rules run.
+ */
+function filterResponseBody(details, bodyRules, ctx, stripMetaCsp) {
+  try {
+    const filter = browser.webRequest.filterResponseData(details.requestId);
+    const decoder = new TextDecoder("utf-8");
+    const encoder = new TextEncoder();
+    const chunks = [];
+
+    filter.ondata = (event) => {
+      chunks.push(event.data);
+    };
+
+    filter.onstop = () => {
+      try {
+        const totalLength = chunks.reduce(
+          (sum, chunk) => sum + chunk.byteLength,
+          0
+        );
+        const merged = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(new Uint8Array(chunk), offset);
+          offset += chunk.byteLength;
+        }
+
+        let bodyText = decoder.decode(merged);
+        if (stripMetaCsp) {
+          bodyText = stripMetaCspTags(bodyText, details.url) ?? bodyText;
+        }
+        if (!bodyRules.length) {
+          filter.write(encoder.encode(bodyText));
+        } else {
+          const result = applyResponseBodyRules(bodyRules, ctx, bodyText);
+          filter.write(encoder.encode(result.blocked ? "" : result.body ?? bodyText));
+        }
+      } catch {
+        for (const chunk of chunks) {
+          filter.write(chunk);
+        }
+      }
+      filter.close();
+    };
+
+    filter.onerror = () => {
+      filter.disconnect();
+    };
+  } catch {
+    // filterResponseData unavailable for this request
+  }
+}
+
+function applyHeadersReceived(details) {
+  let responseHeaders = details.responseHeaders;
+  const cspDisabled = isCspDisabledForTab(details.tabId);
+  const headerObject = webRequestHeadersToObject(responseHeaders);
+  const stripMetaCsp =
+    cspDisabled && isHtmlDocumentResponse(details, headerObject);
+
+  if (cspDisabled) {
     const stripped = stripCspHeaders(responseHeaders);
     if (stripped) {
       responseHeaders = stripped;
     }
   }
 
-  if (!webRequestEnabled || details.tabId < 0) {
-    return responseHeaders !== details.responseHeaders
-      ? { responseHeaders }
-      : {};
-  }
+  const rulesApply =
+    webRequestEnabled &&
+    details.tabId >= 0 &&
+    !shouldDeferToPageHook(details.type);
 
-  if (shouldDeferToPageHook(details.type)) {
+  if (!rulesApply) {
+    if (stripMetaCsp) {
+      filterResponseBody(details, [], null, true);
+    }
     return responseHeaders !== details.responseHeaders
       ? { responseHeaders }
       : {};
@@ -358,56 +450,19 @@ function onHeadersReceived(details) {
   const bodyRules = matching.filter((rule) =>
     responseNeedsBodyFilter(rule, ctx.resourceType)
   );
-
-  if (
-    bodyRules.length &&
+  const bodyRulesNeedFilter =
+    bodyRules.length > 0 &&
     (bodyRules.some((rule) => rule.action === "block") ||
-      isTextLikeContentType(ctx.headers))
-  ) {
-    try {
-      const filter = browser.webRequest.filterResponseData(details.requestId);
-      const decoder = new TextDecoder("utf-8");
-      const encoder = new TextEncoder();
-      const chunks = [];
+      isTextLikeContentType(ctx.headers));
 
-      filter.ondata = (event) => {
-        chunks.push(event.data);
-      };
-
-      filter.onstop = () => {
-        try {
-          const totalLength = chunks.reduce(
-            (sum, chunk) => sum + chunk.byteLength,
-            0
-          );
-          const merged = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of chunks) {
-            merged.set(new Uint8Array(chunk), offset);
-            offset += chunk.byteLength;
-          }
-
-          let bodyText = decoder.decode(merged);
-          const result = applyResponseBodyRules(bodyRules, ctx, bodyText);
-          if (result.blocked) {
-            filter.write(encoder.encode(""));
-          } else {
-            filter.write(encoder.encode(result.body ?? bodyText));
-          }
-        } catch {
-          for (const chunk of chunks) {
-            filter.write(chunk);
-          }
-        }
-        filter.close();
-      };
-
-      filter.onerror = () => {
-        filter.disconnect();
-      };
-    } catch {
-      // filterResponseData unavailable for this request
-    }
+  // One filterResponseData per request, so both concerns share a single filter.
+  if (bodyRulesNeedFilter || stripMetaCsp) {
+    filterResponseBody(
+      details,
+      bodyRulesNeedFilter ? bodyRules : [],
+      ctx,
+      stripMetaCsp
+    );
   }
 
   return responseHeaders !== details.responseHeaders
@@ -415,6 +470,26 @@ function onHeadersReceived(details) {
     : {};
 }
 
+function onHeadersReceived(details) {
+  // This listener is registered at load so Firefox can wake the event page for
+  // it, which means the first responses after a wake-up arrive before the
+  // disabled-tab set has been read back. Firefox lets a blocking listener
+  // return a promise, so stall those rather than let CSP through unstripped.
+  const pending = whenCspStateReady();
+  if (pending) {
+    return pending.then(() => applyHeadersReceived(details));
+  }
+  return applyHeadersReceived(details);
+}
+
+/**
+ * Firefox only wakes an event page for listeners added synchronously during the
+ * background script's first run, so this runs at module load rather than from
+ * syncNetworkWebRequest. Registering late meant CSP stripping and rule matching
+ * silently stopped once the background suspended. The handlers read the
+ * webRequest* module state, which stays empty until the first sync — safe,
+ * because empty state simply means no rules match.
+ */
 function registerWebRequestListeners() {
   if (webRequestListenersRegistered) {
     return;
@@ -448,5 +523,6 @@ export function syncNetworkWebRequest(state, hooksEnabled = true, sharedState = 
     webRequestEnabled = false;
     webRequestPageHookActive = false;
   }
-  registerWebRequestListeners();
 }
+
+registerWebRequestListeners();

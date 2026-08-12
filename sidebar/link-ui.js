@@ -3,22 +3,57 @@ import { folderStableKey, linkStableKey } from "../lib/catalog-order.js";
 import { isCustomLink } from "../lib/link-catalog.js";
 import {
   displayHint,
-  formatOpenHint,
   linkBadgeClass,
   linkBadgeLabel,
+  linkBadgeTitle,
   matchBehavior,
 } from "../lib/link-behaviors.js";
 import {
   getEditableValueDefs,
   linkStorageKey,
+  matchesHostPattern,
   nodeHasOnLoad,
   resolveMatch,
   resolveParamValues,
 } from "../lib/link-model.js";
 import { SLOT_COMMANDS, SLOT_LABELS, slotForKey } from "../lib/link-shortcuts.js";
-import { resolveNavScriptletUrl } from "../lib/navigation-shared.js";
 import { StorageKeys } from "../lib/storage-keys.js";
-import { getTargetTab } from "../lib/tab-target.js";
+
+const APPLIES_TO_TAB_TITLE = "Applies to this tab";
+
+/**
+ * True when the link's match pattern targets the given tab URL.
+ * No pattern means the link always uses the active tab.
+ * @param {string|null|undefined} matchPattern
+ * @param {string|null|undefined} tabUrl
+ */
+export function linkAppliesToTab(matchPattern, tabUrl) {
+  if (!tabUrl) {
+    return false;
+  }
+  return matchesHostPattern(tabUrl, matchPattern ?? null);
+}
+
+/**
+ * Show/hide apply-dots on rendered rows when the active tab changes.
+ * @param {ParentNode|null|undefined} container
+ * @param {string|null|undefined} tabUrl
+ */
+export function syncAppliesToTabDots(container, tabUrl) {
+  if (!container) {
+    return;
+  }
+  for (const row of container.querySelectorAll(".link-row")) {
+    if (!Object.prototype.hasOwnProperty.call(row.dataset, "match")) {
+      continue;
+    }
+    const pattern = row.dataset.match || null;
+    const dot = row.querySelector(".link-applies-dot");
+    if (dot) {
+      dot.hidden = !linkAppliesToTab(pattern, tabUrl);
+    }
+  }
+}
 
 const { INJECT_ON_LOAD_KEY } = StorageKeys;
 
@@ -149,19 +184,6 @@ function getUiParameterDefs(node) {
 
 function displayLabel(node) {
   return node.displayName || node.name;
-}
-
-async function resolveNavScriptletHint(node, row, parameterDefs) {
-  const paramValues = resolveParamValues(
-    parameterDefs,
-    readParamValuesFromRow(row, parameterDefs)
-  );
-  const matchPattern = node.match ?? null;
-  const { tab, origin } = await getTargetTab(matchPattern);
-  const url =
-    resolveNavScriptletUrl(node.code, tab.url, origin, tab, paramValues) ||
-    "Navigation script";
-  return formatOpenHint(node.open, url);
 }
 
 function bindParamInput(input, def, linkKey, onEnter) {
@@ -418,6 +440,7 @@ export function createLinkUi({
     }
     row.dataset.linkKey = linkKey;
     row.dataset.stableKey = stableKey;
+    row.dataset.match = node.match ?? "";
     if (options.enableDrag && onReorderSiblings) {
       row.draggable = true;
       row.addEventListener("dragstart", (event) => {
@@ -466,13 +489,27 @@ export function createLinkUi({
     }
     button.dataset.behavior = matchBehavior(node)?.id || "";
 
+    const applyDot = document.createElement("span");
+    applyDot.className = "link-applies-dot";
+    applyDot.title = APPLIES_TO_TAB_TITLE;
+    applyDot.setAttribute("aria-label", APPLIES_TO_TAB_TITLE);
+    applyDot.hidden = !linkAppliesToTab(node.match, options.activeTabUrl);
+
     const badge = document.createElement("span");
     badge.className = linkBadgeClass(node);
     badge.textContent = linkBadgeLabel(node);
+    const badgeTitle = linkBadgeTitle(node);
+    if (badgeTitle) {
+      badge.title = badgeTitle;
+      badge.setAttribute("aria-label", badgeTitle);
+    }
 
     const labelWrap = document.createElement("span");
     labelWrap.className = "link-label";
     labelWrap.appendChild(document.createTextNode(displayLabel(node)));
+    if (node.tooltip) {
+      labelWrap.title = node.tooltip;
+    }
 
     const slotCmd = slotForKey(getShortcutSlots?.() || {}, stableKey);
     if (slotCmd) {
@@ -486,18 +523,6 @@ export function createLinkUi({
     const hint = document.createElement("span");
     hint.className = "link-hint";
     const updateHint = () => {
-      const behavior = matchBehavior(node);
-      if (behavior?.id === "open-from-script") {
-        hint.textContent = displayHint(node) || "…";
-        resolveNavScriptletHint(node, row, parameterDefs)
-          .then((text) => {
-            hint.textContent = text;
-          })
-          .catch(() => {
-            hint.textContent = formatOpenHint(node.open, "Navigation script");
-          });
-        return;
-      }
       hint.textContent = displayHint(
         node,
         resolveParamValues(parameterDefs, readParamValuesFromRow(row, parameterDefs))
@@ -506,6 +531,7 @@ export function createLinkUi({
     updateHint();
     labelWrap.appendChild(hint);
 
+    button.appendChild(applyDot);
     button.appendChild(badge);
     button.appendChild(labelWrap);
     button.addEventListener("click", () => activateLink(node, row));
@@ -678,6 +704,7 @@ export function createLinkUi({
           {
             savedParamValues,
             injectOnLoad,
+            activeTabUrl: options.activeTabUrl,
             showRemove: options.showRemoveColumn,
             isCustom: isCustomLink(node),
             enableDrag: options.enableDrag,

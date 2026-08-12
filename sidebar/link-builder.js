@@ -253,6 +253,7 @@ export function getBuilderFormElements(root = document) {
     typeSelect: root.getElementById("link-type"),
     nameInput: root.getElementById("link-name"),
     displayNameInput: root.getElementById("link-display-name"),
+    tooltipInput: root.getElementById("link-tooltip"),
     codeInput: root.getElementById("link-code"),
     pathInput: root.getElementById("link-path"),
     urlInput: root.getElementById("link-url"),
@@ -307,6 +308,9 @@ export function buildLinkNodeFromForm(form) {
   }
   if (form.displayName.trim()) {
     draft.displayName = form.displayName.trim();
+  }
+  if (form.tooltip.trim()) {
+    draft.tooltip = form.tooltip.trim();
   }
 
   if (form.match !== undefined) {
@@ -429,6 +433,7 @@ export function readBuilderForm(elements) {
     type: elements.typeSelect.value,
     name: elements.nameInput.value,
     displayName: elements.displayNameInput.value,
+    tooltip: elements.tooltipInput?.value || "",
     match,
     searchTags: elements.searchTagsInput.value,
     code: getFieldValue(elements.codeInput),
@@ -447,6 +452,9 @@ export function populateBuilderForm(elements, node, sectionName, sectionNames) {
   elements.typeSelect.value = inferBuilderType(normalized);
   elements.nameInput.value = normalized.name || "";
   elements.displayNameInput.value = normalized.displayName || "";
+  if (elements.tooltipInput) {
+    elements.tooltipInput.value = normalized.tooltip || "";
+  }
   populateHostPattern(elements.fieldElements, normalized.match);
   elements.searchTagsInput.value = Array.isArray(normalized.searchTags)
     ? normalized.searchTags.join(", ")
@@ -470,6 +478,9 @@ export function clearBuilderForm(elements, sectionNames, defaultSection) {
   elements.typeSelect.value = "scriptlet";
   elements.nameInput.value = "";
   elements.displayNameInput.value = "";
+  if (elements.tooltipInput) {
+    elements.tooltipInput.value = "";
+  }
   populateHostPattern(elements.fieldElements, undefined);
   elements.searchTagsInput.value = "";
   setFieldValue(elements.codeInput, "");

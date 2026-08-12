@@ -11,8 +11,10 @@
   },
   "permissions": [
     "activeTab",
+    "alarms",
     "clipboardWrite",
     "contextMenus",
+    "declarativeNetRequestWithHostAccess",
     "downloads",
     "scripting",
     "storage",

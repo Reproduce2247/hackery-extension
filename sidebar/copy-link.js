@@ -11,7 +11,11 @@ import {
   resolveParamValues,
   seedNavParamValues,
 } from "../lib/link-model.js";
-import { resolveNavScriptletUrl, resolveUrlAction } from "../lib/navigation-shared.js";
+import {
+  coerceScriptletNavigationUrl,
+  resolveUrlAction,
+} from "../lib/navigation-shared.js";
+import { executeScriptletWithBindings } from "../lib/scriptlet-inject.js";
 import { getTargetTab } from "../lib/tab-target.js";
 
 async function resolveCopyText(node, row) {
@@ -54,13 +58,15 @@ async function resolveCopyText(node, row) {
   if (behavior.id === "open-from-script") {
     const matchPattern = node.match ?? null;
     const { tab, origin } = await getTargetTab(matchPattern);
-    const url = resolveNavScriptletUrl(
+    // Nav scripts read page globals (g_form, g_list, GlideList2) and the page
+    // DOM, so only the page can produce the URL. Same injection path as
+    // activation, so copying succeeds exactly when Run does.
+    const returnValue = await executeScriptletWithBindings(
+      tab.id,
       node.code,
-      tab.url,
-      origin,
-      tab,
       paramValues
     );
+    const url = coerceScriptletNavigationUrl(returnValue, tab, origin);
     if (!url) {
       throw new Error("Navigation script did not resolve to a URL.");
     }
@@ -68,7 +74,16 @@ async function resolveCopyText(node, row) {
   }
 
   if (behavior.id === "run") {
-    return node.code || "";
+    const code = node.code || "";
+    // Injection binds params as function arguments (see executeScriptletWithBindings);
+    // pasted code has no such scope, so emit them as declarations ahead of the snippet.
+    const declarations = runtimeDefs
+      .filter((def) => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(def.name))
+      .map(
+        (def) =>
+          `var ${def.name} = ${JSON.stringify(paramValues[def.name] ?? "")};`
+      );
+    return declarations.length ? `${declarations.join("\n")}\n${code}` : code;
   }
 
   const matchPattern = node.match ?? null;

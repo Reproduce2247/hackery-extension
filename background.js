@@ -3,7 +3,12 @@ import { activateLinkNode } from "./lib/activate-link.js";
 import { createBackgroundMessageHandlers } from "./lib/background-messages.js";
 import { appendMissingKeys, applyOrder, loadCatalogOrder } from "./lib/catalog-order.js";
 import { CATALOG_CHANGED, isCatalogChangedMessage } from "./lib/catalog-events.js";
-import { initCspDisable, isCspDisabledForTab, setCspDisabledForTab } from "./lib/csp-disable.js";
+import {
+  initCspDisable,
+  isCspDisabledForTab,
+  setCspDisabledForTab,
+  whenCspStateReady,
+} from "./lib/csp-disable.js";
 import { ensureLinksOverlayInStorage, mergeLinksCatalog } from "./lib/link-catalog.js";
 import { collectScriptlets, getParameterDefs, matchesHostPattern, resolveParamValues } from "./lib/link-model.js";
 import { searchCatalog } from "./lib/link-search.js";
@@ -244,7 +249,6 @@ async function initExtension({ clearLinksCache = false } = {}) {
   if (clearLinksCache) {
     linksCache = null;
   }
-  initCspDisable();
   await Promise.all([
     refreshInjectState(),
     syncContextTargetRegistration()
@@ -277,6 +281,7 @@ const messageHandlers = {
     loadExtensionSettings,
     isCspDisabledForTab,
     setCspDisabledForTab,
+    whenCspStateReady,
     collectNetworkSettingsPayload: (next) => Network.collectSettingsPayload(next),
   }),
   ...Network.createMessageHandlers(),
@@ -312,6 +317,10 @@ browser.storage.onChanged.addListener((changes, area) => {
     }
   }
 });
+
+// Top level, not inside initExtension: event pages only wake for listeners
+// registered during the background script's first synchronous run.
+initCspDisable();
 
 browser.tabs.onRemoved.addListener((tabId) => {
   Network.handleTabRemoved(tabId);
