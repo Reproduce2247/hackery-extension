@@ -537,7 +537,7 @@ async function initCspDisableControl() {
       // Ctrl+Shift+R, not a plain reload: a cached document can be replayed
       // with its original policy without the headers passing through us.
       showMessage(
-        `CSP disabled for this tab — hard-reload (Ctrl+Shift+R) to apply. Expires in ${CSP_DISABLE_MINUTES} minutes.`
+        `CSP disabled for this tab and any tab it opens — hard-reload (Ctrl+Shift+R) to apply. Expires after ${CSP_DISABLE_MINUTES} minutes.`
       );
     } else {
       hideMessage();
@@ -628,6 +628,10 @@ async function init() {
     }
     if (message?.type === MessageTypes.FOCUS_SIDEBAR_LINK) {
       void focusLinkFromMessage(message.stableKey, message.query);
+      return;
+    }
+    if (message?.type === MessageTypes.CSP_DISABLED_CHANGED) {
+      void getActiveTab().then((tab) => syncCspDisableUi(tab));
     }
   });
 

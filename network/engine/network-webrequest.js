@@ -1,5 +1,6 @@
 import {
   isCspDisabledForTab,
+  isCspStateHydrated,
   stripCspHeaders,
   stripMetaCspTags,
   whenCspStateReady,
@@ -358,12 +359,17 @@ function isHtmlDocumentResponse(details, headers) {
  * Buffer the whole response so text rules and meta-CSP stripping can rewrite it.
  * Note this delays first paint until the response completes, and leaves any
  * Content-Length header stale — acceptable for opt-in rules and the CSP toggle.
+ *
+ * Must be called synchronously from the webRequest listener: filterResponseData
+ * only accepts a request id while that request's listener is on the stack.
  * @param {object} details webRequest details for the response.
  * @param {object[]} bodyRules Rules needing body access (may be empty).
  * @param {object} ctx Rule-matching context for this response.
- * @param {boolean} stripMetaCsp Remove meta CSP tags before rules run.
+ * @param {boolean} maybeStripMetaCsp Whether this response is a rewritable HTML
+ *   document in a tab that has, or may turn out to have, CSP disabled. Resolved
+ *   for real in onstop, once the disabled-tab set is known.
  */
-function filterResponseBody(details, bodyRules, ctx, stripMetaCsp) {
+function filterResponseBody(details, bodyRules, ctx, maybeStripMetaCsp) {
   try {
     const filter = browser.webRequest.filterResponseData(details.requestId);
     const decoder = new TextDecoder("utf-8");
@@ -375,34 +381,43 @@ function filterResponseBody(details, bodyRules, ctx, stripMetaCsp) {
     };
 
     filter.onstop = () => {
-      try {
-        const totalLength = chunks.reduce(
-          (sum, chunk) => sum + chunk.byteLength,
-          0
-        );
-        const merged = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-          merged.set(new Uint8Array(chunk), offset);
-          offset += chunk.byteLength;
-        }
+      // The filter stays open until close(), so the disabled-tab set can be
+      // read here. Deciding now rather than at header time avoids attaching
+      // the filter from a promise, which arrives too late for the request id.
+      void Promise.resolve(
+        maybeStripMetaCsp ? whenCspStateReady() : null
+      ).then(() => {
+        try {
+          const totalLength = chunks.reduce(
+            (sum, chunk) => sum + chunk.byteLength,
+            0
+          );
+          const merged = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const chunk of chunks) {
+            merged.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+          }
 
-        let bodyText = decoder.decode(merged);
-        if (stripMetaCsp) {
-          bodyText = stripMetaCspTags(bodyText, details.url) ?? bodyText;
+          let bodyText = decoder.decode(merged);
+          if (maybeStripMetaCsp && isCspDisabledForTab(details.tabId)) {
+            bodyText = stripMetaCspTags(bodyText, details.url) ?? bodyText;
+          }
+          if (!bodyRules.length) {
+            filter.write(encoder.encode(bodyText));
+          } else {
+            const result = applyResponseBodyRules(bodyRules, ctx, bodyText);
+            filter.write(
+              encoder.encode(result.blocked ? "" : result.body ?? bodyText)
+            );
+          }
+        } catch {
+          for (const chunk of chunks) {
+            filter.write(chunk);
+          }
         }
-        if (!bodyRules.length) {
-          filter.write(encoder.encode(bodyText));
-        } else {
-          const result = applyResponseBodyRules(bodyRules, ctx, bodyText);
-          filter.write(encoder.encode(result.blocked ? "" : result.body ?? bodyText));
-        }
-      } catch {
-        for (const chunk of chunks) {
-          filter.write(chunk);
-        }
-      }
-      filter.close();
+        filter.close();
+      });
     };
 
     filter.onerror = () => {
@@ -413,12 +428,19 @@ function filterResponseBody(details, bodyRules, ctx, stripMetaCsp) {
   }
 }
 
-function applyHeadersReceived(details) {
+function onHeadersReceived(details) {
   let responseHeaders = details.responseHeaders;
   const cspDisabled = isCspDisabledForTab(details.tabId);
   const headerObject = webRequestHeadersToObject(responseHeaders);
+  // Until the set is read back, a disabled tab looks the same as a normal one,
+  // so buffer the document on the chance it turns out to be disabled. That
+  // costs first paint on documents landing in the window between a background
+  // wake-up and the storage read, which is why hydration starts at background
+  // load rather than on first use. Headers need no such care: the DNR session
+  // rule strips those whether or not this listener knows anything.
   const stripMetaCsp =
-    cspDisabled && isHtmlDocumentResponse(details, headerObject);
+    (cspDisabled || !isCspStateHydrated()) &&
+    isHtmlDocumentResponse(details, headerObject);
 
   if (cspDisabled) {
     const stripped = stripCspHeaders(responseHeaders);
@@ -481,18 +503,6 @@ function applyHeadersReceived(details) {
   return responseHeaders !== details.responseHeaders
     ? { responseHeaders }
     : {};
-}
-
-function onHeadersReceived(details) {
-  // This listener is registered at load so Firefox can wake the event page for
-  // it, which means the first responses after a wake-up arrive before the
-  // disabled-tab set has been read back. Firefox lets a blocking listener
-  // return a promise, so stall those rather than let CSP through unstripped.
-  const pending = whenCspStateReady();
-  if (pending) {
-    return pending.then(() => applyHeadersReceived(details));
-  }
-  return applyHeadersReceived(details);
 }
 
 /**
