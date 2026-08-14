@@ -591,6 +591,22 @@
         "url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=999.0&acceptformat=crx2,crx3&x=id%3D{id}%26uc"
       },
       {
+        "id": "6467f242-4dec-4cce-9365-fb60e15b32f4",
+        "name": "Download VSIX",
+        "displayName": "eriklynd.json-tools",
+        "url": "https://{publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/{publisher}/extension/{extension_name}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage",
+        "open": "download",
+        "match": "marketplace\\.visualstudio\\.com/items\\?itemName",
+        "navParams": {
+          "extension_name": {
+            "fromUrl": "itemName=[^.&]+\\.([^&#]+)"
+          },
+          "publisher": {
+            "fromUrl": "itemName=([^.&]+)\\."
+          }
+        }
+      },
+      {
         "name": "Complete ServiceNow University course",
         "match": "^https:\\\/\\\/learning\\.servicenow\\.com\\/lxp.*\\?id=learning_course&course_id=.*",
         "searchTags": [
