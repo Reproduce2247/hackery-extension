@@ -293,8 +293,9 @@
 
   function objectToHeaders(headers) {
     const next = new Headers();
-    // Cookie/Origin/Referer are forbidden in page JS — send as x-complexlinker-*
-    // and let webRequest rewrite them (see rewritePrivilegedRequestHeaders).
+    // Cookie/Origin/Referer/User-Agent are forbidden in page JS — send as
+    // x-complexlinker-* and let webRequest rewrite them (see
+    // rewritePrivilegedRequestHeaders).
     for (const [key, value] of Object.entries(
       encodePrivilegedRequestHeaders(headers)
     )) {

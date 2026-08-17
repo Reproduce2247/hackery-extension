@@ -10,7 +10,12 @@ const MAX_PATTERN_INPUT_LENGTH = 65536;
  * back before the request leaves the browser (Greasemonkey-style).
  */
 const PRIVILEGED_REQUEST_HEADER_PREFIX = "x-complexlinker-";
-const PRIVILEGED_REQUEST_HEADER_NAMES = ["cookie", "origin", "referer"];
+const PRIVILEGED_REQUEST_HEADER_NAMES = [
+  "cookie",
+  "origin",
+  "referer",
+  "user-agent",
+];
 
 /**
  * Whether a header name is rewritten via the privileged dummy-prefix path.
@@ -21,7 +26,7 @@ function isPrivilegedRequestHeaderName(name) {
 }
 
 /**
- * Replace Cookie/Origin/Referer keys with x-complexlinker-* so MAIN-world
+ * Replace privileged header keys with x-complexlinker-* so MAIN-world
  * Headers / setRequestHeader accept them.
  * @param {Record<string, string>|null|undefined} headers
  * @returns {Record<string, string>}
@@ -58,7 +63,7 @@ function findWebRequestHeaderIndex(headers, name) {
 }
 
 /**
- * Rewrite x-complexlinker-{cookie|origin|referer} into the real header names.
+ * Rewrite x-complexlinker-{cookie|origin|referer|user-agent} into the real header names.
  * @param {{name: string, value?: string}[]|null|undefined} headerList
  * @returns {{ headers: {name: string, value?: string}[], changed: boolean }}
  */
@@ -919,8 +924,9 @@ function createNetworkRuleEngine(options = {}) {
 
   function objectToHeaders(headers) {
     const next = new Headers();
-    // Cookie/Origin/Referer are forbidden in page JS — send as x-complexlinker-*
-    // and let webRequest rewrite them (see rewritePrivilegedRequestHeaders).
+    // Cookie/Origin/Referer/User-Agent are forbidden in page JS — send as
+    // x-complexlinker-* and let webRequest rewrite them (see
+    // rewritePrivilegedRequestHeaders).
     for (const [key, value] of Object.entries(
       encodePrivilegedRequestHeaders(headers)
     )) {
