@@ -136,6 +136,7 @@ attachCodeMirrorAll({
   requestScript: {
     element: ruleRequestScriptEl,
     language: "javascript",
+    completions: "network-script",
     minHeight: 120,
     placeholder:
       "function(ctx, rule) { console.log(ctx.url, ctx.body); return ctx; }",
@@ -143,6 +144,7 @@ attachCodeMirrorAll({
   responseScript: {
     element: ruleResponseScriptEl,
     language: "javascript",
+    completions: "network-script",
     minHeight: 120,
     placeholder: "function(ctx, rule) { return ctx; }",
   },

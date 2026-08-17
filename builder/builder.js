@@ -20,6 +20,7 @@ import {
   initBuilderForm,
   updateBuilderFieldVisibility,
 } from "../sidebar/link-builder.js";
+import { readParameterFields } from "../sidebar/link-builder-fields.js";
 import { downloadOverlayJson } from "../sidebar/link-export.js";
 import { linkBadgeLabel } from "../lib/link-behaviors.js";
 import { overlayExport } from "../lib/link-catalog.js";
@@ -39,10 +40,25 @@ const deleteLinkBtn = document.getElementById("delete-link-btn");
 
 const builderElements = getBuilderFormElements();
 
+/**
+ * Collect scriptlet param names currently defined in the builder form.
+ * @returns {string[]}
+ */
+function currentScriptletParamNames() {
+  const fields = readParameterFields(builderElements.fieldElements);
+  if (fields.parameter?.name) {
+    return [fields.parameter.name];
+  }
+  const bag = fields.parameters || fields.params;
+  return bag ? Object.keys(bag) : [];
+}
+
 attachCodeMirrorAll({
   linkCode: {
     element: builderElements.codeInput,
     language: "javascript",
+    completions: "scriptlet",
+    getParamNames: currentScriptletParamNames,
     minHeight: 120,
   },
   hostPattern: {
