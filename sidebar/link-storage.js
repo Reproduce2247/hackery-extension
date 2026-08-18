@@ -96,61 +96,98 @@ export async function importLinksOverlay(raw) {
   return result;
 }
 
-export async function findCustomLinkById(linkId) {
-  const overlay = await ensureLinksOverlay();
-  for (const [sectionName, section] of Object.entries(overlay)) {
-    if (!Array.isArray(section?.children)) {
+/**
+ * Locate a custom leaf inside an overlay section, including inside folders.
+ * Returns the live `children` array that holds it so callers can splice in place.
+ * @returns {{ siblings: object[], index: number, node: object } | null}
+ */
+function locateCustomLeaf(children, linkId) {
+  if (!Array.isArray(children)) {
+    return null;
+  }
+  for (let index = 0; index < children.length; index++) {
+    const node = children[index];
+    if (node?.children) {
+      const nested = locateCustomLeaf(node.children, linkId);
+      if (nested) {
+        return nested;
+      }
       continue;
     }
-    const index = section.children.findIndex((node) => node.id === linkId);
-    if (index !== -1) {
-      return { sectionName, index, node: section.children[index] };
+    if (node?.id === linkId) {
+      return { siblings: children, index, node };
     }
   }
   return null;
 }
 
-export async function removeCustomLinkById(linkId) {
-  const found = await findCustomLinkById(linkId);
+/**
+ * @returns {{ overlay: object, sectionName: string, siblings: object[], index: number, node: object } | null}
+ */
+async function locateCustomLinkInOverlay(linkId) {
+  const overlay = await ensureLinksOverlay();
+  for (const [sectionName, section] of Object.entries(overlay)) {
+    const found = locateCustomLeaf(section?.children, linkId);
+    if (found) {
+      return { overlay, sectionName, ...found };
+    }
+  }
+  return null;
+}
+
+/** Ids of every leaf stored in the overlay — the links a user can edit or remove. */
+export async function collectOverlayCustomLinkIds() {
+  const overlay = await ensureLinksOverlay();
+  const ids = new Set();
+  const walk = (nodes) => {
+    for (const node of nodes || []) {
+      if (node?.children) {
+        walk(node.children);
+        continue;
+      }
+      if (node?.id) {
+        ids.add(node.id);
+      }
+    }
+  };
+  for (const section of Object.values(overlay)) {
+    walk(section?.children);
+  }
+  return ids;
+}
+
+export async function findCustomLinkById(linkId) {
+  const found = await locateCustomLinkInOverlay(linkId);
   if (!found) {
-    return;
+    return null;
+  }
+  return { sectionName: found.sectionName, index: found.index, node: found.node };
+}
+
+export async function removeCustomLinkById(linkId) {
+  const found = await locateCustomLinkInOverlay(linkId);
+  if (!found) {
+    throw new Error("Custom link not found. Bundled links are edited in data/links.json.");
   }
 
-  const overlay = await ensureLinksOverlay();
-  const children = overlay[found.sectionName].children.filter(
-    (node) => node.id !== linkId
-  );
-  overlay[found.sectionName] = {
-    ...overlay[found.sectionName],
-    children,
-  };
-  await persistOverlay(overlay, "delete");
+  found.siblings.splice(found.index, 1);
+  await persistOverlay(found.overlay, "delete");
 }
 
 export async function updateCustomLink(linkId, nextNode, targetSectionName) {
-  const found = await findCustomLinkById(linkId);
+  const found = await locateCustomLinkInOverlay(linkId);
   if (!found) {
     throw new Error("Custom link not found.");
   }
 
-  const overlay = await ensureLinksOverlay();
+  const { overlay } = found;
   const node = { ...nextNode, id: linkId };
   const sectionName = targetSectionName || found.sectionName;
 
   if (sectionName === found.sectionName) {
-    const nextChildren = overlay[found.sectionName].children.slice();
-    nextChildren[found.index] = node;
-    overlay[found.sectionName] = {
-      ...overlay[found.sectionName],
-      children: nextChildren,
-    };
+    found.siblings[found.index] = node;
   } else {
-    overlay[found.sectionName] = {
-      ...overlay[found.sectionName],
-      children: overlay[found.sectionName].children.filter(
-        (entry) => entry.id !== linkId
-      ),
-    };
+    found.siblings.splice(found.index, 1);
     overlay[sectionName] = {
       ...(overlay[sectionName] || {}),
       children: (overlay[sectionName]?.children || []).concat(node),
@@ -168,22 +205,29 @@ export async function getAllCustomLinks() {
   );
   const results = [];
 
-  for (const [sectionName, section] of Object.entries(overlay)) {
-    if (!Array.isArray(section?.children)) {
-      continue;
-    }
-    for (const node of section.children) {
-      if (node.id && !node.children) {
-        const key = linkStableKey(sectionName, [], node);
-        results.push({
-          ...node,
-          sectionName,
-          _orderRank: orderIndex.has(key)
-            ? orderIndex.get(key)
-            : Number.MAX_SAFE_INTEGER,
-        });
+  const collect = (nodes, sectionName) => {
+    for (const node of nodes || []) {
+      if (node?.children) {
+        collect(node.children, sectionName);
+        continue;
       }
+      if (!node?.id) {
+        continue;
+      }
+      // Custom links key off their id, so folder depth does not affect the rank.
+      const key = linkStableKey(sectionName, [], node);
+      results.push({
+        ...node,
+        sectionName,
+        _orderRank: orderIndex.has(key)
+          ? orderIndex.get(key)
+          : Number.MAX_SAFE_INTEGER,
+      });
     }
+  };
+
+  for (const [sectionName, section] of Object.entries(overlay)) {
+    collect(section?.children, sectionName);
   }
 
   return results

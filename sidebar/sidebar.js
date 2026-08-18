@@ -10,6 +10,7 @@ import {
   syncAppliesToTabDots,
 } from "./link-ui.js";
 import {
+  collectOverlayCustomLinkIds,
   loadMergedLinkCatalog,
   addLinksToSection,
   removeCustomLinkById,
@@ -32,7 +33,7 @@ import {
   moveKeysInOrder,
   saveCatalogOrder,
 } from "../lib/catalog-order.js";
-import { isCustomLink } from "../lib/link-catalog.js";
+import { isOverlayCustomLink } from "../lib/link-catalog.js";
 import { flattenLinkNodes, parseLinkSections } from "../lib/link-model.js";
 import {
   LINK_SHORTCUT_SLOTS_KEY,
@@ -136,7 +137,7 @@ async function assignShortcut(node, commandName, row = null) {
   await renderAll();
   showMessage(
     commandName
-      ? `Assigned Alt+${SLOT_LABELS[commandName]} to “${node.displayName || node.name}”.`
+      ? `Assigned Alt+${SLOT_LABELS[commandName]} to “${node.name}”.`
       : "Shortcut cleared."
   );
 }
@@ -160,9 +161,9 @@ function getVisibleSections() {
   return linkSections || [];
 }
 
-function sectionHasCustomLinks(section) {
+function sectionHasCustomLinks(section, overlayLinkIds) {
   return flattenLinkNodes(section.children, section.match, section.name).some(
-    (node) => isCustomLink(node)
+    (node) => isOverlayCustomLink(node, overlayLinkIds)
   );
 }
 
@@ -275,7 +276,10 @@ async function renderAll() {
     const activeTab = await getActiveTab();
     const activeTabUrl = activeTab?.url || null;
     const section = getActiveSection();
-    const showRemove = section ? sectionHasCustomLinks(section) : false;
+    const overlayLinkIds = await collectOverlayCustomLinkIds();
+    const showRemove = section
+      ? sectionHasCustomLinks(section, overlayLinkIds)
+      : false;
     const showParams = section ? linkUi.treeHasParams(section.children) : false;
     const showOnLoad = section ? linkUi.treeHasOnLoad(section.children) : false;
     const query = search.normalizeSearchQuery(search.getSearchQuery());
@@ -309,13 +313,13 @@ async function renderAll() {
               injectOnLoad,
               activeTabUrl,
               showRemove: showRemove,
-              isCustom: isCustomLink(node),
+              isCustom: isOverlayCustomLink(node, overlayLinkIds),
               stableKey: linkStableKey(section.name, [], node),
               enableDrag: false,
-              onDelete:
-                isCustomLink(node) && node.id
-                  ? async (event) => {
-                      event.stopPropagation();
+              onDelete: isOverlayCustomLink(node, overlayLinkIds)
+                ? async (event) => {
+                    event.stopPropagation();
+                    try {
                       await removeCustomLinkById(node.id);
                       const nextInject = await loadInjectOnLoad();
                       delete nextInject[node.id];
@@ -323,8 +327,11 @@ async function renderAll() {
                         [INJECT_ON_LOAD_KEY]: nextInject,
                       });
                       await renderAll();
+                    } catch (error) {
+                      showMessage(error.message || String(error));
                     }
-                  : null,
+                  }
+                : null,
               ...search.getSearchRowHighlight(node, query),
             })
           );
@@ -342,14 +349,19 @@ async function renderAll() {
             enableDrag: true,
             activeTabUrl,
             pathParts: [],
+            overlayLinkIds,
             onDeleteCustom: async (linkId) => {
-              await removeCustomLinkById(linkId);
-              const nextInject = await loadInjectOnLoad();
-              delete nextInject[linkId];
-              await browser.storage.local.set({
-                [INJECT_ON_LOAD_KEY]: nextInject,
-              });
-              await renderAll();
+              try {
+                await removeCustomLinkById(linkId);
+                const nextInject = await loadInjectOnLoad();
+                delete nextInject[linkId];
+                await browser.storage.local.set({
+                  [INJECT_ON_LOAD_KEY]: nextInject,
+                });
+                await renderAll();
+              } catch (error) {
+                showMessage(error.message || String(error));
+              }
             },
           }
         );

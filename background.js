@@ -387,7 +387,7 @@ async function activateByStableKey(stableKey, { openSidebarIfNeeded = true } = {
   });
 
   if (outcome.needsParams && openSidebarIfNeeded) {
-    const label = node.displayName || node.name;
+    const label = node.name;
     await openSidebarPanel();
     browser.runtime
       .sendMessage({
@@ -550,7 +550,6 @@ async function openBuilderWithContextPrefill(info, tab) {
 
   const prefill = {
     name: String(name).slice(0, 80),
-    displayName: "",
     absoluteUrl: linkUrl || pageUrl,
     path: "",
     match,

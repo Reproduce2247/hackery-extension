@@ -181,7 +181,6 @@ export function buildPrefillFromTab(tab) {
   const title = tab.title?.trim() || defaultUrlName(url, 0);
   return {
     name: title,
-    displayName: title,
     url,
     params,
     match: hostPatternFromUrl(tab.url),
@@ -252,7 +251,6 @@ export function getBuilderFormElements(root = document) {
     sectionNewField: root.getElementById("link-section-new-field"),
     typeSelect: root.getElementById("link-type"),
     nameInput: root.getElementById("link-name"),
-    displayNameInput: root.getElementById("link-display-name"),
     tooltipInput: root.getElementById("link-tooltip"),
     codeInput: root.getElementById("link-code"),
     pathInput: root.getElementById("link-path"),
@@ -305,9 +303,6 @@ export function buildLinkNodeFromForm(form) {
   const draft = { name };
   if (form.editId) {
     draft.id = form.editId;
-  }
-  if (form.displayName.trim()) {
-    draft.displayName = form.displayName.trim();
   }
   if (form.tooltip.trim()) {
     draft.tooltip = form.tooltip.trim();
@@ -364,8 +359,7 @@ export function buildLinkNodeFromForm(form) {
     throw new Error(`Unknown link type: ${type}`);
   }
 
-  const node = normalizeLeafNode(draft);
-  return form.editId ? node : ensureLinkId(node);
+  return ensureLinkId(normalizeLeafNode(draft));
 }
 
 export function readTargetSection(elements) {
@@ -432,7 +426,6 @@ export function readBuilderForm(elements) {
     sectionName: readTargetSection(elements),
     type: elements.typeSelect.value,
     name: elements.nameInput.value,
-    displayName: elements.displayNameInput.value,
     tooltip: elements.tooltipInput?.value || "",
     match,
     searchTags: elements.searchTagsInput.value,
@@ -451,7 +444,6 @@ export function populateBuilderForm(elements, node, sectionName, sectionNames) {
   populateSectionSelect(elements, sectionNames, sectionName);
   elements.typeSelect.value = inferBuilderType(normalized);
   elements.nameInput.value = normalized.name || "";
-  elements.displayNameInput.value = normalized.displayName || "";
   if (elements.tooltipInput) {
     elements.tooltipInput.value = normalized.tooltip || "";
   }
@@ -477,7 +469,6 @@ export function clearBuilderForm(elements, sectionNames, defaultSection) {
   populateSectionSelect(elements, sectionNames, defaultSection);
   elements.typeSelect.value = "scriptlet";
   elements.nameInput.value = "";
-  elements.displayNameInput.value = "";
   if (elements.tooltipInput) {
     elements.tooltipInput.value = "";
   }
@@ -499,7 +490,6 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
   const resolvedType = prefill.builderType || type;
   elements.typeSelect.value = resolvedType;
   elements.nameInput.value = prefill.name || "";
-  elements.displayNameInput.value = prefill.displayName || prefill.name || "";
   elements.urlInput.value =
     prefill.url ||
     prefill.path ||
@@ -558,9 +548,6 @@ function applyPrefillIfEmpty(elements, prefill, type) {
 
   if (!elements.nameInput.value.trim()) {
     elements.nameInput.value = prefill.name || "";
-  }
-  if (!elements.displayNameInput.value.trim()) {
-    elements.displayNameInput.value = prefill.displayName || prefill.name || "";
   }
   if (!elements.urlInput.value.trim()) {
     elements.urlInput.value = prefill.url || prefill.path || "";

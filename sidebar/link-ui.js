@@ -1,6 +1,6 @@
 import { saveParamValue, readParamValuesFromRow } from "../lib/activate-link.js";
 import { folderStableKey, linkStableKey } from "../lib/catalog-order.js";
-import { isCustomLink } from "../lib/link-catalog.js";
+import { isOverlayCustomLink } from "../lib/link-catalog.js";
 import {
   displayHint,
   linkBadgeClass,
@@ -183,7 +183,7 @@ function getUiParameterDefs(node) {
 }
 
 function displayLabel(node) {
-  return node.displayName || node.name;
+  return node.name;
 }
 
 function bindParamInput(input, def, linkKey, onEnter) {
@@ -706,12 +706,13 @@ export function createLinkUi({
             injectOnLoad,
             activeTabUrl: options.activeTabUrl,
             showRemove: options.showRemoveColumn,
-            isCustom: isCustomLink(node),
+            isCustom: isOverlayCustomLink(node, options.overlayLinkIds),
             enableDrag: options.enableDrag,
             pathParts,
             stableKey: linkStableKey(sectionName, pathParts, node),
             onDelete:
-              isCustomLink(node) && node.id && options.onDeleteCustom
+              isOverlayCustomLink(node, options.overlayLinkIds) &&
+              options.onDeleteCustom
                 ? async (event) => {
                     event.stopPropagation();
                     await options.onDeleteCustom(node.id);

@@ -115,6 +115,8 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 
 | Field | Purpose |
 |---|---|
+| `id` | Stable leaf identity (UUID). Bundled leaves all have one; custom leaves get one on create. Order/shortcuts/storage prefer `id`, fall back to `name`-based keys for legacy nodes without one. |
+| `name` | Display label (also used in path/order fallbacks when `id` is absent) |
 | `code` | Script body; `params` keys are lexical bindings at runtime |
 | `url` | Relative path, absolute URL, or template |
 | `open` | How to open a resolved URL (see below) |
@@ -123,7 +125,7 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 | `navParams` | URL/URI substitution values only (see below) |
 | `match` | Host/URL regex; `null` = active tab |
 
-Folders: `{ "name": "…", "children": [ … ] }`.
+Folders: `{ "name": "…", "children": [ … ] }` (no `id`).
 
 ### Navigation (`open`)
 
@@ -347,7 +349,7 @@ When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. 
 
 When matching tabs in the current window: the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
 
-Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key** derived from section + behavior + name + template.
+Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key**: `id` when present, otherwise section + behavior + name + template.
 
 ## Sections (current)
 
@@ -383,6 +385,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 
 - Drag-and-drop in the sidebar reorders bundled and custom items; order is stored in `catalogOrder` and used for display and export
 - Custom links stored in `linksJsonOverlay`; export follows catalog order
+- Edit / Remove are offered only for links **stored in the overlay** (`collectOverlayCustomLinkIds()`), not merely because a leaf has an `id` — bundled `data/links.json` leaves all carry ids, and neither edit nor delete can reach those. Removing a bundled link means editing `data/links.json`.
 - Right-click → Assign Alt+1…0 for global shortcuts
 
 ## Storage keys (`browser.storage.local`)

@@ -130,7 +130,7 @@ function selectLink(linkId) {
   }
 
   populateBuilderForm(builderElements, link, link.sectionName, sectionNames);
-  editorTitleEl.textContent = link.displayName || link.name;
+  editorTitleEl.textContent = link.name;
   deleteLinkBtn.disabled = false;
   renderLinksList();
   markFormClean();
@@ -141,7 +141,7 @@ function createLinkDeleteButton(link) {
   deleteBtn.type = "button";
   deleteBtn.className = "link-item-delete";
   deleteBtn.title = "Delete link";
-  deleteBtn.setAttribute("aria-label", `Delete ${link.displayName || link.name}`);
+  deleteBtn.setAttribute("aria-label", `Delete ${link.name}`);
   deleteBtn.innerHTML =
     '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 1h4l1 1h3v2H2V2h3l1-1zM3 5h10l-1 9H4L3 5zm3 2v5h1V7H6zm3 0v5h1V7H9z"/></svg>';
   deleteBtn.addEventListener("click", (event) => {
@@ -183,7 +183,7 @@ function renderLinksList() {
 
     const label = document.createElement("span");
     label.className = "link-item-label";
-    label.textContent = link.displayName || link.name;
+    label.textContent = link.name;
 
     const sectionHint = document.createElement("span");
     sectionHint.className = "link-item-section";
@@ -252,7 +252,12 @@ async function deleteLinkById(linkId) {
   }
 
   hideMessage();
-  await removeCustomLinkById(link.id);
+  try {
+    await removeCustomLinkById(link.id);
+  } catch (error) {
+    showMessage(error.message || String(error));
+    return;
+  }
 
   if (selectedLinkId === linkId) {
     selectedLinkId = null;

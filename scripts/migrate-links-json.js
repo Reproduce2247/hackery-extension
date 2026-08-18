@@ -80,8 +80,8 @@ function rewriteScriptletPlaceholders(code, paramNames) {
 function normalizeLeaf(node) {
   const out = {};
   if (node.id) out.id = node.id;
-  if (node.name) out.name = node.name;
-  if (node.displayName) out.displayName = node.displayName;
+  if (node.displayName) out.name = node.displayName;
+  else if (node.name) out.name = node.name;
   if (typeof node.tooltip === "string" && node.tooltip.trim()) {
     out.tooltip = node.tooltip.trim();
   }
