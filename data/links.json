@@ -353,6 +353,72 @@
         "code": "(function(){var maxDepth=Math.max(1,parseInt(depth,10)||3);var n=0;function strip(el){var cs=getComputedStyle(el);if(/blur\\s*\\(/i.test(cs.filter))el.style.setProperty('filter','none','important'),n++;if(/blur\\s*\\(/i.test(cs.backdropFilter||''))el.style.setProperty('backdrop-filter','none','important'),n++;if(el.style.filter&&/blur/i.test(el.style.filter)){el.style.filter=el.style.filter.replace(/blur\\([^)]*\\)/gi,'').replace(/^[\\s,]+|[\\s,]+$/g,'');el.style.filter||el.style.removeProperty('filter');n++}(['overflow','overflowX','overflowY']).forEach(function(k,i){var p=['overflow','overflow-x','overflow-y'][i],val=cs[k];if(val==='hidden'||val==='clip')el.style.setProperty(p,'visible','important'),n++})}function walk(el,d){strip(el);if(d>=maxDepth)return;for(var i=0;i<el.children.length;i++)walk(el.children[i],d+1)}if(!document.body){console.warn('No document.body');return}walk(document.body,1);console.log('Removed blur/overflow: '+n+' within '+maxDepth+' level(s) including body')})();"
       },
       {
+        "name": "Load Printliminator",
+        "searchTags": [
+          "print",
+          "printable",
+          "remove elements"
+        ],
+        "code": "(function(){function loadScript(src,done){var script=document.createElement('script');script.src=src;script.onload=done;script.onerror=function(){console.error('Failed to load '+src)};(document.head||document.documentElement).appendChild(script)}function loadPrintliminator(){loadScript('https://css-tricks.com/examples/ThePrintliminator/js/printliminator.js',function(){if(typeof printlimator==='function')printlimator();else console.error('Printliminator did not load')})}if(window.jQuery&&jQuery.fn&&typeof jQuery.fn.live==='function')loadPrintliminator();else loadScript('https://ajax.googleapis.com/ajax/libs/jquery/1.3.2/jquery.min.js',loadPrintliminator)})();"
+      },
+      {
+        "name": "Give everything a background",
+        "code": "(function(){let domStyle=document.getElementById('domStylee');if(domStyle){document.body.removeChild(domStyle);return;} domStyle=document.createElement('style');domStyle.setAttribute('id','domStylee');domStyle.append(['* { color:#0f0!important;outline:solid #f00 1px!important; background-color: rgba(255,0,0,.2) !important; }'],['* * { background-color: rgba(0,255,0,.2) !important; }'],['* * * { background-color: rgba(0,0,255,.2) !important; }'],['* * * * { background-color: rgba(255,0,255,.2) !important; }'],['* * * * * { background-color: rgba(0,255,255,.2) !important; }'],['* * * * * * { background-color: rgba(255,255,0,.2) !important; }'],['* * * * * * * { background-color: rgba(255,0,0,.2) !important; }'],['* * * * * * * * { background-color: rgba(0,255,0,.2) !important; }'],['* * * * * * * * * { background-color: rgba(0,0,255,.2) !important; }'].join());document.body.appendChild(domStyle);})()"
+      },
+      {
+        "name": "Unmask passwords",
+        "searchTags": [
+          "password",
+          "reveal",
+          "shadow dom"
+        ],
+        "code": "(function(){var changed=0,skippedFrames=0;/* Reveal password controls in a document, same-origin frame, or open shadow root. */function walk(root){root.querySelectorAll('input[type=\"password\"]').forEach(function(input){input.type='text';input.style.setProperty('-webkit-text-security','none','important');changed++});root.querySelectorAll('*').forEach(function(el){if(el.shadowRoot)walk(el.shadowRoot)});root.querySelectorAll('iframe,frame').forEach(function(frame){try{if(frame.contentDocument)walk(frame.contentDocument);else skippedFrames++}catch(e){skippedFrames++}})}walk(document);console.log('Unmasked '+changed+' password field(s); skipped '+skippedFrames+' inaccessible cross-origin frame(s)')})();"
+      },
+      {
+        "name": "Disable form validation",
+        "searchTags": [
+          "required",
+          "invalid",
+          "mandatory",
+          "constraint",
+          "jquery validate",
+          "unobtrusive validation"
+        ],
+        "code": "(function(){var forms=0,controls=0;/* Remove native constraints and common DOM-based validation conventions. */function relax(root){root.querySelectorAll('form').forEach(function(form){form.noValidate=true;form.setAttribute('novalidate','');form.removeAttribute('data-val');if(window.jQuery){try{jQuery(form).off('.validate').removeData('validator').removeData('unobtrusiveValidation')}catch(e){}}forms++});root.querySelectorAll('input,select,textarea').forEach(function(control){['required','pattern','min','max','minlength','maxlength','step','data-val','data-rule-required'].forEach(function(attr){control.removeAttribute(attr)});control.required=false;control.setCustomValidity('');control.removeAttribute('aria-invalid');control.classList.remove('invalid','is-invalid','error','input-validation-error','ng-invalid');controls++});root.querySelectorAll('[data-valmsg-for],.field-validation-error,.validation-error,.has-error').forEach(function(el){el.hidden=true});root.querySelectorAll('*').forEach(function(el){if(el.shadowRoot)relax(el.shadowRoot)});root.querySelectorAll('iframe,frame').forEach(function(frame){try{if(frame.contentDocument)relax(frame.contentDocument)}catch(e){}})}relax(document);console.log('Disabled validation on '+forms+' form(s) and relaxed '+controls+' control(s); framework state held outside the DOM may still enforce custom rules')})();"
+      },
+      {
+        "name": "Restore context menu",
+        "searchTags": [
+          "right click",
+          "contextmenu",
+          "select"
+        ],
+        "code": "(function(){var preventDefault=Event.prototype.preventDefault;if(!window.__ALLOW_CONTEXT_MENU__){window.__ALLOW_CONTEXT_MENU__=true;Event.prototype.preventDefault=function(){if(this.type==='contextmenu'||this.type==='selectstart')return;return preventDefault.apply(this,arguments)}}['oncontextmenu','onselectstart','onmousedown','onmouseup'].forEach(function(name){window[name]=null;document[name]=null});window.addEventListener('contextmenu',function(event){event.stopImmediatePropagation()},true);window.addEventListener('selectstart',function(event){event.stopImmediatePropagation()},true);var style=document.getElementById('__allow_context_menu_style__')||document.createElement('style');style.id='__allow_context_menu_style__';style.textContent='*{-webkit-user-select:auto!important;user-select:auto!important}';(document.head||document.documentElement).appendChild(style);console.log('Context menu and text selection blockers disabled')})();"
+      },
+      {
+        "name": "Disable lifecycle handlers and popups",
+        "searchTags": [
+          "onload",
+          "onunload",
+          "onbeforeunload",
+          "popup",
+          "window.open",
+          "new tab"
+        ],
+        "code": "(function(){if(window.__DISABLE_LIFECYCLE_POPUPS__)return;window.__DISABLE_LIFECYCLE_POPUPS__=true;window.onload=window.onunload=window.onbeforeunload=null;['load','unload','beforeunload'].forEach(function(type){window.addEventListener(type,function(event){event.stopImmediatePropagation();if(type==='beforeunload'){delete event.returnValue}},true)});window.open=function(url){console.log('Blocked window.open',url);return null};document.querySelectorAll('a[target],form[target],base[target]').forEach(function(el){el.removeAttribute('target')});new MutationObserver(function(records){records.forEach(function(record){if(record.target&&record.target.removeAttribute)record.target.removeAttribute('target');record.addedNodes.forEach(function(node){if(node.nodeType!==1)return;node.removeAttribute('target');node.querySelectorAll&&node.querySelectorAll('[target]').forEach(function(el){el.removeAttribute('target')})})})}).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['target']});window.addEventListener('auxclick',function(event){if(event.button===1){event.preventDefault();event.stopImmediatePropagation()}},true);window.addEventListener('click',function(event){if(event.ctrlKey||event.metaKey||event.shiftKey){event.preventDefault();event.stopImmediatePropagation()}},true);console.log('Lifecycle handlers and new-window/tab paths disabled')})();"
+      },
+      {
+        "name": "Disable clipboard tampering",
+        "searchTags": [
+          "clipboard",
+          "copy",
+          "cut",
+          "paste",
+          "selection"
+        ],
+        "code": "(function(){if(window.__ALLOW_CLIPBOARD__)return;window.__ALLOW_CLIPBOARD__=true;var preventDefault=Event.prototype.preventDefault;Event.prototype.preventDefault=function(){if(this.type==='copy'||this.type==='cut'||this.type==='paste')return;return preventDefault.apply(this,arguments)};['oncopy','oncut','onpaste','onselectstart'].forEach(function(name){window[name]=null;document[name]=null;document.querySelectorAll('*').forEach(function(el){el[name]=null;el.removeAttribute(name)})});['copy','cut','paste'].forEach(function(type){window.addEventListener(type,function(event){event.stopImmediatePropagation()},true)});var style=document.getElementById('__allow_clipboard_style__')||document.createElement('style');style.id='__allow_clipboard_style__';style.textContent='*{-webkit-user-select:auto!important;user-select:auto!important}';(document.head||document.documentElement).appendChild(style);console.log('Clipboard copy/cut/paste blockers disabled; previously registered window capture listeners may still alter clipboard data')})();"
+      },
+      {
         "name": "Intercept events",
         "params": {
           "type": {
@@ -468,10 +534,6 @@
       {
         "name": "Log postMessage",
         "code": "(function(){window.addEventListener('message',function(e){console.log('message ←',e.origin,e.data,e)},true);var pm=window.postMessage.bind(window);window.postMessage=function(d,t){console.log('message →',t,d);return pm.apply(window,arguments)};console.log('postMessage hooked')})();"
-      },
-      {
-        "name": "Disable beforeunload",
-        "code": "(function(){window.onbeforeunload=null;window.addEventListener('beforeunload',function(e){e.stopImmediatePropagation();e.preventDefault()},true);console.log('beforeunload suppressed')})();"
       },
       {
         "name": "Disable redirects",
@@ -625,6 +687,39 @@
           "credential"
         ],
         "code": "var injector = angular.element(document.body).injector();\nvar $http = injector.get('$http');\nvar $rootScope = injector.get('$rootScope');\n\n// use current content id from your data\nvar scope = angular.element(document.querySelector('[sn-atf-area=\"Learning Course Content Header\"]')).scope();\nObject.keys(scope.lxpConsumingContent.itemMap).forEach(function(v){\nif (v.child_sys_class_name = \"sn_lxp_content_item\") { //fails for child_interactive = true I think\nvar contentId = v;//scope.c.data.content_id;\n\n$http.post(\n  '/api/sn_lxp/learner/' + $rootScope.user.sys_id + '/setProgress',\n  {\n    content_id: contentId,\n    progress: '100',\n    result: \"\",\n    score: \"100\"\n  }\n).then(console.log);\n}\n});"
+      },
+      {
+        "name": "Make QR code",
+        "url": "https://api.qrserver.com/v1/create-qr-code/?data={encode:url}",
+        "open": "tab",
+        "navParams": {
+          "url": {
+            "fromUrl": "^(https?://.+)$",
+            "placeholder": "URL"
+          }
+        }
+      },
+      {
+        "name": "PageSpeed Insights",
+        "url": "https://pagespeed.web.dev/analysis?url={encode:url}",
+        "open": "tab",
+        "navParams": {
+          "url": {
+            "fromUrl": "^(https?://.+)$",
+            "placeholder": "URL"
+          }
+        }
+      },
+      {
+        "name": "W3Techs analyze site technologies",
+        "url": "https://w3techs.com/sites/info/{domain}",
+        "open": "tab",
+        "navParams": {
+          "domain": {
+            "fromUrl": "^https?://([^/?#]+)",
+            "placeholder": "hostname"
+          }
+        }
       }
     ]
   }
