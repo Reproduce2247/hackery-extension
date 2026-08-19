@@ -20,7 +20,7 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 1. Open a tab on the site the action targets (for any item with a regex `match` that matches the URL, the active tab will switch automatically).
 2. Open the **sidebar** via the toolbar button or **Ctrl+Period** (toggle).
 3. Choose an action (badge indicates type):
-   - **Run** — script injected into the target tab
+   - **Run** — script injected into the target tab (top frame by default; optional `frames` can include nested iframes)
    - **Derive** — URL built from the tab (`navParams` / template)
    - **Open** — relative path on the target tab
    - **Web** — absolute URL
@@ -75,7 +75,7 @@ Optional regex inherited from section or parent unless overridden. Matched again
 
 | Shape | Badge | Fields |
 |---|---|---|
-| `code` only | Run | Script runs in MAIN world; optional on-load |
+| `code` only | Run | Script runs in MAIN world; optional `frames` and on-load |
 | `code` + `open` | Open | Script returns URL; extension navigates |
 | `url` + `open` | Open / Web / Derive | Optional `navParams`, `{…}` templates |
 
@@ -92,6 +92,8 @@ Optional regex inherited from section or parent unless overridden. Matched again
 ```
 
 Script `params` are **lexical bindings** — use bare names in `code` (`limit`), not `{limit}` or `$limit`.
+
+Optional `frames` selects which documents the script runs in (see below).
 
 #### Open URL (`url` + `open`)
 
@@ -170,6 +172,51 @@ Mutual exclusion: `params` on `code` actions, `navParams` on `url` actions. Do n
 Resolve order: non-empty manual → derive → `default`. Blank input = no manual value.
 
 Saved values live under `linkParamValues`. See `CONTEXT.md` and [ADR 0001](docs/adr/0001-params-vs-navparams.md).
+
+### Frame targeting (`frames`)
+
+Optional on `code` actions (`run` and `code` + `open`). URL actions ignore it.
+
+**Defaults when `frames` is omitted**
+
+| How you run | Where it injects |
+|---|---|
+| Sidebar / omnibox / Alt+N / Copy | Top document only |
+| On-load | Each frame that loads (current content-script path) |
+
+Do not add `"frames": { "top": true }` just to mean “default”: that object is present, so on-load then **only** injects the top frame.
+
+```json
+"frames": {
+  "top": true,
+  "nestingLevel": 1,
+  "match": ["incident\\.do"]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `top` | Include the tab’s outermost document (depth 0) |
+| `nestingLevel` | Max **iframe** depth. Omit / `0` = no descendants. `N` = every descendant with depth `1..N`. `-1` = unlimited. Does **not** include top — set `top` for that. |
+| `match` | Regex strings (case-insensitive) against each frame’s **document URL** (`location.href`), not the iframe `name` / `id`. With no `match`, every frame in the `nestingLevel` band is included. When set, URL match **ANDs** with that band. If `nestingLevel` is omit/`0`, `match` applies at any descendant depth. |
+
+Depth is hops from the top document (a direct `<iframe>` is 1). `match` does not apply to top; `top: true` always includes frame 0. Unknown keys are rejected. `nestingLevel` is an integer only.
+
+| Intent | Config |
+|---|---|
+| Top + first-level iframes | `{ "top": true, "nestingLevel": 1 }` |
+| First-level iframes only | `{ "nestingLevel": 1 }` |
+| Entire tree | `{ "top": true, "nestingLevel": -1 }` |
+| Form iframe at any depth | `{ "match": ["incident\\.do"] }` |
+| First-level form iframe | `{ "nestingLevel": 1, "match": ["incident\\.do"] }` |
+
+After a run, the **page** console (top document) logs a table of `frameId`, `depth`, `url`, `ok`, `error`. Mixed results: `failed in some frames`. Zero successes: `failed in all frames`. Copy still writes successful `open-from-script` URLs, then shows the partial-failure message.
+
+`open-from-script`: `tab` / `background` / `download` open each successful URL; `same-tab` uses the first successful URL only.
+
+On-load with `frames` set: that frame is injected only if it is in the target set.
+
+In the bundled catalog, **Remove blur & overflow hidden** uses `nestingLevel: 1`; **Unmask passwords**, **Disable form validation**, **Give everything a background**, **Restore context menu**, and **Disable clipboard tampering** use `nestingLevel: -1` (all with `top: true`).
 
 ### Sections in the current catalog
 

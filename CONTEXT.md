@@ -150,9 +150,19 @@ Depth is hops from the top document via `parentFrameId`. `match` does not apply 
 
 Empty `{ }` is treated as top-only. Unknown keys are rejected. Integer `nestingLevel` only (no boolean aliases).
 
-After a run, a `console.table` of `{ frameId, depth, url, ok, error }` is injected into the top document. Mixed results throw `failed in some frames`; zero successes throw `failed in all frames`. `open-from-script` with `tab` / `background` / `download` navigates each successful URL; `same-tab` uses the first successful URL only.
+| Intent | Config |
+|---|---|
+| Top + first-level iframes | `{ "top": true, "nestingLevel": 1 }` |
+| First-level iframes only | `{ "nestingLevel": 1 }` |
+| Entire tree | `{ "top": true, "nestingLevel": -1 }` |
+| Form iframe at any depth | `{ "match": ["incident\\.do"] }` |
+| First-level form iframe | `{ "nestingLevel": 1, "match": ["incident\\.do"] }` |
 
-On-load: if `frames` is set, the reporting frame is injected only when it is in that target set.
+Do not add `{ "top": true }` alone as a stand-in for “default”: present `frames` changes on-load to the resolved set (top only), instead of every reporting frame.
+
+After a run, a `console.table` of `{ frameId, depth, url, ok, error }` is injected into the top document. Mixed results throw `failed in some frames`; zero successes throw `failed in all frames`. Copy writes successful `open-from-script` URLs, then surfaces the partial-failure message. `open-from-script` with `tab` / `background` / `download` navigates each successful URL; `same-tab` uses the first successful URL only.
+
+On-load: if `frames` is set, the reporting frame is injected only when it is in that target set. Bundled reverse-engineering tools that set `frames`: blur (`nestingLevel: 1`); unmask passwords, disable form validation, background overlay, restore context menu, disable clipboard tampering (`nestingLevel: -1`); all with `top: true`.
 
 ### Navigation (`open`)
 
