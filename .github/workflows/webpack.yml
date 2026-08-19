@@ -27,3 +27,9 @@ jobs:
         npm install
         npm install -D webpack-cli babel-loader @babel/core copy-webpack-plugin
         npx webpack
+
+    - name: Upload build
+      uses: actions/upload-artifact@v4
+      with:
+        name: webpack-output-${{ matrix.node-version }}
+        path: dist
