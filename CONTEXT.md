@@ -124,8 +124,35 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 | `params` | Script/function bindings only (see below) |
 | `navParams` | URL/URI substitution values only (see below) |
 | `match` | Host/URL regex; `null` = active tab |
+| `frames` | Optional scriptlet injection targets: `top`, `nestingLevel`, `match` (see below) |
 
 Folders: `{ "name": "…", "children": [ … ] }` (no `id`).
+
+### Frame targeting (`frames`)
+
+Optional on `code` actions (`run`, `open-from-script`). Absent `frames` keeps today’s defaults: manual activation injects the **top** document only; on-load injects into **each reporting frame**.
+
+```json
+"frames": {
+  "top": true,
+  "nestingLevel": 1,
+  "match": ["incident\\.do"]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `top` | Include the tab’s outermost document (depth 0) |
+| `nestingLevel` | Max iframe nesting depth. Omit / `0` = no descendants. `N` = every descendant with depth `1..N`. `-1` = unlimited descendant depth. Does **not** include top. |
+| `match` | Regex strings (`i`) against each frame’s **document URL** (not iframe `name`/`id`). With no `match`, every frame in the `nestingLevel` band is included. When set, URL match **ANDs** with that band. If `nestingLevel` is omit/`0`, `match` applies at any descendant depth. |
+
+Depth is hops from the top document via `parentFrameId`. `match` does not apply to top; `top: true` always includes frame 0.
+
+Empty `{ }` is treated as top-only. Unknown keys are rejected. Integer `nestingLevel` only (no boolean aliases).
+
+After a run, a `console.table` of `{ frameId, depth, url, ok, error }` is injected into the top document. Mixed results throw `failed in some frames`; zero successes throw `failed in all frames`. `open-from-script` with `tab` / `background` / `download` navigates each successful URL; `same-tab` uses the first successful URL only.
+
+On-load: if `frames` is set, the reporting frame is injected only when it is in that target set.
 
 ### Navigation (`open`)
 
@@ -300,7 +327,7 @@ If a **scriptlet running in the page** later needs to write the clipboard (e.g. 
 
 ### Bookmark sync contract (future)
 
-Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navParams`. Scriptlet bookmarklets should use the same binding model as the extension, not string substitution into `code`.
+Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navParams`, `frames`. Scriptlet bookmarklets should use the same binding model as the extension, not string substitution into `code`.
 
 ### Network rules (`network/`)
 
@@ -423,7 +450,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 
 - **New reverse-engineering tools:** add to `Reverse-engineering tools` in `data/links.json`; prefer scriptlets that log to `console` and are idempotent where possible (many check a `window.__…` guard).
 - **New ServiceNow links:** edit `data/links.json` ServiceNow section.
-- **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.). This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them.
+- **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.). This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them. Optional `frames` selects top and/or nested documents; see Frame targeting.
 - **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
 - **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.
 - **Schema v3 update:** clears saved parameter values and on-load preferences once; reload preferences after updating.

@@ -15,7 +15,7 @@ import { searchCatalog } from "./lib/link-search.js";
 import { findNodeByStableKey, isSlotCommand, loadShortcutSlots } from "./lib/link-shortcuts.js";
 import { createMessageRouter } from "./lib/message-router.js";
 import { MessageTypes, MessageTypeSet } from "./lib/message-types.js";
-import { executeScriptletWithBindings } from "./lib/scriptlet-inject.js";
+import { executeScriptletWithBindings, isFrameTargeted } from "./lib/scriptlet-inject.js";
 import { StorageKeys } from "./lib/storage-keys.js";
 import { canonicalizeHref } from "./lib/url-normalize.js";
 import { NetworkMessageTypeSet } from "./network/message-types.js";
@@ -39,7 +39,7 @@ const CONTEXT_TARGET_SCRIPT_ID = "complex-linker-context-target";
 const REFRESH_DEBOUNCE_MS = 300;
 
 let linksCache = null;
-/** @type {{ match: string | null, code: string, paramValues: Record<string, string> }[]} */
+/** @type {{ match: string | null, code: string, paramValues: Record<string, string>, frames?: object }[]} */
 let injectEntries = [];
 let extensionSettings = { injectOnLoadEnabled: true };
 let injectRefreshTimer = null;
@@ -63,7 +63,30 @@ function codesForUrl(url) {
 }
 
 async function runInjectEntriesForTab(tabId, entries, frameId) {
+  let tabFrames = null;
+  async function listFrames() {
+    if (!tabFrames) {
+      tabFrames = await browser.webNavigation.getAllFrames({ tabId });
+    }
+    return tabFrames || [];
+  }
+
   for (const entry of entries) {
+    if (entry.frames) {
+      if (frameId != null) {
+        const frames = await listFrames();
+        const frame = frames.find((item) => item.frameId === frameId);
+        if (!frame || !isFrameTargeted(entry.frames, frame, frames)) {
+          continue;
+        }
+        await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+        continue;
+      }
+      await executeScriptletWithBindings(tabId, entry.code, entry.paramValues, {
+        frames: entry.frames,
+      });
+      continue;
+    }
     await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
   }
 }
@@ -112,6 +135,7 @@ async function rebuildInjectCache() {
       match: node.match ?? null,
       code: node.code,
       paramValues: values,
+      ...(node.frames ? { frames: node.frames } : {}),
     });
   }
 }

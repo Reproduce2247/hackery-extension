@@ -61,16 +61,21 @@ async function resolveCopyText(node, row) {
     // Nav scripts read page globals (g_form, g_list, GlideList2) and the page
     // DOM, so only the page can produce the URL. Same injection path as
     // activation, so copying succeeds exactly when Run does.
-    const returnValue = await executeScriptletWithBindings(
-      tab.id,
-      node.code,
-      paramValues
-    );
-    const url = coerceScriptletNavigationUrl(returnValue, tab, origin);
-    if (!url) {
+    const outcome = await executeScriptletWithBindings(tab.id, node.code, paramValues, {
+      frames: node.frames,
+    });
+    const urls = [];
+    for (const item of outcome.successes) {
+      const url = coerceScriptletNavigationUrl(item.value, tab, origin);
+      if (url) {
+        urls.push(url);
+      }
+    }
+    if (!urls.length) {
       throw new Error("Navigation script did not resolve to a URL.");
     }
-    return url;
+    const copied = urls.join("\n");
+    return { text: copied, someFailed: outcome.someFailed };
   }
 
   if (behavior.id === "run") {
@@ -135,8 +140,18 @@ export function createCopyLink({ showMessage, hideMessage }) {
   return function copyLink(node, row = null) {
     hideMessage();
 
-    writeClipboardTextFromPromise(resolveCopyText(node, row))
-      .then(() => showMessage("Copied to clipboard."))
+    resolveCopyText(node, row)
+      .then((result) => {
+        const text = result && typeof result === "object" && "text" in result ? result.text : result;
+        const someFailed = Boolean(result?.someFailed);
+        return writeClipboardTextFromPromise(Promise.resolve(text)).then(() => {
+          if (someFailed) {
+            showMessage("failed in some frames");
+            return;
+          }
+          showMessage("Copied to clipboard.");
+        });
+      })
       .catch((error) => showMessage(error.message || String(error)));
   };
 }
