@@ -102,17 +102,6 @@
         "code": "var list = globalThis.g_list ?? globalThis.gsft_main?.g_list; if (!list || !list.getTableName) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); if (!ids.length && globalThis.gsft_main) { try { ids = Array.from(gsft_main.document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); } catch (e) {} } if (ids[0] && typeof GlideList2 !== 'undefined') list = GlideList2.get(ids[0]) || new GlideList2(ids[0]); else if (ids[0] && globalThis.gsft_main?.GlideList2) list = gsft_main.GlideList2.get(ids[0]); } if (!list || !list.getTableName) { console.warn('No g_list found'); return; } var table = list.getTableName(); var query = ''; try { query = (list.getQuery && list.getQuery()) || list.filter || ''; } catch (e) {} var escaped = String(query).replace(/\\\\/g, '\\\\\\\\').replace(/\"/g, '\\\\\"'); var content = 'var list = new GlideRecord(\"' + table + '\");\\nlist.addEncodedQuery(\"' + escaped + '\");\\nlist.setLimit(10);\\nlist.query();\\nwhile (list.next()){\\n    gs.info(list.getDisplayValue());\\n}'; return '/sys.scripts.modern.do?content=' + encodeURIComponent(content);"
       },
       {
-        "id": "1c519d85-b19c-44d9-a69f-8b9059832de2",
-        "name": "SN university complete course",
-        "searchTags": [
-          "university",
-          "learning",
-          "servicenow",
-          "module"
-        ],
-        "code": "var injector = angular.element(document.body).injector();var $http = injector.get(\"$http\");var $rootScope = injector.get(\"$rootScope\");// use current content id from your datavar scope = angular.element(document.querySelector(\"[sn-atf-area=\\\"Learning Course Content Header\\\"]\")).scope();Object.keys(scope.lxpConsumingContent.itemMap).forEach(function(v){if (v.child_sys_class_name = \"sn_lxp_content_item\") { //fails for child_interactive = true I thinkvar contentId = v;//scope.c.data.content_id;$http.post(\"/api/sn_lxp/learner/\" + $rootScope.user.sys_id + \"/setProgress\",{content_id: contentId,progress: \"100\",result: \"\",score: \"100\"}).then(console.log);}});fetch(\"https://learning.servicenow.com/api/now/sp/widget/707188d91b6cb810c93aece03d4bcb69?child_id=4d688dfd97e0a2d0dffaf301f053afeb&course_id=7e48493d4728a6944f97dc84f16d431b&group_id=27584dfd97e0a2d0dffaf301f053af40&id=learning_course&spa=1\",{\"headers\":{\"accept\":\"application/json\",\"accept-language\":\"en-US,en;q=0.9\",\"content-type\":\"application/json;charset=UTF-8\",\"sec-ch-ua\":\"\\\"Chromium\\\";v=\\\"146\\\", \\\"Not-A.Brand\\\";v=\\\"24\\\", \\\"Google Chrome\\\";v=\\\"146\\\"\",\"sec-ch-ua-mobile\":\"?0\",\"sec-ch-ua-platform\":\"\\\"Linux\\\"\",\"sec-fetch-dest\":\"empty\",\"sec-fetch-mode\":\"cors\",\"sec-fetch-site\":\"same-origin\",\"x-portal\":\"59d9f51f1b7194100d228483cc4bcb45\",\"x-transaction-source\":\"Interface=Web,Interface-Name=LXP,Interface-Type=Service Portal,Interface-SysID=59d9f51f1b7194100d228483cc4bcb45\",\"x-use-polaris\":\"false\",\"x-usertoken\":\"45153e158780c79ccfa68519dabb3540312e6923e551306e683c7458cb4cb995cb524782\"},\"referrer\":\"https://learning.servicenow.com/lxp/en/pages/learning-course?id=learning_course&course_id=7e48493d4728a6944f97dc84f16d431b&group_id=27584dfd97e0a2d0dffaf301f053af40&child_id=4d688dfd97e0a2d0dffaf301f053afeb&spa=1\",\"body\":\"{\\\"sessionRotationTrigger\\\":false}\",\"method\":\"POST\",\"mode\":\"cors\",\"credentials\":\"include\"});"
-      },
-      {
         "id": "6a5ebe1b-9872-4f39-8b6d-1d0801c0fc23",
         "name": "Show navigator",
         "searchTags": [
@@ -738,7 +727,10 @@
         "searchTags": [
           "learning",
           "now university",
-          "credential"
+          "credential",
+          "module",
+          "ServiceNow",
+          "SN"
         ],
         "code": "var injector = angular.element(document.body).injector();\nvar $http = injector.get('$http');\nvar $rootScope = injector.get('$rootScope');\n\n// use current content id from your data\nvar scope = angular.element(document.querySelector('[sn-atf-area=\"Learning Course Content Header\"]')).scope();\nObject.keys(scope.lxpConsumingContent.itemMap).forEach(function(v){\nif (v.child_sys_class_name = \"sn_lxp_content_item\") { //fails for child_interactive = true I think\nvar contentId = v;//scope.c.data.content_id;\n\n$http.post(\n  '/api/sn_lxp/learner/' + $rootScope.user.sys_id + '/setProgress',\n  {\n    content_id: contentId,\n    progress: '100',\n    result: \"\",\n    score: \"100\"\n  }\n).then(console.log);\n}\n});"
       },
