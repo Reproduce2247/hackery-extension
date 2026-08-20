@@ -452,6 +452,8 @@ browser.commands.onCommand.addListener((command) => {
 
 let omniboxCatalogCache = null;
 let omniboxCacheAt = 0;
+// Suggestion `content` string → stable key for the last suggestion set offered.
+let omniboxSuggestionKeys = new Map();
 
 async function getOmniboxCatalog() {
   if (omniboxCatalogCache && Date.now() - omniboxCacheAt < 5000) {
@@ -485,14 +487,26 @@ browser.omnibox.onInputChanged.addListener((text, suggest) => {
     try {
       const catalog = await getOmniboxCatalog();
       const matches = searchCatalog(catalog, text, 8);
+      // onInputEntered receives only the chosen suggestion's `content`, so each
+      // content string must be unique to resolve back to one link. Links sharing
+      // a name are disambiguated by section, then by an ordinal.
+      omniboxSuggestionKeys = new Map();
       suggest(
         matches.map((entry) => {
           const label = entry.label || "";
           const section = entry.node.sectionName || "";
+          let content = label;
+          if (omniboxSuggestionKeys.has(content) && section) {
+            content = `${label} — ${section}`;
+          }
+          for (let n = 2; omniboxSuggestionKeys.has(content); n += 1) {
+            content = `${label} (${n})`;
+          }
+          omniboxSuggestionKeys.set(content, entry.key || null);
           const safeLabel = escapeOmniboxXml(label);
           const safeSection = escapeOmniboxXml(section);
           return {
-            content: label,
+            content,
             description: safeSection
               ? `${safeLabel} — ${safeSection}`
               : safeLabel,
@@ -509,6 +523,12 @@ browser.omnibox.onInputChanged.addListener((text, suggest) => {
 browser.omnibox.onInputEntered.addListener((text) => {
   void (async () => {
     try {
+      const chosenKey = omniboxSuggestionKeys.get(text);
+      if (chosenKey) {
+        await activateByStableKey(chosenKey);
+        return;
+      }
+      // Free-typed text (or the default suggestion) has no stable key behind it.
       const catalog = await getOmniboxCatalog();
       const matches = searchCatalog(catalog, text, 1);
       const top = matches[0];
@@ -630,6 +650,7 @@ browser.runtime.onMessage.addListener((message) => {
   if (isCatalogChangedMessage(message)) {
     linksCache = null;
     omniboxCatalogCache = null;
+    omniboxSuggestionKeys = new Map();
     scheduleRefreshInjectState();
     scheduleActiveTabBadgeRefresh();
   }
@@ -639,5 +660,6 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && (changes[CATALOG_ORDER_KEY] || changes[LINK_SHORTCUT_SLOTS_KEY])) {
     linksCache = null;
     omniboxCatalogCache = null;
+    omniboxSuggestionKeys = new Map();
   }
 });

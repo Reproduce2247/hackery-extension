@@ -410,6 +410,8 @@ async function addQuickAction() {
     await addLinksToSection(section.name, [node]);
     scriptNameInput.value = "";
     setFieldValue(scriptCodeInput, "");
+    setAddScriptExpanded(false);
+    await browser.storage.local.set({ [ADD_SCRIPT_EXPANDED_KEY]: false });
     await renderAll();
     showMessage(`Added "${node.name}" to ${section.name}.`);
   } catch (error) {
