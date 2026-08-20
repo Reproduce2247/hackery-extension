@@ -10,23 +10,16 @@ import {
   syncAppliesToTabDots,
 } from "./link-ui.js";
 import {
-  collectOverlayCustomLinkIds,
-  loadMergedLinkCatalog,
   addLinksToSection,
   removeCustomLinkById,
   restoreCustomLinkAt,
   reparentCatalogKey,
 } from "./link-storage.js";
-import { buildQuickLinkNode } from "./link-builder.js";
+import { buildQuickLinkNode } from "./link-quick-add.js";
 import { copyLinkNodeJson } from "./link-export.js";
 import { openLinkBuilderWindow } from "./open-builder-window.js";
-import {
-  attachCodeMirror,
-  getFieldValue,
-  setFieldValue,
-  focusField,
-} from "../lib/codemirror-fields.bundle.js";
 import { loadParamValues } from "../lib/activate-link.js";
+import { getCatalogSnapshot } from "../lib/catalog-service.js";
 import { isCatalogChangedMessage } from "../lib/catalog-events.js";
 import { CSP_DISABLE_MINUTES } from "../lib/csp-disable.js";
 import {
@@ -37,7 +30,6 @@ import {
   saveCatalogOrder,
 } from "../lib/catalog-order.js";
 import { isOverlayCustomLink } from "../lib/link-catalog.js";
-import { flattenLinkNodes, parseLinkSections } from "../lib/link-model.js";
 import {
   LINK_SHORTCUT_SLOTS_KEY,
   loadShortcutSlots,
@@ -76,22 +68,95 @@ const addScriptChevron = document.querySelector(".add-script-chevron");
 const addScriptPanel = document.getElementById("add-script-panel");
 const scriptNameInput = document.getElementById("script-name");
 const scriptCodeInput = document.getElementById("script-code");
-
-const scriptCodeEditor = attachCodeMirror(scriptCodeInput, {
-  language: "javascript",
-  minHeight: 80,
-  placeholder: "Paste JS or a URL/path",
-});
-scriptCodeEditor.view.dom.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-    event.preventDefault();
-    addQuickAction();
-  }
-});
 const quickAddModeSelect = document.getElementById("quick-add-mode");
 const searchInputEl = document.getElementById("search-input");
 
+let cmApi = null;
+let scriptCodeEditor = null;
+let scriptEditorLoadFailed = false;
+
+function readScriptCodeField() {
+  if (cmApi) {
+    return cmApi.getFieldValue(scriptCodeInput);
+  }
+  return scriptCodeInput?.value || "";
+}
+
+function writeScriptCodeField(value) {
+  if (cmApi) {
+    cmApi.setFieldValue(scriptCodeInput, value);
+    return;
+  }
+  if (scriptCodeInput) {
+    scriptCodeInput.value = value;
+  }
+}
+
+function bindScriptCodeSubmit(target) {
+  target.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      addQuickAction();
+    }
+  });
+}
+
+/**
+ * Match the quick-add code field to the selected Type: scriptlets lint as
+ * JavaScript, links lint as a URL/path.
+ * @returns {void}
+ */
+function syncQuickAddCodeField() {
+  const isScriptlet = quickAddModeSelect?.value === "scriptlet";
+  const placeholder = isScriptlet ? "JS script" : "URL/path";
+  if (cmApi) {
+    cmApi.setFieldLanguage(scriptCodeInput, isScriptlet ? "javascript" : "url");
+    cmApi.setFieldPlaceholder(scriptCodeInput, placeholder);
+    return;
+  }
+  if (scriptCodeInput) {
+    scriptCodeInput.placeholder = placeholder;
+  }
+}
+
+async function ensureScriptEditor() {
+  if (scriptCodeEditor || scriptEditorLoadFailed || !scriptCodeInput) {
+    return scriptCodeEditor;
+  }
+  try {
+    if (!document.querySelector("link[data-cm-fields]")) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "../lib/codemirror-fields.css";
+      link.dataset.cmFields = "1";
+      document.head.appendChild(link);
+    }
+    cmApi = await import("../lib/codemirror-fields.bundle.js");
+    scriptCodeEditor = cmApi.attachCodeMirror(scriptCodeInput, {
+      language: "javascript",
+      minHeight: 80,
+      // Attach as JavaScript so scriptlet completions survive Type switches;
+      // syncQuickAddCodeField sets the language the current Type needs.
+      completions: "javascript",
+    });
+    syncQuickAddCodeField();
+    bindScriptCodeSubmit(scriptCodeEditor.view.dom);
+    return scriptCodeEditor;
+  } catch (error) {
+    scriptEditorLoadFailed = true;
+    console.error("CodeMirror failed to load:", error);
+    return null;
+  }
+}
+
+if (scriptCodeInput) {
+  bindScriptCodeSubmit(scriptCodeInput);
+}
+
+quickAddModeSelect?.addEventListener("change", syncQuickAddCodeField);
+
 let linkSections = null;
+let catalogSnapshot = null;
 let activeSectionName = null;
 let shortcutSlots = {};
 
@@ -128,7 +193,10 @@ function editCustomLink(node) {
 async function assignShortcut(node, commandName, row = null) {
   const key =
     row?.dataset?.stableKey ||
-    linkStableKey(node.sectionName || getActiveSection()?.name, [], node);
+    node.stableKey ||
+    (node.id
+      ? `id:${node.id}`
+      : linkStableKey(node.sectionName || getActiveSection()?.name, [], node));
   if (!commandName) {
     const map = await loadShortcutSlots();
     const current = slotForKey(map, key);
@@ -159,18 +227,12 @@ const linkUi = createLinkUi({
   onReparent: persistReparent,
 });
 
-function getLinkSections() {
-  return getVisibleSections();
-}
-
 function getVisibleSections() {
   return linkSections || [];
 }
 
-function sectionHasCustomLinks(section, overlayLinkIds) {
-  return flattenLinkNodes(section.children, section.match, section.name).some(
-    (node) => isOverlayCustomLink(node, overlayLinkIds)
-  );
+function getLinkSections() {
+  return getVisibleSections();
 }
 
 function getActiveSection() {
@@ -182,8 +244,8 @@ function setActiveSectionName(name) {
 }
 
 async function reloadLinkSections() {
-  const merged = await loadMergedLinkCatalog();
-  linkSections = parseLinkSections(merged);
+  catalogSnapshot = await getCatalogSnapshot();
+  linkSections = catalogSnapshot.sections;
 }
 
 /**
@@ -282,7 +344,7 @@ function renderSectionTabs() {
     tab.addEventListener("click", async () => {
       activeSectionName = section.name;
       await browser.storage.local.set({ [SECTION_TAB_KEY]: activeSectionName });
-      await renderAll();
+      await renderAll({ reloadCatalog: false });
     });
     tab.addEventListener("dragstart", (event) => {
       event.dataTransfer.setData("text/section-name", section.name);
@@ -330,13 +392,15 @@ function renderSectionTabs() {
   }
 }
 
-async function renderAll() {
+async function renderAll({ reloadCatalog = true } = {}) {
   if (!linksEl) {
     return;
   }
 
   try {
-    await reloadLinkSections();
+    if (reloadCatalog || !catalogSnapshot) {
+      await reloadLinkSections();
+    }
     shortcutSlots = await loadShortcutSlots();
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
@@ -344,12 +408,10 @@ async function renderAll() {
     const activeTab = await getActiveTab();
     const activeTabUrl = activeTab?.url || null;
     const section = getActiveSection();
-    const overlayLinkIds = await collectOverlayCustomLinkIds();
-    const showRemove = section
-      ? sectionHasCustomLinks(section, overlayLinkIds)
-      : false;
-    const showParams = section ? linkUi.treeHasParams(section.children) : false;
-    const showOnLoad = section ? linkUi.treeHasOnLoad(section.children) : false;
+    const overlayLinkIds = catalogSnapshot.overlayLinkIds;
+    const showRemove = Boolean(section?.hasCustom);
+    const showParams = Boolean(section?.hasParams);
+    const showOnLoad = Boolean(section?.hasOnLoad);
     const query = search.normalizeSearchQuery(search.getSearchQuery());
 
     const list = document.createElement("div");
@@ -370,14 +432,16 @@ async function renderAll() {
 
     if (section) {
       if (query) {
-        const sortedNodes = search.sortNodesBySearchScore(
-          flattenLinkNodes(section.children, section.match, section.name),
+        const sortedLeaves = search.sortNodesBySearchScore(
+          (catalogSnapshot.flatLeaves || [])
+            .filter((leaf) => leaf.sectionName === section.name)
+            .map((leaf) => ({ ...leaf.node, stableKey: leaf.stableKey })),
           (node, activeQuery) => search.nodeSearchScore(node, activeQuery)
         );
-        if (!sortedNodes.length) {
+        if (!sortedLeaves.length) {
           appendEmptyPlaceholder(list, query);
         }
-        for (const node of sortedNodes) {
+        for (const node of sortedLeaves) {
           list.appendChild(
             linkUi.createLinkRow(node, {
               savedParamValues,
@@ -385,7 +449,7 @@ async function renderAll() {
               activeTabUrl,
               showRemove: showRemove,
               isCustom: isOverlayCustomLink(node, overlayLinkIds),
-              stableKey: linkStableKey(section.name, [], node),
+              stableKey: node.stableKey,
               enableDrag: false,
               onDelete: isOverlayCustomLink(node, overlayLinkIds)
                 ? async (event) => {
@@ -440,7 +504,8 @@ const search = createSearchController({
   getActiveSection,
   setActiveSectionName,
   sectionTabKey: SECTION_TAB_KEY,
-  renderAll,
+  renderAll: () => renderAll({ reloadCatalog: false }),
+  getFlatLeaves: () => catalogSnapshot?.flatLeaves || [],
 });
 
 async function addQuickAction() {
@@ -453,27 +518,29 @@ async function addQuickAction() {
   }
 
   try {
-    const leafNodes = flattenLinkNodes(
-      section.children,
-      section.match,
-      section.name
-    );
+    const leafNodes = (catalogSnapshot.flatLeaves || [])
+      .filter((leaf) => leaf.sectionName === section.name)
+      .map((leaf) => leaf.node);
     const node = buildQuickLinkNode(
-      getFieldValue(scriptCodeInput),
+      readScriptCodeField(),
       scriptNameInput.value,
       leafNodes,
       quickAddModeSelect?.value || "link"
     );
     await addLinksToSection(section.name, [node]);
     scriptNameInput.value = "";
-    setFieldValue(scriptCodeInput, "");
+    writeScriptCodeField("");
     setAddScriptExpanded(false);
     await browser.storage.local.set({ [ADD_SCRIPT_EXPANDED_KEY]: false });
     await renderAll();
     showMessage(`Added "${node.name}" to ${section.name}.`);
   } catch (error) {
     showMessage(error.message || String(error));
-    focusField(scriptCodeInput);
+    if (cmApi) {
+      cmApi.focusField(scriptCodeInput);
+    } else {
+      scriptCodeInput?.focus();
+    }
   }
 }
 
@@ -498,6 +565,9 @@ function setAddScriptExpanded(expanded) {
   addScriptSection.classList.toggle("is-collapsed", !expanded);
   addScriptToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   addScriptPanel.hidden = !expanded;
+  if (expanded) {
+    void ensureScriptEditor();
+  }
 }
 
 async function syncCspDisableUi(tab) {
@@ -636,19 +706,6 @@ function initActiveTabListeners() {
   }
 }
 
-async function focusLinkFromMessage(stableKey, queryHint) {
-  if (queryHint) {
-    search.setSearchQuery(queryHint);
-  }
-  await renderAll();
-  search.focusSearchInput();
-  if (stableKey) {
-    const row = linksEl.querySelector(`[data-stable-key="${CSS.escape(stableKey)}"]`);
-    row?.scrollIntoView({ block: "nearest" });
-    row?.classList.add("search-exact-match");
-  }
-}
-
 async function init() {
   await reloadLinkSections();
   const stored = await browser.storage.local.get(SECTION_TAB_KEY);
@@ -695,10 +752,6 @@ async function init() {
   browser.runtime.onMessage.addListener((message) => {
     if (isCatalogChangedMessage(message)) {
       void renderAll();
-      return;
-    }
-    if (message?.type === MessageTypes.FOCUS_SIDEBAR_LINK) {
-      void focusLinkFromMessage(message.stableKey, message.query);
       return;
     }
     if (message?.type === MessageTypes.CSP_DISABLED_CHANGED) {

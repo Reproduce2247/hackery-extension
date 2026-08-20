@@ -1,4 +1,3 @@
-const WILDCARD_PREFIX = "w:";
 const MAX_PATTERN_INPUT_LENGTH = 65536;
 
 /**
@@ -100,7 +99,6 @@ function wildcardPatternToRegExp(pattern) {
 /**
  * Compile a pattern string into a RegExp, or null when the pattern is empty/absent.
  * Default mode is wildcard (`*`); pass isRegex true for RegExp syntax.
- * Legacy `w:` prefixes are still accepted and treated as wildcards.
  * Returns { empty, invalid, regex }.
  */
 function compilePatternString(pattern, isRegex = false) {
@@ -108,16 +106,13 @@ function compilePatternString(pattern, isRegex = false) {
     return { empty: true, invalid: false, regex: null };
   }
   const text = String(pattern);
-  const legacyWildcard = text.startsWith(WILDCARD_PREFIX);
-  const body = legacyWildcard ? text.slice(WILDCARD_PREFIX.length) : text;
-  const useRegex = isRegex && !legacyWildcard;
   try {
     return {
       empty: false,
       invalid: false,
-      regex: useRegex
-        ? new RegExp(body, "i")
-        : wildcardPatternToRegExp(body),
+      regex: isRegex
+        ? new RegExp(text, "i")
+        : wildcardPatternToRegExp(text),
     };
   } catch {
     return { empty: false, invalid: true, regex: null };
@@ -606,7 +601,6 @@ function createNetworkRuleEngine(options = {}) {
   }
 
   return {
-    WILDCARD_PREFIX,
     compilePatternString,
     compileRulePatterns,
     compileRulesCache,

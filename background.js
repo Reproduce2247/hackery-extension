@@ -1,7 +1,7 @@
 import { clearTabFlags, refresh as refreshBadge } from "./lib/action-badge.js";
 import { activateLinkNode } from "./lib/activate-link.js";
 import { createBackgroundMessageHandlers } from "./lib/background-messages.js";
-import { appendMissingKeys, applyOrder, loadCatalogOrder } from "./lib/catalog-order.js";
+import { getCatalogSnapshot, invalidateCatalogSnapshot } from "./lib/catalog-service.js";
 import { CATALOG_CHANGED, isCatalogChangedMessage } from "./lib/catalog-events.js";
 import {
   initCspDisable,
@@ -9,14 +9,20 @@ import {
   setCspDisabledForTab,
   whenCspStateReady,
 } from "./lib/csp-disable.js";
-import { ensureLinksOverlayInStorage, mergeLinksCatalog } from "./lib/link-catalog.js";
-import { collectScriptlets, getParameterDefs, matchesHostPattern, resolveParamValues } from "./lib/link-model.js";
+import {
+  collectScriptlets,
+  getEditableValueDefs,
+  getParameterDefs,
+  matchesHostPattern,
+  resolveParamValues,
+} from "./lib/link-model.js";
 import { searchCatalog } from "./lib/link-search.js";
 import { findNodeByStableKey, isSlotCommand, loadShortcutSlots } from "./lib/link-shortcuts.js";
-import { createMessageRouter } from "./lib/message-router.js";
+import { createMessageRouter, respondAsync } from "./lib/message-router.js";
 import { MessageTypes, MessageTypeSet } from "./lib/message-types.js";
 import { executeScriptletWithBindings, isFrameTargeted } from "./lib/scriptlet-inject.js";
 import { StorageKeys } from "./lib/storage-keys.js";
+import { getActiveTab } from "./lib/tab-target.js";
 import { canonicalizeHref } from "./lib/url-normalize.js";
 import { NetworkMessageTypeSet } from "./network/message-types.js";
 import * as Network from "./network/plugin.js";
@@ -26,32 +32,26 @@ const {
   INJECT_ON_LOAD_KEY,
   PARAM_VALUES_KEY,
   LINKS_OVERLAY_KEY,
-  CUSTOM_SCRIPTS_KEY,
   CATALOG_ORDER_KEY,
   LINK_SHORTCUT_SLOTS_KEY,
   LINK_BUILDER_PREFILL_KEY,
+  PARAM_PROMPT_KEY,
 } = StorageKeys;
 
 const HTTP_CONTENT_SCRIPT_MATCHES = ["http://*/*", "https://*/*"];
 
 const INJECT_SCRIPT_ID = "complex-linker-on-load";
 const CONTEXT_TARGET_SCRIPT_ID = "complex-linker-context-target";
+const PARAM_PROMPT_PAGE = "prompt/params.html";
 const REFRESH_DEBOUNCE_MS = 300;
 
-let linksCache = null;
-/** @type {{ match: string | null, code: string, paramValues: Record<string, string>, frames?: object }[]} */
 let injectEntries = [];
 let extensionSettings = { injectOnLoadEnabled: true };
 let injectRefreshTimer = null;
 
 async function getLinkSections() {
-  if (!linksCache) {
-    const response = await fetch(browser.runtime.getURL("data/links.json"));
-    const bundled = await response.json();
-    const overlay = await ensureLinksOverlayInStorage();
-    linksCache = mergeLinksCatalog(bundled, overlay);
-  }
-  return linksCache;
+  const snapshot = await getCatalogSnapshot();
+  return snapshot.mergedUnordered;
 }
 
 function codesForUrl(url) {
@@ -118,7 +118,7 @@ async function rebuildInjectCache() {
   for (const [name, section] of Object.entries(sections)) {
     collectScriptlets(
       section.children || [],
-      section.match ?? section.hostPattern ?? null,
+      section.match ?? null,
       name,
       scriptlets
     );
@@ -269,10 +269,7 @@ function scheduleActiveTabBadgeRefresh() {
   });
 }
 
-async function initExtension({ clearLinksCache = false } = {}) {
-  if (clearLinksCache) {
-    linksCache = null;
-  }
+async function initExtension() {
   await Promise.all([
     refreshInjectState(),
     syncContextTargetRegistration()
@@ -309,6 +306,27 @@ const messageHandlers = {
     collectNetworkSettingsPayload: (next) => Network.collectSettingsPayload(next),
   }),
   ...Network.createMessageHandlers(),
+
+  [MessageTypes.ACTIVATE_LINK_WITH_PARAMS](message, _sender, sendResponse) {
+    const windowId = message.windowId ?? null;
+    respondAsync(
+      activateByStableKey(message.stableKey, {
+        rawValues: message.rawValues || {},
+        windowId,
+        promptParams: "never",
+      }).then(async (outcome) => {
+        // Hand focus back to the window the action ran in; the prompt took it.
+        if (outcome.ok && windowId != null) {
+          await browser.windows
+            .update(windowId, { focused: true })
+            .catch(() => {});
+        }
+        return outcome;
+      }),
+      sendResponse
+    );
+    return true;
+  },
 };
 
 const knownMessageTypes = new Set([
@@ -328,11 +346,10 @@ browser.storage.onChanged.addListener((changes, area) => {
       changes[INJECT_ON_LOAD_KEY] ||
       changes[PARAM_VALUES_KEY] ||
       changes[LINKS_OVERLAY_KEY] ||
-      changes[CUSTOM_SCRIPTS_KEY] ||
       changes[INJECT_ON_LOAD_ENABLED_KEY]
     ) {
-      if (changes[LINKS_OVERLAY_KEY] || changes[CUSTOM_SCRIPTS_KEY]) {
-        linksCache = null;
+      if (changes[LINKS_OVERLAY_KEY]) {
+        invalidateCatalogSnapshot();
       }
       scheduleRefreshInjectState();
     }
@@ -353,7 +370,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
 });
 
 browser.runtime.onInstalled.addListener(() => {
-  initExtension({ clearLinksCache: true });
+  initExtension();
   initContextMenus();
 });
 
@@ -367,10 +384,8 @@ initContextMenus();
 // --- Sidebar toggle, omnibox, shortcuts, context menus, badges ---
 
 async function getOrderedCatalog() {
-  const catalog = await getLinkSections();
-  const order = await loadCatalogOrder();
-  const next = appendMissingKeys(order, catalog);
-  return applyOrder(catalog, next);
+  const snapshot = await getCatalogSnapshot();
+  return snapshot.ordered;
 }
 
 async function openSidebarPanel() {
@@ -397,35 +412,123 @@ browser.action.onClicked.addListener(() => {
   void toggleSidebarPanel();
 });
 
-async function activateByStableKey(stableKey, { openSidebarIfNeeded = true } = {}) {
+function flashBadge(text, durationMs = 1200) {
+  void browser.action.setBadgeText({ text });
+  setTimeout(() => browser.action.setBadgeText({ text: "" }), durationMs);
+}
+
+/**
+ * Collect parameter values in a popup window.
+ *
+ * A window rather than the sidebar: `sidebarAction.open()` only works inside an
+ * unbroken user-input handler, and resolving the catalog and stored values
+ * before we know whether a prompt is needed already spends that status.
+ *
+ * @param {string} stableKey leaf to activate once values are entered
+ * @param {object} [options]
+ * @param {number|null} [options.windowId] window activation should target
+ * @param {Record<string,string>|null} [options.rawValues] values already supplied
+ * @param {number} [options.fieldCount] editable defs, for window height
+ */
+async function openParamPrompt(
+  stableKey,
+  { windowId = null, rawValues = null, fieldCount = 1 } = {}
+) {
+  await browser.storage.session.set({
+    [PARAM_PROMPT_KEY]: {
+      stableKey,
+      windowId,
+      rawValues: rawValues || {},
+    },
+  });
+
+  const baseUrl = browser.runtime.getURL(PARAM_PROMPT_PAGE);
+  // Timestamp so reusing an open prompt window reloads it and re-reads the request.
+  const targetUrl = `${baseUrl}?t=${Date.now()}`;
+
+  const windows = await browser.windows.getAll({ populate: true });
+  for (const win of windows) {
+    for (const tab of win.tabs || []) {
+      if (tab.url?.startsWith(baseUrl) && win.id != null && tab.id != null) {
+        await browser.tabs.update(tab.id, { url: targetUrl });
+        await browser.windows.update(win.id, { focused: true });
+        return;
+      }
+    }
+  }
+
+  await browser.windows.create({
+    url: targetUrl,
+    type: "popup",
+    width: 420,
+    height: Math.min(560, 200 + 66 * Math.max(1, fieldCount)),
+  });
+}
+
+/**
+ * @param {string} stableKey
+ * @param {object} [options]
+ * @param {"always"|"when-needed"|"never"} [options.promptParams] when to open the
+ *   parameter prompt window. `always` prompts before running so shortcut users
+ *   can change a saved value; `never` is used by the prompt window itself.
+ * @param {Record<string,string>|null} [options.rawValues] caller-supplied values
+ * @param {number|null} [options.windowId] window activation should target
+ */
+async function activateByStableKey(stableKey, options = {}) {
+  const {
+    promptParams = "when-needed",
+    rawValues = null,
+    windowId = null,
+  } = options;
+
   const catalog = await getOrderedCatalog();
   const node = findNodeByStableKey(catalog, stableKey);
   if (!node) {
-    await browser.action.setBadgeText({ text: "?" });
-    setTimeout(() => browser.action.setBadgeText({ text: "" }), 1200);
+    flashBadge("?");
     return { ok: false, message: "Link not found." };
   }
 
-  const outcome = await activateLinkNode(node, {
-    allowMissingParams: false,
-  });
+  const editableDefs = getEditableValueDefs(node);
+  const canPrompt = promptParams !== "never" && editableDefs.length > 0;
 
-  if (outcome.needsParams && openSidebarIfNeeded) {
-    const label = node.name;
-    await openSidebarPanel();
-    browser.runtime
-      .sendMessage({
-        type: MessageTypes.FOCUS_SIDEBAR_LINK,
-        stableKey,
-        query: label,
-      })
-      .catch(() => {});
-    return outcome;
+  if (canPrompt && promptParams === "always") {
+    await openParamPrompt(stableKey, {
+      windowId,
+      rawValues,
+      fieldCount: editableDefs.length,
+    });
+    return { ok: true, prompted: true };
+  }
+
+  // Activation failures used to surface nowhere on these paths: a rejection in a
+  // command listener is an unhandled promise. Report them to the caller instead.
+  let outcome;
+  try {
+    outcome = await activateLinkNode(node, {
+      rawValues,
+      windowId,
+      allowMissingParams: false,
+    });
+  } catch (error) {
+    outcome = { ok: false, message: error.message || String(error) };
+  }
+
+  if (outcome.needsParams && canPrompt) {
+    await openParamPrompt(stableKey, {
+      windowId,
+      rawValues,
+      fieldCount: editableDefs.length,
+    });
+    return { ...outcome, prompted: true };
   }
 
   if (!outcome.ok) {
-    await browser.action.setBadgeText({ text: "!" });
-    setTimeout(() => browser.action.setBadgeText({ text: "" }), 1200);
+    flashBadge("!");
+    console.warn(
+      `complex-linker: "${node.name}" not activated: ${
+        outcome.message || "unknown error"
+      }`
+    );
   }
   return outcome;
 }
@@ -442,11 +545,16 @@ browser.commands.onCommand.addListener((command) => {
     const slots = await loadShortcutSlots();
     const key = slots[command];
     if (!key) {
-      await browser.action.setBadgeText({ text: "—" });
-      setTimeout(() => browser.action.setBadgeText({ text: "" }), 1000);
+      flashBadge("—", 1000);
       return;
     }
-    await activateByStableKey(key);
+    // Capture the window now: the prompt window takes focus, and "current
+    // window" afterwards would resolve to the prompt instead of the browser.
+    const activeTab = await getActiveTab();
+    await activateByStableKey(key, {
+      promptParams: "always",
+      windowId: activeTab?.windowId ?? null,
+    });
   })();
 });
 
@@ -478,38 +586,118 @@ function escapeOmniboxXml(text) {
     .replace(/'/g, "&apos;");
 }
 
+const OMNIBOX_ARG_SEPARATOR = "|";
+
+/**
+ * Split omnibox input into the action query and inline parameter segments:
+ * `find user | jsmith` → `{ query: "find user", args: ["jsmith"] }`.
+ * @param {string} text
+ */
+function parseOmniboxInput(text) {
+  const segments = String(text || "").split(OMNIBOX_ARG_SEPARATOR);
+  return {
+    query: (segments[0] || "").trim(),
+    args: segments.slice(1).map((segment) => segment.trim()),
+  };
+}
+
+/**
+ * Map inline segments onto parameter defs. `name=value` binds by name; the rest
+ * fill the remaining defs in declaration order. Blank segments are skipped so
+ * they fall through to saved values and defaults rather than clearing them.
+ * @param {object[]} defs editable value defs
+ * @param {string[]} args
+ * @returns {Record<string,string>}
+ */
+function mapOmniboxArgs(defs, args) {
+  const values = {};
+  const positional = [];
+
+  for (const arg of args) {
+    const equals = arg.indexOf("=");
+    const name = equals > 0 ? arg.slice(0, equals).trim() : "";
+    if (name && defs.some((def) => def.name === name)) {
+      values[name] = arg.slice(equals + 1).trim();
+      continue;
+    }
+    positional.push(arg);
+  }
+
+  const unclaimed = defs.filter((def) => values[def.name] === undefined);
+  positional.forEach((value, index) => {
+    const def = unclaimed[index];
+    if (def && value) {
+      values[def.name] = value;
+    }
+  });
+
+  return values;
+}
+
+/** `q=jsmith` for supplied values, `q: username or name` for the rest. */
+function describeOmniboxParams(defs, values) {
+  return defs
+    .map((def) => {
+      const value = values[def.name];
+      if (value) {
+        return `${def.name}=${value}`;
+      }
+      return `${def.name}: ${def.placeholder || def.default || def.name}`;
+    })
+    .join(", ");
+}
+
 browser.omnibox.setDefaultSuggestion({
-  description: "Search Complex Linker actions (Enter to run top match)",
+  description:
+    "Search Complex Linker actions (Enter to run top match; add | value for parameters)",
 });
 
 browser.omnibox.onInputChanged.addListener((text, suggest) => {
   void (async () => {
     try {
+      const { query, args } = parseOmniboxInput(text);
       const catalog = await getOmniboxCatalog();
-      const matches = searchCatalog(catalog, text, 8);
+      const matches = searchCatalog(catalog, query, 8);
+      const suppliedArgs = args.filter(Boolean);
       // onInputEntered receives only the chosen suggestion's `content`, so each
-      // content string must be unique to resolve back to one link. Links sharing
+      // label segment must be unique to resolve back to one link. Links sharing
       // a name are disambiguated by section, then by an ordinal.
       omniboxSuggestionKeys = new Map();
       suggest(
         matches.map((entry) => {
           const label = entry.label || "";
           const section = entry.node.sectionName || "";
-          let content = label;
-          if (omniboxSuggestionKeys.has(content) && section) {
-            content = `${label} — ${section}`;
+          let labelSegment = label;
+          if (omniboxSuggestionKeys.has(labelSegment) && section) {
+            labelSegment = `${label} — ${section}`;
           }
-          for (let n = 2; omniboxSuggestionKeys.has(content); n += 1) {
-            content = `${label} (${n})`;
+          for (let n = 2; omniboxSuggestionKeys.has(labelSegment); n += 1) {
+            labelSegment = `${label} (${n})`;
           }
-          omniboxSuggestionKeys.set(content, entry.key || null);
+          omniboxSuggestionKeys.set(labelSegment, entry.key || null);
+
+          const defs = getEditableValueDefs(entry.node);
+          const paramText = defs.length
+            ? describeOmniboxParams(defs, mapOmniboxArgs(defs, args))
+            : "";
           const safeLabel = escapeOmniboxXml(label);
           const safeSection = escapeOmniboxXml(section);
+          let description = safeSection
+            ? `${safeLabel} — ${safeSection}`
+            : safeLabel;
+          if (paramText) {
+            description += ` · ${escapeOmniboxXml(paramText)}`;
+          }
+
+          // Carry typed args into `content`: selecting a suggestion replaces the
+          // whole input, so a bare label would drop them.
           return {
-            content,
-            description: safeSection
-              ? `${safeLabel} — ${safeSection}`
-              : safeLabel,
+            content: suppliedArgs.length
+              ? `${labelSegment} ${OMNIBOX_ARG_SEPARATOR} ${suppliedArgs.join(
+                  ` ${OMNIBOX_ARG_SEPARATOR} `
+                )}`
+              : labelSegment,
+            description,
           };
         })
       );
@@ -523,21 +711,31 @@ browser.omnibox.onInputChanged.addListener((text, suggest) => {
 browser.omnibox.onInputEntered.addListener((text) => {
   void (async () => {
     try {
-      const chosenKey = omniboxSuggestionKeys.get(text);
-      if (chosenKey) {
-        await activateByStableKey(chosenKey);
-        return;
-      }
-      // Free-typed text (or the default suggestion) has no stable key behind it.
+      const { query, args } = parseOmniboxInput(text);
       const catalog = await getOmniboxCatalog();
-      const matches = searchCatalog(catalog, text, 1);
-      const top = matches[0];
-      if (!top?.key) {
+      // Free-typed text (or the default suggestion) has no stable key behind it.
+      const stableKey =
+        omniboxSuggestionKeys.get(query) ||
+        searchCatalog(catalog, query, 1)[0]?.key ||
+        null;
+      if (!stableKey) {
+        flashBadge("?");
         return;
       }
-      await activateByStableKey(top.key);
+
+      const node = findNodeByStableKey(catalog, stableKey);
+      const rawValues =
+        node && args.length
+          ? mapOmniboxArgs(getEditableValueDefs(node), args)
+          : null;
+      const activeTab = await getActiveTab();
+      await activateByStableKey(stableKey, {
+        rawValues,
+        windowId: activeTab?.windowId ?? null,
+      });
     } catch (error) {
       console.error("omnibox activate failed:", error);
+      flashBadge("!");
     }
   })();
 });
@@ -648,7 +846,7 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 browser.runtime.onMessage.addListener((message) => {
   if (isCatalogChangedMessage(message)) {
-    linksCache = null;
+    invalidateCatalogSnapshot();
     omniboxCatalogCache = null;
     omniboxSuggestionKeys = new Map();
     scheduleRefreshInjectState();
@@ -658,7 +856,7 @@ browser.runtime.onMessage.addListener((message) => {
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && (changes[CATALOG_ORDER_KEY] || changes[LINK_SHORTCUT_SLOTS_KEY])) {
-    linksCache = null;
+    invalidateCatalogSnapshot();
     omniboxCatalogCache = null;
     omniboxSuggestionKeys = new Map();
   }

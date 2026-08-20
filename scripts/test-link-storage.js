@@ -71,9 +71,9 @@ function defaultOverlay() {
 
 function installExtensionGlobals() {
   const store = {
-    linksSchemaVersion: 3,
     linksJsonOverlay: defaultOverlay(),
   };
+  const setLog = [];
 
   globalThis.browser = {
     storage: {
@@ -89,6 +89,7 @@ function installExtensionGlobals() {
           return out;
         },
         async set(values) {
+          setLog.push(...Object.keys(values));
           for (const [name, value] of Object.entries(values)) {
             store[name] = structuredClone(value);
           }
@@ -97,16 +98,19 @@ function installExtensionGlobals() {
           delete store[name];
         },
       },
+      onChanged: { addListener() {} },
     },
     runtime: {
       getURL: (path) => path,
       sendMessage: async () => {},
+      onMessage: { addListener() {} },
     },
   };
 
   globalThis.fetch = async () => ({ json: async () => structuredClone(BUNDLED) });
+  globalThis.__invalidateCatalogSnapshot?.();
 
-  return store;
+  return { store, setLog };
 }
 
 function sectionLeafIds(catalog, sectionName) {
@@ -158,10 +162,15 @@ async function run() {
   const {
     isOverlayCustomLink,
     ensureLinkIdsInTree,
+    importOverlayIntoExisting,
     overlayExport,
     overlayTreeFromMerged,
     mergeLinksCatalog,
   } = await import("../lib/link-catalog.js");
+  const { getCatalogSnapshot, invalidateCatalogSnapshot } = await import(
+    "../lib/catalog-service.js"
+  );
+  globalThis.__invalidateCatalogSnapshot = invalidateCatalogSnapshot;
 
   const backfill = ensureLinkIdsInTree([
     { name: "No id yet", code: "1" },
@@ -345,6 +354,63 @@ async function run() {
   );
   assert.ok(
     !sectionMoved.Other.children.some((node) => node.id === "bundled-root")
+  );
+
+  const env = installExtensionGlobals();
+  const snapA = await getCatalogSnapshot();
+  const snapB = await getCatalogSnapshot();
+  assert.equal(snapA, snapB, "catalog snapshot is reused until invalidated");
+  const writesAfterRead = env.setLog.filter(
+    (key) => key === "catalogOrder" || key === "linksJsonOverlay"
+  );
+  assert.deepEqual(writesAfterRead, [], "catalog reads must not persist overlay or order");
+
+  const deep = snapA.flatLeaves.find((leaf) => leaf.node.id === "bundled-deep");
+  assert.ok(deep, "snapshot indexes nested bundled leaves");
+  assert.deepEqual(deep.pathParts, ["Outer", "Inner"]);
+  assert.equal(deep.stableKey, "id:bundled-deep");
+
+  const unnamed = snapA.flatLeaves.find((leaf) => leaf.node.name === "Bundled plain");
+  assert.equal(unnamed.stableKey, "Misc/Bundled plain");
+  assert.deepEqual(unnamed.pathParts, []);
+
+  const misc = snapA.sections.find((section) => section.name === "Misc");
+  assert.equal(misc.hasCustom, true);
+  assert.equal(misc.hasOnLoad, true);
+  assert.equal(misc.hasParams, false);
+
+  await saveCatalogOrder({
+    linkKeys: ["id:custom-top"],
+    sectionOrder: ["Misc", "Other"],
+  });
+  const snapC = await getCatalogSnapshot();
+  assert.notEqual(snapA, snapC, "order save invalidates the snapshot");
+
+  assert.throws(
+    () =>
+      importOverlayIntoExisting(
+        {},
+        JSON.stringify({
+          Misc: {
+            children: [{ name: "Old", type: "scriptlet", code: "console.log(1)" }],
+          },
+        })
+      ),
+    /removed field "type"/
+  );
+  assert.throws(
+    () =>
+      importOverlayIntoExisting(
+        {},
+        JSON.stringify({
+          Misc: {
+            children: [
+              { name: "Old url", path: "/foo", nav: "foreground" },
+            ],
+          },
+        })
+      ),
+    /removed field/
   );
 
   console.log("link storage: OK");

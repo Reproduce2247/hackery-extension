@@ -18,11 +18,11 @@ import {
   populateBuilderForm,
   clearBuilderForm,
   getBuilderFormElements,
-  consumeBuilderPrefill,
   applyTabPrefill,
   initBuilderForm,
   updateBuilderFieldVisibility,
 } from "../sidebar/link-builder.js";
+import { consumeBuilderPrefill } from "../sidebar/link-quick-add.js";
 import { readParameterFields } from "../sidebar/link-builder-fields.js";
 import { downloadOverlayJson } from "../sidebar/link-export.js";
 import { linkBadgeLabel } from "../lib/link-behaviors.js";
@@ -73,6 +73,12 @@ attachCodeMirrorAll({
     language: "regex",
     compact: true,
     placeholder: "e.g. \\.service-now\\.com$",
+  },
+  framesMatch: {
+    element: builderElements.fieldElements.framesMatchInput,
+    language: "regex",
+    compact: true,
+    placeholder: "e.g. incident\\.do",
   },
 });
 

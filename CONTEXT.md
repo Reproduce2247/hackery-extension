@@ -19,6 +19,8 @@ The repo still says "ServiceNow" in places (`manifest.json`, README); treat that
 ```
 manifest.json
 ├── background.js            # Inject cache, omnibox, shortcuts, context menus, badges
+├── lib/catalog-walk.js      # One catalog tree walk (keys, match, parents)
+├── lib/catalog-service.js   # Per-realm merged catalog snapshot (no extra storage)
 ├── lib/link-model.js        # Shared link tree, parameters, match patterns, normalization
 ├── lib/link-behaviors.js    # Behavior registry (run / open-url / open-from-script)
 ├── lib/link-search.js       # Fuzzy scoring (sidebar + omnibox)
@@ -39,6 +41,7 @@ manifest.json
 │   ├── search.js            # Explicit / / Ctrl+K search
 │   └── …
 ├── builder/                 # Advanced link editor window
+├── prompt/                  # Parameter prompt window (shortcuts / omnibox)
 ├── network/                 # Network-rules plugin (engine, UI, inject, host API)
 │   ├── plugin.js            # ESM network-rules host API
 │   ├── background.js        # Hook/webRequest orchestration
@@ -53,9 +56,11 @@ manifest.json
 | Concern | Owner |
 |---|---|
 | Catalog merge / import / export | `lib/link-catalog.js` |
+| Catalog snapshot (merge + order + leaf index) | `lib/catalog-service.js` |
 | Display / export order | `lib/catalog-order.js` |
 | URL canonicalization | `lib/url-normalize.js` |
 | Leaf activation | `lib/activate-link.js` + `lib/link-behaviors.js` |
+| Parameter collection outside the sidebar | `prompt/params.js` |
 | Search scoring | `lib/link-search.js` |
 | Shortcut slots | `lib/link-shortcuts.js` |
 | Catalog change broadcast | `lib/catalog-events.js` |
@@ -64,11 +69,33 @@ manifest.json
 
 ### Execution flow
 
-1. User opens sidebar (toolbar or Ctrl+Period) → `sidebar.js` loads ordered merged catalog and renders section tabs.
-2. **Omnibox `cl`** — page-focused search/run without focusing the sidebar.
-3. **Alt+1…0** — run assigned link slots (right-click a link → Assign Alt+N).
+1. User opens sidebar (toolbar or Ctrl+Period) → `sidebar.js` reads `getCatalogSnapshot()` (per-realm cache) and renders section tabs. Overlay load is one `storage.local.get` of `linksJsonOverlay`. Catalog reads never write `catalogOrder`.
+2. **Omnibox `cl`** — page-focused search/run without focusing the sidebar. Parameters go inline after `|` (see Parameter prompt).
+3. **Alt+1…0** — run assigned link slots (right-click a link → Assign Alt+N). Parameterized links prompt first.
 4. **Run / Open / Derive** — via `lib/activate-link.js` + behaviors.
 5. **On load / Network rules** — unchanged (see below).
+
+### Parameter prompt (`prompt/params.html`)
+
+The sidebar collects values in the link row. Callers without a row — Alt+N shortcuts, omnibox entries — use a popup window instead, opened by `openParamPrompt()` in `background.js` with the request in session `linkParamPrompt`.
+
+| Caller | Behavior |
+|---|---|
+| Alt+1…0 | Always prompts when the link has editable values, prefilled with the saved value (or `default`); runs directly when it has none |
+| Omnibox | Runs inline values straight away; prompts only when a required value is still missing, prefilled with what was supplied |
+
+Inline omnibox syntax splits the input on `|`: the first segment is the action query, the rest are values — positional in declaration order, or `name=value` in any segment. Blank segments fall through to saved values and defaults instead of clearing them. Suggestion descriptions append the parameter state (`q=jsmith` / `q: username or name`), and typed values are carried in the suggestion `content` so selecting a suggestion does not drop them.
+
+```
+cl find user | jsmith
+cl uib macroponent | sys_id=67ee2538534501108135ddeeff7b121b
+```
+
+**Why a window, not the sidebar:** `sidebarAction.open()` only works inside an unbroken user-input handler, and Firefox counts `omnibox.onInputEntered` as user input only from 142. Resolving the catalog and stored values — needed to know whether a prompt is required at all — spends that status regardless. A window has no gesture requirement.
+
+**Window targeting:** the prompt takes focus, so "current window" would resolve to the prompt itself. Callers capture the browser `windowId` **before** opening it and pass it through `activateLinkNode` → `getTargetTab`; `performNavigation` pins new tabs to the target tab's window for the same reason. A stale `windowId` (window closed meanwhile) falls back to the current window.
+
+Activation outcomes on these paths are never silent: failures flash the toolbar badge (`?` unknown link, `!` failed) and log to the background console, and errors thrown during activation are returned to the prompt window rather than left as unhandled rejections.
 
 ### On-load + `match`
 
@@ -115,7 +142,7 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 
 | Field | Purpose |
 |---|---|
-| `id` | Stable leaf identity (UUID). Bundled leaves all have one; custom leaves get one on create. Order/shortcuts/storage prefer `id`, fall back to `name`-based keys for legacy nodes without one. |
+| `id` | Stable leaf identity (UUID). New leaves get one at create/import via `ensureLinkId`. Order/shortcuts prefer `id`; leaves without one use a section/folder/`name` path key. Folders have no ids. |
 | `name` | Display label (also used in path/order fallbacks when `id` is absent) |
 | `code` | Script body; `params` keys are lexical bindings at runtime |
 | `url` | Relative path, absolute URL, or template |
@@ -175,8 +202,6 @@ Required on URL actions. On scriptlets, only when the script returns a URL (`cod
 | `background` | Open in a new background tab |
 | `download` | Trigger `browser.downloads.download` |
 
-Legacy aliases normalized on load: `foreground` → `tab`, `fetch` → `download`.
-
 ### params vs navParams
 
 Mutual exclusion by behavior (see [ADR 0001](docs/adr/0001-params-vs-navparams.md)):
@@ -187,7 +212,7 @@ Mutual exclusion by behavior (see [ADR 0001](docs/adr/0001-params-vs-navparams.m
 | **Used on** | `code` actions (`run`, `open-from-script`) | `url` actions (`open-url`) |
 | **Runtime** | `new Function(...names, code)(...values)` | Applied to `url` template after resolve |
 
-A leaf should not declare both. Normalization moves URL-only legacy `params` into `navParams` and drops `navParams`/`extract` on pure script actions.
+A leaf should not declare both. URL actions use `navParams`; script actions use `params`.
 
 #### `params` fields
 
@@ -243,19 +268,9 @@ Script code uses bare names (`limit`), not `{limit}` or `$limit`.
 
 URL templates also support `{origin}` (target tab origin), independent of `navParams`.
 
-### Schema migration
+### Schema
 
-`LINKS_SCHEMA_VERSION` is **3**. Bumping clears `linkParamValues` and `injectOnLoad` once (`linksSchemaVersion` in storage). Overlay / catalog normalize on load:
-
-| Legacy | Canonical |
-|---|---|
-| `extract` | `navParams` |
-| `extract.*.url` | `navParams.*.fromUrl` |
-| `extract.*.selector` | `navParams.*.fromSelector` |
-| URL-only `params` (no `code`) | merged into `navParams` |
-| `type` / `path` / `nav` / `hostPattern` / `parameter` | as in v2 |
-
-One-off file rewrite: `node scripts/migrate-links-json.js`.
+Current catalog shape is schema **v3** (`code` / `url` / `open` / `match` / `params` / `navParams`). Overlay is a single `linksJsonOverlay` get — no on-read migrations, id backfill, or `customScripts` / `Custom` section remaps. Import requires this shape; pre-v3 stored data and imports are unsupported.
 
 ### Deferred: sandbox
 
@@ -348,7 +363,7 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 | `block` | Abort matching requests |
 | `redirect` | Replace request URL |
 
-**Filters:** page URL, request URL, Content-Type, request body — `*` wildcards by default, optional per-field **regex** mode; HTTP methods; resource types; response status range. Legacy `w:` prefixes migrate to wildcard mode on load.
+**Filters:** page URL, request URL, Content-Type, request body — `*` wildcards by default, optional per-field **regex** mode; HTTP methods; resource types; response status range.
 
 **Shared state:** request/response scripts receive `ctx.sharedState` (persisted in `networkSharedState`) and `ctx.tabState` (per-tab session). Mutations from page hooks sync back via `NETWORK_SHARED_STATE` messages.
 
@@ -384,7 +399,7 @@ When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. 
 
 **Privileged request headers (Cookie / Origin / Referer / User-Agent):** page JS cannot set these on fetch/XHR. The page hook encodes them as `x-complexlinker-{name}`; `network-webrequest.js` always rewrites those dummies to the real header names in `onBeforeSendHeaders` (even when rule matching defers to the page hook). Add more names to `PRIVILEGED_REQUEST_HEADER_NAMES` in `network-rule-engine-core.js` if needed. The **User-Agent Switcher** network rule template relies on this path for fetch/XHR; navigations and other resource types get `setHeaders` from webRequest directly.
 
-When matching tabs in the current window: the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
+When matching tabs in the target window (the current window unless a caller passed a `windowId`): the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
 
 Values persist in `browser.storage.local` under `linkParamValues`, keyed by a stable **link key**: `id` when present, otherwise section + behavior + name + template.
 
@@ -420,9 +435,12 @@ Originally populated from the **SN links** Firefox bookmarks folder via `scripts
 
 Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** opens `builder/builder.html`. Page context menu **Create Complex Linker action** opens the builder with tab URL / clicked-element `fromSelector` prefill.
 
+- The quick-add **Type** selector drives the code field: Scriptlet → `JS script` placeholder with JavaScript lint; Link → `URL/path` placeholder with URL lint (`url` language in `lib/codemirror-fields.js`, resolved like runtime paths)
+- The builder **Type** selector maps one-to-one onto behaviors, with a hint line per type: `scriptlet` → `run` (no `open`, on-load eligible), `scriptlet-url` → `open-from-script` (`open` required, script returns the URL), `navigate` / `derived-url` → `open-url`. Navigation mode is only offered for types that carry `open`, so a Run scriptlet cannot pick one up by switching types.
+- Both scriptlet types expose **Iframe targets** (leaf `frames`): default omits the field; *Specify frames* writes `top`, `nestingLevel`, and URL `match` regexes (one per line)
 - Drag-and-drop in the sidebar reorders items and can reparent them onto a section tab or subsection folder title; arrangement is stored in `catalogOrder` (`linkKeys`, `sectionOrder`, `parentByKey`) and used for display and custom-link export
 - Custom links stored in `linksJsonOverlay`; export follows catalog order
-- Edit / Remove are offered only for links **stored in the overlay** (`collectOverlayCustomLinkIds()`), not merely because a leaf has an `id` — bundled `data/links.json` leaves all carry ids, and neither edit nor delete can reach those. Removing a bundled link means editing `data/links.json`.
+- Edit / Remove are offered only for links **stored in the overlay** (`collectOverlayCustomLinkIds()`), not merely because a leaf has an `id`. Removing a bundled link means editing `data/links.json`.
 - Right-click → Assign Alt+1…0 for global shortcuts
 
 ## Storage keys (`browser.storage.local`)
@@ -436,9 +454,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 | `networkRules` | Network rules editor state (`enabled` + `rules[]`) |
 | `networkHooksEnabled` | Master switch for network hooks + webRequest rules (default true) |
 | `networkSharedState` | Persistent key/value for network rule scripts (`ctx.sharedState`) |
-| `linksSchemaVersion` | Catalog schema version (v3 triggers one-time overlay migration + storage reset) |
-| `linksJsonOverlay` | Custom section links in `links.json` format (merged at load) |
-| `customScripts` | Legacy user scripts (migrated to `linksJsonOverlay`) |
+| `linksJsonOverlay` | Custom section links in `links.json` format (merged at load; no on-read writes) |
 | `activeSectionTab` | Last selected section tab |
 | `addScriptExpanded` | Add-action panel collapsed state |
 | `catalogOrder` | `{ linkKeys[], sectionOrder[], parentByKey }` display/export order and parent overrides |
@@ -453,6 +469,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 | `networkRulesLog` | Recent network rule matches (cap 100) |
 | `networkTabState` | Per-tab objects for `ctx.tabState` keyed by tab id |
 | `linkBuilderPrefill` | Tab/context prefill for new builder links |
+| `linkParamPrompt` | Pending parameter prompt: `{ stableKey, windowId, rawValues }` |
 | `linkBuilderSection` | Default section for builder |
 | `cspDisabledTabs` | Tab ids with the sidebar "Disable CSP" toggle on |
 
@@ -463,7 +480,6 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 - **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.). This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them. Optional `frames` selects top and/or nested documents; see Frame targeting.
 - **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
 - **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.
-- **Schema v3 update:** clears saved parameter values and on-load preferences once; reload preferences after updating.
 - Reload extension after changing `links.json` or background logic.
 
 ## Known limitations

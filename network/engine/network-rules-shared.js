@@ -101,9 +101,8 @@ export const FILTER_PATTERN_FIELDS = [
 ];
 
 /**
- * Normalize legacy `w:` patterns and missing isRegex flags onto the checkbox model.
- * Empty/default is wildcard; bare legacy patterns (no `w:`) stay regex.
- * Drops removed pageHostPattern / hostPattern fields.
+ * Normalize missing isRegex flags onto the checkbox model.
+ * Empty/default is wildcard. Drops removed pageHostPattern / hostPattern fields.
  * @param {object} rule Network rule.
  * @returns {object} Rule with explicit pattern-mode flags.
  */
@@ -117,12 +116,7 @@ export function normalizeRulePatternModes(rule) {
   delete next.hostPattern;
   delete next.hostPatternIsRegex;
   for (const [patternKey, flagKey] of FILTER_PATTERN_FIELDS) {
-    let value = next[patternKey] == null ? "" : String(next[patternKey]);
-    if (value.startsWith("w:")) {
-      next[patternKey] = value.slice(2);
-      next[flagKey] = false;
-      continue;
-    }
+    const value = next[patternKey] == null ? "" : String(next[patternKey]);
     if (typeof next[flagKey] === "boolean") {
       continue;
     }

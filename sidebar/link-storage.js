@@ -1,8 +1,8 @@
 import { emitCatalogChanged } from "../lib/catalog-events.js";
+import { invalidateCatalogSnapshot } from "../lib/catalog-cache.js";
+import { getCatalogSnapshot } from "../lib/catalog-service.js";
 import {
   appendMissingKeys,
-  applyOrder,
-  CATALOG_ORDER_KEY,
   collectOriginParentMap,
   loadCatalogOrder,
   moveKeysInOrder,
@@ -11,9 +11,8 @@ import {
 } from "../lib/catalog-order.js";
 import {
   ensureLinkId,
-  ensureLinksOverlayInStorage,
+  loadLinksOverlay,
   importOverlayIntoExisting,
-  LEGACY_CUSTOM_MIGRATION_SECTION,
   mergeLinksCatalog,
   overlayTreeFromMerged,
 } from "../lib/link-catalog.js";
@@ -23,6 +22,7 @@ const { LINKS_OVERLAY_KEY } = StorageKeys;
 
 async function persistOverlay(overlay, reason = "overlay") {
   await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  invalidateCatalogSnapshot();
   emitCatalogChanged({ reason });
 }
 
@@ -31,49 +31,33 @@ export async function loadBundledLinksJson() {
   return response.json();
 }
 
-export async function ensureLinksOverlay() {
-  return ensureLinksOverlayInStorage();
-}
-
 /**
  * Merged catalog with user catalogOrder applied.
  */
 export async function loadMergedLinkCatalog() {
-  const bundled = await loadBundledLinksJson();
-  const overlay = await ensureLinksOverlay();
-  const merged = mergeLinksCatalog(bundled, overlay);
-  let order = await loadCatalogOrder();
-  const next = appendMissingKeys(order, merged);
-  if (
-    next.linkKeys.length !== order.linkKeys.length ||
-    next.sectionOrder.length !== order.sectionOrder.length
-  ) {
-    order = next;
-    await browser.storage.local.set({ [CATALOG_ORDER_KEY]: order });
-  }
-  return applyOrder(merged, order);
+  const snapshot = await getCatalogSnapshot();
+  return snapshot.ordered;
 }
 
 /** Raw merge without order (for order editing / export helpers). */
 export async function loadMergedLinkCatalogUnordered() {
-  const bundled = await loadBundledLinksJson();
-  const overlay = await ensureLinksOverlay();
-  return mergeLinksCatalog(bundled, overlay);
+  const snapshot = await getCatalogSnapshot();
+  return snapshot.mergedUnordered;
 }
 
 export async function getSectionOverlayChildren(sectionName) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   return overlay[sectionName]?.children || [];
 }
 
 export async function saveSectionOverlay(sectionName, section) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   overlay[sectionName] = section;
   await persistOverlay(overlay);
 }
 
 export async function saveSectionOverlayChildren(sectionName, children) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   overlay[sectionName] = {
     ...(overlay[sectionName] || {}),
     children,
@@ -90,7 +74,7 @@ export async function addLinksToSection(sectionName, nodes) {
 }
 
 export async function importLinksOverlay(raw) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   const result = importOverlayIntoExisting(overlay, raw);
   await persistOverlay(result.overlay, "import");
   const merged = mergeLinksCatalog(await loadBundledLinksJson(), result.overlay);
@@ -132,7 +116,7 @@ function locateCustomLeaf(children, linkId, parentPath = []) {
  * @returns {{ overlay: object, sectionName: string, siblings: object[], index: number, node: object } | null}
  */
 async function locateCustomLinkInOverlay(linkId) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   for (const [sectionName, section] of Object.entries(overlay)) {
     const found = locateCustomLeaf(section?.children, linkId);
     if (found) {
@@ -144,23 +128,8 @@ async function locateCustomLinkInOverlay(linkId) {
 
 /** Ids of every leaf stored in the overlay — the links a user can edit or remove. */
 export async function collectOverlayCustomLinkIds() {
-  const overlay = await ensureLinksOverlay();
-  const ids = new Set();
-  const walk = (nodes) => {
-    for (const node of nodes || []) {
-      if (node?.children) {
-        walk(node.children);
-        continue;
-      }
-      if (node?.id) {
-        ids.add(node.id);
-      }
-    }
-  };
-  for (const section of Object.values(overlay)) {
-    walk(section?.children);
-  }
-  return ids;
+  const snapshot = await getCatalogSnapshot();
+  return new Set(snapshot.overlayLinkIds);
 }
 
 export async function findCustomLinkById(linkId) {
@@ -201,7 +170,7 @@ export async function restoreCustomLinkAt(snapshot) {
     throw new Error("Nothing to restore.");
   }
 
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   const sectionName = snapshot.sectionName;
   if (!overlay[sectionName] || typeof overlay[sectionName] !== "object") {
     overlay[sectionName] = { children: [] };
@@ -250,11 +219,11 @@ export async function updateCustomLink(linkId, nextNode, targetSectionName) {
 }
 
 export async function getAllCustomLinks() {
-  const catalog = await loadMergedLinkCatalog();
-  const overlayIds = await collectOverlayCustomLinkIds();
+  const snapshot = await getCatalogSnapshot();
+  const overlayIds = snapshot.overlayLinkIds;
   const results = [];
 
-  for (const [sectionName, section] of Object.entries(catalog)) {
+  for (const [sectionName, section] of Object.entries(snapshot.ordered)) {
     const collect = (nodes) => {
       for (const node of nodes || []) {
         if (node?.children) {
@@ -272,14 +241,13 @@ export async function getAllCustomLinks() {
 }
 
 export async function getCatalogSectionNames() {
-  const catalog = await loadMergedLinkCatalog();
-  return Object.keys(catalog);
+  const snapshot = await getCatalogSnapshot();
+  return Object.keys(snapshot.ordered);
 }
 
 export async function getLinksOverlayForExport() {
-  const merged = await loadMergedLinkCatalog();
-  const overlayIds = await collectOverlayCustomLinkIds();
-  return overlayTreeFromMerged(merged, overlayIds);
+  const snapshot = await getCatalogSnapshot();
+  return overlayTreeFromMerged(snapshot.ordered, snapshot.overlayLinkIds);
 }
 
 export async function reparentCatalogKey(stableKey, placement, destSiblingKeys) {
@@ -304,12 +272,4 @@ export async function reparentCatalogKey(stableKey, placement, destSiblingKeys) 
     sectionOrder: order.sectionOrder,
     parentByKey,
   });
-}
-
-/** @deprecated use addLinksToSection */
-export async function addCustomLinks(
-  nodes,
-  sectionName = LEGACY_CUSTOM_MIGRATION_SECTION
-) {
-  await addLinksToSection(sectionName, nodes);
 }
