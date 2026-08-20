@@ -74,6 +74,7 @@ export function createSearchController({
         node,
         score: getScore(node, query),
       }))
+      .filter((entry) => entry.score > 0)
       .sort(
         (a, b) =>
           b.score - a.score ||

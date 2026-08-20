@@ -222,6 +222,9 @@ h1 {
 
 .message {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   padding: 8px 14px;
   border-radius: 6px;
@@ -232,6 +235,22 @@ h1 {
 
 .message.hidden {
   display: none;
+}
+
+.message-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.message-action {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
 }
 
 .section-tabs {
@@ -1034,6 +1053,12 @@ h1 {
 .folder.is-dragging,
 .section-tab.is-dragging {
   opacity: 0.5;
+}
+
+.section-tab.is-drop-target,
+.folder-title.is-drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .link-item {

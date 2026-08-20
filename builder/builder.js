@@ -3,7 +3,10 @@ import {
   addLinksToSection,
   getAllCustomLinks,
   findCustomLinkById,
+  loadMergedLinkCatalog,
   removeCustomLinkById,
+  restoreCustomLinkAt,
+  reparentCatalogKey,
   updateCustomLink,
   getCatalogSectionNames,
   getLinksOverlayForExport,
@@ -24,10 +27,14 @@ import { readParameterFields } from "../sidebar/link-builder-fields.js";
 import { downloadOverlayJson } from "../sidebar/link-export.js";
 import { linkBadgeLabel } from "../lib/link-behaviors.js";
 import { overlayExport } from "../lib/link-catalog.js";
+import { nodeCatalogKey } from "../lib/catalog-order.js";
 import { StorageKeys } from "../lib/storage-keys.js";
 import { createUiMessage } from "../lib/ui-message.js";
+import { loadInjectOnLoad } from "../sidebar/link-ui.js";
 
-const { LINKS_OVERLAY_KEY, LINK_BUILDER_SECTION_KEY } = StorageKeys;
+const { LINKS_OVERLAY_KEY, LINK_BUILDER_SECTION_KEY, INJECT_ON_LOAD_KEY } =
+  StorageKeys;
+const UNDO_DELETE_MS = 8000;
 
 const linksListEl = document.getElementById("links-list");
 const linkCountEl = document.getElementById("link-count");
@@ -226,7 +233,21 @@ async function saveCurrentLink(event) {
     const node = buildLinkNodeFromForm(form);
 
     if (form.editId) {
+      const previousSection = getSelectedLink()?.sectionName;
       await updateCustomLink(form.editId, node, form.sectionName);
+      if (form.sectionName !== previousSection) {
+        const catalog = await loadMergedLinkCatalog();
+        const movedKey = `id:${form.editId}`;
+        const destKeys = (catalog[form.sectionName]?.children || [])
+          .map((entry) => nodeCatalogKey(entry, form.sectionName, []))
+          .filter((key) => key !== movedKey);
+        destKeys.push(movedKey);
+        await reparentCatalogKey(
+          movedKey,
+          { section: form.sectionName, parentKey: null },
+          destKeys
+        );
+      }
       selectedLinkId = form.editId;
       showMessage(`Saved "${node.name}" in ${form.sectionName}.`);
     } else {
@@ -252,11 +273,19 @@ async function deleteLinkById(linkId) {
   }
 
   hideMessage();
+  let snapshot;
   try {
-    await removeCustomLinkById(link.id);
+    snapshot = await removeCustomLinkById(link.id);
   } catch (error) {
     showMessage(error.message || String(error));
     return;
+  }
+
+  const injectOnLoad = await loadInjectOnLoad();
+  const hadInject = Boolean(injectOnLoad[linkId]);
+  if (hadInject) {
+    delete injectOnLoad[linkId];
+    await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: injectOnLoad });
   }
 
   if (selectedLinkId === linkId) {
@@ -265,7 +294,21 @@ async function deleteLinkById(linkId) {
   }
 
   await reloadLinks();
-  showMessage(`Deleted "${link.name}".`);
+  showMessage(`Deleted "${link.name}".`, {
+    actionLabel: "Undo",
+    timeoutMs: UNDO_DELETE_MS,
+    onAction: async () => {
+      await restoreCustomLinkAt(snapshot);
+      if (hadInject) {
+        const nextInject = await loadInjectOnLoad();
+        nextInject[linkId] = true;
+        await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: nextInject });
+      }
+      selectedLinkId = linkId;
+      await reloadLinks();
+      selectLink(linkId);
+    },
+  });
 }
 
 async function deleteCurrentLink() {

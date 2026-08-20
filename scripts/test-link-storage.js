@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 
 /**
- * Regression tests for custom-link deletion.
+ * Regression tests for custom-link deletion and catalogOrder placement.
  *
  * A leaf carries an `id` whether it lives in the bundled catalog or in the
  * overlay, so id presence alone must not decide whether the sidebar offers a
@@ -21,28 +21,58 @@ const BUNDLED = {
       },
     ],
   },
-};
-
-function installExtensionGlobals() {
-  const store = {
-    linksSchemaVersion: 3,
-    linksJsonOverlay: {
-      Misc: {
+  Other: {
+    children: [
+      {
+        name: "Outer",
         children: [
-          { id: "custom-top", name: "Custom top", code: "console.log(1)" },
           {
-            name: "Folder",
+            name: "Inner",
             children: [
               {
-                id: "custom-nested",
-                name: "Custom nested",
-                code: "console.log(2)",
+                id: "bundled-deep",
+                name: "Bundled deep",
+                url: "https://example.com/d",
+                open: "tab",
               },
             ],
           },
         ],
       },
+      {
+        id: "bundled-root",
+        name: "Bundled root",
+        url: "https://example.com/c",
+        open: "tab",
+      },
+    ],
+  },
+};
+
+function defaultOverlay() {
+  return {
+    Misc: {
+      children: [
+        { id: "custom-top", name: "Custom top", code: "console.log(1)" },
+        {
+          name: "Folder",
+          children: [
+            {
+              id: "custom-nested",
+              name: "Custom nested",
+              code: "console.log(2)",
+            },
+          ],
+        },
+      ],
     },
+  };
+}
+
+function installExtensionGlobals() {
+  const store = {
+    linksSchemaVersion: 3,
+    linksJsonOverlay: defaultOverlay(),
   };
 
   globalThis.browser = {
@@ -96,20 +126,42 @@ function sectionLeafIds(catalog, sectionName) {
   return ids;
 }
 
+function childNames(nodes) {
+  return (nodes || []).map((node) => node.name);
+}
+
+function findFolder(nodes, name) {
+  return (nodes || []).find((node) => node.children && node.name === name);
+}
+
 async function run() {
   installExtensionGlobals();
 
   const {
     collectOverlayCustomLinkIds,
+    getLinksOverlayForExport,
     loadMergedLinkCatalog,
     removeCustomLinkById,
+    restoreCustomLinkAt,
   } = await import("../sidebar/link-storage.js");
-  const { linkStableKey, loadCatalogOrder, moveKeysInOrder, saveCatalogOrder } =
-    await import("../lib/catalog-order.js");
+  const {
+    applyOrder,
+    collectOriginParentMap,
+    folderStableKey,
+    linkStableKey,
+    loadCatalogOrder,
+    moveKeysInOrder,
+    placementWouldCycle,
+    saveCatalogOrder,
+  } = await import("../lib/catalog-order.js");
 
-  const { isOverlayCustomLink, ensureLinkIdsInTree } = await import(
-    "../lib/link-catalog.js"
-  );
+  const {
+    isOverlayCustomLink,
+    ensureLinkIdsInTree,
+    overlayExport,
+    overlayTreeFromMerged,
+    mergeLinksCatalog,
+  } = await import("../lib/link-catalog.js");
 
   const backfill = ensureLinkIdsInTree([
     { name: "No id yet", code: "1" },
@@ -138,7 +190,6 @@ async function run() {
     "a bundled leaf with an id is not a custom link"
   );
 
-  // The sidebar only renders Remove/Edit for links this predicate accepts.
   const rendered = (await loadMergedLinkCatalog()).Misc.children;
   assert.deepEqual(
     rendered
@@ -148,7 +199,6 @@ async function run() {
     "only overlay links may be offered for removal"
   );
 
-  // Drag the custom link to the top of the section, then delete it.
   const order = await loadCatalogOrder();
   const customKey = linkStableKey("Misc", [], { id: "custom-top" });
   const reordered = [
@@ -178,6 +228,123 @@ async function run() {
     () => removeCustomLinkById("bundled-with-id"),
     /not found/i,
     "deleting a bundled leaf must report failure, not no-op"
+  );
+
+  installExtensionGlobals();
+  const nestedSnapshot = await removeCustomLinkById("custom-nested");
+  assert.deepEqual(nestedSnapshot.parentPath, ["Folder"]);
+  await restoreCustomLinkAt(nestedSnapshot);
+  const restored = await loadMergedLinkCatalog();
+  const folder = findFolder(restored.Misc.children, "Folder");
+  assert.equal(folder.children[nestedSnapshot.index].id, "custom-nested");
+
+  installExtensionGlobals();
+  const merged = mergeLinksCatalog(BUNDLED, defaultOverlay());
+  const innerKey = folderStableKey("Other", ["Outer"], "Inner");
+  const outerKey = folderStableKey("Other", [], "Outer");
+  const originParent = collectOriginParentMap(merged);
+  assert.equal(
+    placementWouldCycle(outerKey, innerKey, {}, originParent),
+    true,
+    "moving a folder into its descendant is a cycle"
+  );
+
+  const movedInner = applyOrder(merged, {
+    linkKeys: [],
+    sectionOrder: ["Misc", "Other"],
+    parentByKey: {
+      [innerKey]: { section: "Misc", parentKey: null },
+    },
+  });
+  assert.ok(
+    findFolder(movedInner.Misc.children, "Inner"),
+    "moved folder attaches to destination section root"
+  );
+  assert.ok(
+    !findFolder(findFolder(movedInner.Other.children, "Outer").children, "Inner"),
+    "moved folder is absent from the source parent"
+  );
+  assert.ok(
+    findFolder(movedInner.Misc.children, "Inner").children.some(
+      (node) => node.id === "bundled-deep"
+    ),
+    "moved folder keeps its children"
+  );
+
+  const cycled = applyOrder(merged, {
+    linkKeys: [],
+    sectionOrder: [],
+    parentByKey: {
+      [outerKey]: { section: "Other", parentKey: innerKey },
+    },
+  });
+  assert.ok(
+    findFolder(cycled.Other.children, "Outer"),
+    "cyclic folder placement is ignored"
+  );
+
+  const nestedCustom = applyOrder(merged, {
+    linkKeys: [],
+    sectionOrder: ["Other", "Misc"],
+    parentByKey: {
+      "id:custom-top": {
+        section: "Other",
+        parentKey: folderStableKey("Other", [], "Outer"),
+      },
+    },
+  });
+  const outer = findFolder(nestedCustom.Other.children, "Outer");
+  assert.ok(
+    outer.children.some((node) => node.id === "custom-top"),
+    "custom leaf can nest under a bundled folder"
+  );
+  assert.ok(!childNames(nestedCustom.Misc.children).includes("Custom top"));
+
+  const overlayIds2 = new Set(["custom-top", "custom-nested"]);
+  const exported = overlayExport(
+    overlayTreeFromMerged(nestedCustom, overlayIds2)
+  );
+  assert.ok(exported.Other, "export uses effective section");
+  assert.equal(exported.Other.children[0].name, "Outer");
+  assert.equal(
+    exported.Other.children[0].children.some((node) => node.id === "custom-top"),
+    true,
+    "export includes a folder shell for a bundled parent"
+  );
+  assert.ok(
+    !exported.Misc.children.some((node) => node.id === "custom-top"),
+    "export omits the leaf from its JSON home section"
+  );
+
+  installExtensionGlobals();
+  await saveCatalogOrder({
+    linkKeys: [],
+    sectionOrder: ["Other", "Misc"],
+    parentByKey: {
+      "id:custom-top": {
+        section: "Other",
+        parentKey: folderStableKey("Other", [], "Outer"),
+      },
+    },
+  });
+  const fromStorage = overlayExport(await getLinksOverlayForExport());
+  assert.ok(
+    fromStorage.Other.children.some((node) => node.name === "Outer"),
+    "getLinksOverlayForExport honors parentByKey"
+  );
+
+  const sectionMoved = applyOrder(merged, {
+    linkKeys: ["id:bundled-root"],
+    sectionOrder: ["Misc", "Other"],
+    parentByKey: {
+      "id:bundled-root": { section: "Misc", parentKey: null },
+    },
+  });
+  assert.ok(
+    sectionMoved.Misc.children.some((node) => node.id === "bundled-root")
+  );
+  assert.ok(
+    !sectionMoved.Other.children.some((node) => node.id === "bundled-root")
   );
 
   console.log("link storage: OK");

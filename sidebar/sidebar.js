@@ -14,6 +14,8 @@ import {
   loadMergedLinkCatalog,
   addLinksToSection,
   removeCustomLinkById,
+  restoreCustomLinkAt,
+  reparentCatalogKey,
 } from "./link-storage.js";
 import { buildQuickLinkNode } from "./link-builder.js";
 import { copyLinkNodeJson } from "./link-export.js";
@@ -31,6 +33,7 @@ import {
   linkStableKey,
   loadCatalogOrder,
   moveKeysInOrder,
+  nodeCatalogKey,
   saveCatalogOrder,
 } from "../lib/catalog-order.js";
 import { isOverlayCustomLink } from "../lib/link-catalog.js";
@@ -46,6 +49,8 @@ import { MessageTypes } from "../lib/message-types.js";
 import { StorageKeys } from "../lib/storage-keys.js";
 import { getActiveTab } from "../lib/tab-target.js";
 import { createUiMessage } from "../lib/ui-message.js";
+
+const UNDO_DELETE_MS = 8000;
 
 const {
   SECTION_TAB_KEY,
@@ -151,6 +156,7 @@ const linkUi = createLinkUi({
   assignShortcut,
   getShortcutSlots: () => shortcutSlots,
   onReorderSiblings: persistSiblingOrder,
+  onReparent: persistReparent,
 });
 
 function getLinkSections() {
@@ -187,8 +193,8 @@ async function persistSiblingOrder(orderedStableKeys) {
   const order = await loadCatalogOrder();
   const linkKeys = moveKeysInOrder(order.linkKeys, orderedStableKeys);
   await saveCatalogOrder({
+    ...order,
     linkKeys,
-    sectionOrder: order.sectionOrder,
   });
   await renderAll();
 }
@@ -196,10 +202,57 @@ async function persistSiblingOrder(orderedStableKeys) {
 async function persistSectionOrder(orderedSectionNames) {
   const order = await loadCatalogOrder();
   await saveCatalogOrder({
-    linkKeys: order.linkKeys,
+    ...order,
     sectionOrder: orderedSectionNames,
   });
   await renderAll();
+}
+
+async function persistReparent(fromKey, placement, destSiblingKeys) {
+  try {
+    await reparentCatalogKey(fromKey, placement, destSiblingKeys);
+    await renderAll();
+  } catch (error) {
+    showMessage(error.message || String(error));
+  }
+}
+
+async function deleteCustomLinkFromSidebar(linkId, displayName) {
+  try {
+    const snapshot = await removeCustomLinkById(linkId);
+    const injectOnLoad = await loadInjectOnLoad();
+    const hadInject = Boolean(injectOnLoad[linkId]);
+    if (hadInject) {
+      delete injectOnLoad[linkId];
+      await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: injectOnLoad });
+    }
+    await renderAll();
+    const name = displayName || snapshot.node?.name || "link";
+    showMessage(`Deleted "${name}".`, {
+      actionLabel: "Undo",
+      timeoutMs: UNDO_DELETE_MS,
+      onAction: async () => {
+        await restoreCustomLinkAt(snapshot);
+        if (hadInject) {
+          const nextInject = await loadInjectOnLoad();
+          nextInject[linkId] = true;
+          await browser.storage.local.set({ [INJECT_ON_LOAD_KEY]: nextInject });
+        }
+        await renderAll();
+      },
+    });
+  } catch (error) {
+    showMessage(error.message || String(error));
+  }
+}
+
+function appendEmptyPlaceholder(list, query) {
+  const empty = document.createElement("p");
+  empty.className = "search-empty";
+  empty.textContent = query
+    ? "No matching actions."
+    : "No actions in this section.";
+  list.appendChild(empty);
 }
 
 function renderSectionTabs() {
@@ -240,9 +293,24 @@ function renderSectionTabs() {
     tab.addEventListener("dragover", (event) => {
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
+      tab.classList.add("is-drop-target");
     });
+    tab.addEventListener("dragleave", () => tab.classList.remove("is-drop-target"));
     tab.addEventListener("drop", async (event) => {
       event.preventDefault();
+      tab.classList.remove("is-drop-target");
+      const itemKey = event.dataTransfer.getData("text/stable-key");
+      if (itemKey) {
+        const destKeys = (section.children || [])
+          .map((node) => nodeCatalogKey(node, section.name, []))
+          .filter((key) => key !== itemKey);
+        destKeys.push(itemKey);
+        await persistReparent(itemKey, {
+          section: section.name,
+          parentKey: null,
+        }, destKeys);
+        return;
+      }
       const from = event.dataTransfer.getData("text/section-name");
       const to = section.name;
       if (!from || from === to) {
@@ -306,6 +374,9 @@ async function renderAll() {
           flattenLinkNodes(section.children, section.match, section.name),
           (node, activeQuery) => search.nodeSearchScore(node, activeQuery)
         );
+        if (!sortedNodes.length) {
+          appendEmptyPlaceholder(list, query);
+        }
         for (const node of sortedNodes) {
           list.appendChild(
             linkUi.createLinkRow(node, {
@@ -319,17 +390,7 @@ async function renderAll() {
               onDelete: isOverlayCustomLink(node, overlayLinkIds)
                 ? async (event) => {
                     event.stopPropagation();
-                    try {
-                      await removeCustomLinkById(node.id);
-                      const nextInject = await loadInjectOnLoad();
-                      delete nextInject[node.id];
-                      await browser.storage.local.set({
-                        [INJECT_ON_LOAD_KEY]: nextInject,
-                      });
-                      await renderAll();
-                    } catch (error) {
-                      showMessage(error.message || String(error));
-                    }
+                    await deleteCustomLinkFromSidebar(node.id, node.name);
                   }
                 : null,
               ...search.getSearchRowHighlight(node, query),
@@ -350,21 +411,17 @@ async function renderAll() {
             activeTabUrl,
             pathParts: [],
             overlayLinkIds,
-            onDeleteCustom: async (linkId) => {
-              try {
-                await removeCustomLinkById(linkId);
-                const nextInject = await loadInjectOnLoad();
-                delete nextInject[linkId];
-                await browser.storage.local.set({
-                  [INJECT_ON_LOAD_KEY]: nextInject,
-                });
-                await renderAll();
-              } catch (error) {
-                showMessage(error.message || String(error));
-              }
+            onDeleteCustom: async (linkId, node) => {
+              await deleteCustomLinkFromSidebar(linkId, node?.name);
             },
           }
         );
+        if (
+          !list.querySelector(".link-row") &&
+          !list.querySelector(".folder")
+        ) {
+          appendEmptyPlaceholder(list, "");
+        }
       }
     }
 

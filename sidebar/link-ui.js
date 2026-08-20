@@ -1,5 +1,5 @@
 import { saveParamValue, readParamValuesFromRow } from "../lib/activate-link.js";
-import { folderStableKey, linkStableKey } from "../lib/catalog-order.js";
+import { nodeCatalogKey } from "../lib/catalog-order.js";
 import { isOverlayCustomLink } from "../lib/link-catalog.js";
 import {
   displayHint,
@@ -56,6 +56,22 @@ export function syncAppliesToTabDots(container, tabUrl) {
 }
 
 const { INJECT_ON_LOAD_KEY } = StorageKeys;
+
+function placementForParentEl(parentEl, sectionName) {
+  if (parentEl?.classList.contains("folder")) {
+    return {
+      section: sectionName,
+      parentKey: parentEl.dataset.stableKey || null,
+    };
+  }
+  return { section: sectionName, parentKey: null };
+}
+
+function childStableKeys(container) {
+  return [...container.querySelectorAll(":scope > .link-row, :scope > .folder")]
+    .map((el) => el.dataset.stableKey)
+    .filter(Boolean);
+}
 
 let openCombobox = null;
 let openContextMenu = null;
@@ -417,6 +433,7 @@ export function createLinkUi({
   assignShortcut,
   getShortcutSlots,
   onReorderSiblings,
+  onReparent,
 }) {
   function createLinkRow(node, options = {}) {
     const parameterDefs = getUiParameterDefs(node);
@@ -424,7 +441,7 @@ export function createLinkUi({
     const savedValues = options.savedParamValues?.[linkKey] || {};
     const stableKey =
       options.stableKey ||
-      linkStableKey(node.sectionName, options.pathParts || [], node) ||
+      nodeCatalogKey(node, node.sectionName, options.pathParts || []) ||
       linkKey;
 
     const row = document.createElement("div");
@@ -441,7 +458,7 @@ export function createLinkUi({
     row.dataset.linkKey = linkKey;
     row.dataset.stableKey = stableKey;
     row.dataset.match = node.match ?? "";
-    if (options.enableDrag && onReorderSiblings) {
+    if (options.enableDrag && (onReorderSiblings || onReparent)) {
       row.draggable = true;
       row.addEventListener("dragstart", (event) => {
         event.dataTransfer.setData("text/stable-key", stableKey);
@@ -464,17 +481,31 @@ export function createLinkUi({
         if (!parent) {
           return;
         }
-        const siblings = [...parent.querySelectorAll(":scope > .link-row, :scope > .folder")]
+        const siblings = [
+          ...parent.querySelectorAll(":scope > .link-row, :scope > .folder"),
+        ]
           .map((el) => el.dataset.stableKey)
           .filter(Boolean);
         const fromIndex = siblings.indexOf(fromKey);
         const toIndex = siblings.indexOf(stableKey);
-        if (fromIndex < 0 || toIndex < 0) {
+        if (toIndex < 0) {
           return;
         }
-        siblings.splice(fromIndex, 1);
+        if (fromIndex >= 0) {
+          siblings.splice(fromIndex, 1);
+          siblings.splice(toIndex, 0, fromKey);
+          await onReorderSiblings?.(siblings);
+          return;
+        }
+        if (!onReparent) {
+          return;
+        }
         siblings.splice(toIndex, 0, fromKey);
-        await onReorderSiblings(siblings);
+        await onReparent(
+          fromKey,
+          placementForParentEl(parent, node.sectionName || options.sectionName),
+          siblings
+        );
       });
     }
 
@@ -631,11 +662,11 @@ export function createLinkUi({
       if (node.children) {
         const folder = document.createElement("section");
         folder.className = "folder";
-        const folderKey = folderStableKey(sectionName, pathParts, node.name);
+        const folderKey = nodeCatalogKey(node, sectionName, pathParts);
         if (folderKey) {
           folder.dataset.stableKey = folderKey;
         }
-        if (options.enableDrag && onReorderSiblings) {
+        if (options.enableDrag && (onReorderSiblings || onReparent)) {
           folder.draggable = true;
           folder.addEventListener("dragstart", (event) => {
             if (event.target !== folder && event.target !== folder.firstChild) {
@@ -655,31 +686,70 @@ export function createLinkUi({
             if (event.target.closest(".link-row")) {
               return;
             }
+            if (event.target.closest(".folder-title")) {
+              return;
+            }
             event.preventDefault();
             event.stopPropagation();
             const fromKey = event.dataTransfer.getData("text/stable-key");
             if (!fromKey || fromKey === folderKey) {
               return;
             }
-            const siblings = [
-              ...container.querySelectorAll(":scope > .link-row, :scope > .folder"),
-            ]
-              .map((el) => el.dataset.stableKey)
-              .filter(Boolean);
+            const siblings = childStableKeys(container);
             const fromIndex = siblings.indexOf(fromKey);
             const toIndex = siblings.indexOf(folderKey);
-            if (fromIndex < 0 || toIndex < 0) {
+            if (toIndex < 0) {
               return;
             }
-            siblings.splice(fromIndex, 1);
+            if (fromIndex >= 0) {
+              siblings.splice(fromIndex, 1);
+              siblings.splice(toIndex, 0, fromKey);
+              await onReorderSiblings?.(siblings);
+              return;
+            }
+            if (!onReparent) {
+              return;
+            }
             siblings.splice(toIndex, 0, fromKey);
-            await onReorderSiblings(siblings);
+            await onReparent(
+              fromKey,
+              placementForParentEl(container, sectionName),
+              siblings
+            );
           });
         }
 
         const title = document.createElement("div");
         title.className = "folder-title";
         title.textContent = node.name;
+        if (options.enableDrag && onReparent) {
+          title.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            title.classList.add("is-drop-target");
+          });
+          title.addEventListener("dragleave", () =>
+            title.classList.remove("is-drop-target")
+          );
+          title.addEventListener("drop", async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            title.classList.remove("is-drop-target");
+            const fromKey = event.dataTransfer.getData("text/stable-key");
+            if (!fromKey || fromKey === folderKey) {
+              return;
+            }
+            const destKeys = childStableKeys(folder).filter(
+              (key) => key !== fromKey
+            );
+            destKeys.push(fromKey);
+            await onReparent(
+              fromKey,
+              { section: sectionName, parentKey: folderKey },
+              destKeys
+            );
+          });
+        }
         folder.appendChild(title);
 
         renderNodes(
@@ -692,6 +762,7 @@ export function createLinkUi({
           {
             ...options,
             pathParts: [...pathParts, node.name],
+            sectionName,
           }
         );
         container.appendChild(folder);
@@ -709,13 +780,13 @@ export function createLinkUi({
             isCustom: isOverlayCustomLink(node, options.overlayLinkIds),
             enableDrag: options.enableDrag,
             pathParts,
-            stableKey: linkStableKey(sectionName, pathParts, node),
+            stableKey: nodeCatalogKey(node, sectionName, pathParts),
             onDelete:
               isOverlayCustomLink(node, options.overlayLinkIds) &&
               options.onDeleteCustom
                 ? async (event) => {
                     event.stopPropagation();
-                    await options.onDeleteCustom(node.id);
+                    await options.onDeleteCustom(node.id, node);
                   }
                 : null,
           }

@@ -23,7 +23,7 @@ manifest.json
 ├── lib/link-behaviors.js    # Behavior registry (run / open-url / open-from-script)
 ├── lib/link-search.js       # Fuzzy scoring (sidebar + omnibox)
 ├── lib/url-normalize.js     # Runtime URL canonicalization
-├── lib/catalog-order.js     # Stable keys + display/export order override
+├── lib/catalog-order.js     # Stable keys, order, parentByKey reparent
 ├── lib/catalog-events.js    # CATALOG_CHANGED broadcast
 ├── lib/link-shortcuts.js    # Alt+1…0 slot map
 ├── lib/tab-target.js        # Tab matching / origin memory
@@ -420,7 +420,7 @@ Originally populated from the **SN links** Firefox bookmarks folder via `scripts
 
 Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** opens `builder/builder.html`. Page context menu **Create Complex Linker action** opens the builder with tab URL / clicked-element `fromSelector` prefill.
 
-- Drag-and-drop in the sidebar reorders bundled and custom items; order is stored in `catalogOrder` and used for display and export
+- Drag-and-drop in the sidebar reorders items and can reparent them onto a section tab or subsection folder title; arrangement is stored in `catalogOrder` (`linkKeys`, `sectionOrder`, `parentByKey`) and used for display and custom-link export
 - Custom links stored in `linksJsonOverlay`; export follows catalog order
 - Edit / Remove are offered only for links **stored in the overlay** (`collectOverlayCustomLinkIds()`), not merely because a leaf has an `id` — bundled `data/links.json` leaves all carry ids, and neither edit nor delete can reach those. Removing a bundled link means editing `data/links.json`.
 - Right-click → Assign Alt+1…0 for global shortcuts
@@ -441,7 +441,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 | `customScripts` | Legacy user scripts (migrated to `linksJsonOverlay`) |
 | `activeSectionTab` | Last selected section tab |
 | `addScriptExpanded` | Add-action panel collapsed state |
-| `catalogOrder` | `{ linkKeys[], sectionOrder[] }` display/export order override |
+| `catalogOrder` | `{ linkKeys[], sectionOrder[], parentByKey }` display/export order and parent overrides |
 | `linkShortcutSlots` | Map of `run_link_N` → stable link key |
 | `lastActivatedLinkKey` | Last activated stable key |
 | `preferredOpenDefault` | Preferred `open` default for new links |
