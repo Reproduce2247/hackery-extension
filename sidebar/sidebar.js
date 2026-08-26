@@ -472,6 +472,7 @@ async function renderAll({ reloadCatalog = true } = {}) {
           {
             showRemoveColumn: showRemove,
             enableDrag: true,
+            inheritedExclude: section.exclude ?? null,
             activeTabUrl,
             pathParts: [],
             overlayLinkIds,

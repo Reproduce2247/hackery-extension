@@ -5,6 +5,8 @@
     "build:network-hook": "node network/scripts/build-network-hook.js",
     "test:network-hook": "npm run build:network-hook && node network/scripts/test-early-hook.js",
     "test:link-storage": "node scripts/test-link-storage.js",
+    "test:link-apply": "node scripts/test-link-apply.js",
+    "test:undefined": "node scripts/scan-undefined.js",
     "build:codemirror": "node scripts/build-codemirror.js",
     "build": "npm run build:network-hook && npm run build:codemirror",
     "pack": "npm run build && webpack --mode production"

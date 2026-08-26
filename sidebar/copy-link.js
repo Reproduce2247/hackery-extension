@@ -3,6 +3,7 @@ import {
   saveParamValue,
   validateParamValues,
 } from "../lib/activate-link.js";
+import { reportActivity } from "../lib/link-inspect.js";
 import { matchBehavior } from "../lib/link-behaviors.js";
 import {
   getEditableValueDefs,
@@ -13,7 +14,7 @@ import {
 } from "../lib/link-model.js";
 import {
   coerceScriptletNavigationUrl,
-  resolveUrlAction,
+  resolveUrlActionTraced,
 } from "../lib/navigation-shared.js";
 import {
   compileScriptletSource,
@@ -60,7 +61,9 @@ async function resolveCopyText(node, row) {
 
   if (behavior.id === "open-from-script") {
     const matchPattern = node.match ?? null;
-    const { tab, origin } = await getTargetTab(matchPattern);
+    const { tab, origin } = await getTargetTab(matchPattern, {
+      excludePattern: node.exclude ?? null,
+    });
     // Nav scripts read page globals and the page DOM, so only the page can
     // produce the URL. Same injection path as activation, so copying succeeds
     // exactly when Run does.
@@ -78,22 +81,38 @@ async function resolveCopyText(node, row) {
       throw new Error("Navigation script did not resolve to a URL.");
     }
     const copied = urls.join("\n");
-    return { text: copied, someFailed: outcome.someFailed };
+    return {
+      text: copied,
+      someFailed: outcome.someFailed,
+      behaviorId: behavior.id,
+      paramValues,
+    };
   }
 
   if (behavior.id === "run") {
-    return compileScriptletSource(node.code || "", paramValues);
+    return {
+      text: compileScriptletSource(node.code || "", paramValues),
+      behaviorId: behavior.id,
+      paramValues,
+    };
   }
 
   const matchPattern = node.match ?? null;
-  const { tab, origin } = await getTargetTab(matchPattern);
-  const url = await resolveUrlAction(node, tab, origin, paramValues);
+  const { tab, origin } = await getTargetTab(matchPattern, {
+    excludePattern: node.exclude ?? null,
+  });
+  const traced = await resolveUrlActionTraced(node, tab, origin, paramValues);
 
-  if (url === null) {
+  if (traced.url === null) {
     throw new Error("Could not derive URL from the current tab.");
   }
 
-  return url;
+  return {
+    text: traced.url,
+    behaviorId: behavior.id,
+    paramValues,
+    derivation: traced,
+  };
 }
 
 function writeClipboardText(text) {
@@ -136,9 +155,19 @@ export function createCopyLink({ showMessage, hideMessage }) {
 
     resolveCopyText(node, row)
       .then((result) => {
-        const text = result && typeof result === "object" && "text" in result ? result.text : result;
-        const someFailed = Boolean(result?.someFailed);
+        const { text, behaviorId, paramValues, derivation } = result;
+        const someFailed = Boolean(result.someFailed);
         return writeClipboardTextFromPromise(Promise.resolve(text)).then(() => {
+          void reportActivity({
+            trigger: "copy-link",
+            name: node.name,
+            linkKey: linkStorageKey(node),
+            behaviorId,
+            outcome: someFailed ? "ran-partial" : "ran",
+            copied: String(text || "").slice(0, 500),
+            paramValues,
+            derivation: derivation || null,
+          });
           if (someFailed) {
             showMessage("failed in some frames");
             return;

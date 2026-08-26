@@ -4,6 +4,10 @@ import {
   updateParameterModeVisibility,
   readHostPattern,
   populateHostPattern,
+  readExcludePattern,
+  populateExcludePattern,
+  readRunAt,
+  populateRunAt,
   readFramesFields,
   populateFramesFields,
   clearFramesFields,
@@ -160,6 +164,9 @@ export function buildLinkNodeFromForm(form) {
   if (form.match !== undefined) {
     draft.match = form.match;
   }
+  if (form.exclude !== undefined) {
+    draft.exclude = form.exclude;
+  }
 
   const searchTags = parseSearchTags(form.searchTags);
   if (searchTags) {
@@ -186,6 +193,9 @@ export function buildLinkNodeFromForm(form) {
     }
     if (form.frames !== undefined) {
       draft.frames = form.frames;
+    }
+    if (type === "scriptlet" && form.runAt) {
+      draft.runAt = form.runAt;
     }
   } else if (type === "navigate") {
     const url = form.url.trim() || form.path.trim();
@@ -276,6 +286,8 @@ export function readBuilderForm(elements) {
   const parameterFields = readParameterFields(elements.fieldElements);
   const navParams = readNavParamsFields(elements.fieldElements);
   const match = readHostPattern(elements.fieldElements);
+  const exclude = readExcludePattern(elements.fieldElements);
+  const runAt = readRunAt(elements.fieldElements);
   const frames = readFramesFields(elements.fieldElements);
 
   return {
@@ -285,6 +297,8 @@ export function readBuilderForm(elements) {
     name: elements.nameInput.value,
     tooltip: elements.tooltipInput?.value || "",
     match,
+    exclude,
+    runAt,
     frames,
     searchTags: elements.searchTagsInput.value,
     code: getFieldValue(elements.codeInput),
@@ -306,6 +320,8 @@ export function populateBuilderForm(elements, node, sectionName, sectionNames) {
     elements.tooltipInput.value = normalized.tooltip || "";
   }
   populateHostPattern(elements.fieldElements, normalized.match);
+  populateExcludePattern(elements.fieldElements, normalized.exclude);
+  populateRunAt(elements.fieldElements, normalized.runAt);
   populateFramesFields(elements.fieldElements, normalized.frames);
   elements.searchTagsInput.value = Array.isArray(normalized.searchTags)
     ? normalized.searchTags.join(", ")
@@ -332,6 +348,8 @@ export function clearBuilderForm(elements, sectionNames, defaultSection) {
     elements.tooltipInput.value = "";
   }
   populateHostPattern(elements.fieldElements, undefined);
+  populateExcludePattern(elements.fieldElements, undefined);
+  populateRunAt(elements.fieldElements, undefined);
   clearFramesFields(elements.fieldElements);
   elements.searchTagsInput.value = "";
   setFieldValue(elements.codeInput, "");
@@ -433,6 +451,7 @@ export function updateBuilderFieldVisibility(elements) {
   setFieldVisible(elements.navField, isNavScriptlet || isUrlType);
   setFieldVisible(elements.fieldElements.parametersSection, isScriptlet);
   setFieldVisible(elements.fieldElements.framesSection, isScriptlet);
+  setFieldVisible(elements.fieldElements.runAtField, isRunScriptlet);
   setFieldVisible(elements.fieldElements.navParamsSection, isUrlType);
 
   if (elements.typeHint) {

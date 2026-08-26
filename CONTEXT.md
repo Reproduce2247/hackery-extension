@@ -17,21 +17,13 @@
 ```
 manifest.json
 ├── background.js            # Inject cache, omnibox, shortcuts, context menus, badges
-├── lib/catalog-walk.js      # One catalog tree walk (keys, match, parents)
-├── lib/catalog-service.js   # Per-realm merged catalog snapshot (no extra storage)
-├── lib/link-model.js        # Shared link tree, parameters, match patterns, normalization
-├── lib/link-behaviors.js    # Behavior registry (run / open-url / open-from-script)
-├── lib/link-search.js       # Fuzzy scoring (sidebar + omnibox)
-├── lib/url-normalize.js     # Runtime URL canonicalization
-├── lib/catalog-order.js     # Stable keys, order, parentByKey reparent
-├── lib/catalog-events.js    # CATALOG_CHANGED broadcast
-├── lib/link-shortcuts.js    # Alt+1…0 slot map
-├── lib/tab-target.js        # Tab matching / origin memory
+├── lib/catalog-walk.js      # One catalog tree walk (keys, match, exclude, parents)
+├── lib/link-model.js        # Shared link tree, parameters, match/exclude, runAt
+├── lib/link-inspect.js      # Per-leaf inspect snapshot + page console dump
+├── lib/link-activity-log.js # Activity log ring-buffer helper
 ├── lib/activate-link.js     # Shared leaf activation (sidebar / omnibox / shortcuts)
-├── lib/scriptlet-inject.js  # Scriptlet binding injection helper
-├── lib/navigation-shared.js # Shared URL resolution and open execution
-├── inject/on-load.js        # Thin bootstrap for on-load scriptlets
-├── inject/context-target.js # Last contextmenu target → CSS selector
+├── inject/on-load.js        # document_start CS; waits locally for end/idle
+├── activity-log/            # DevTools Link log panel
 ├── sidebar/
 │   ├── sidebar.html         # Firefox sidebar UI
 │   ├── sidebar.js           # Bootstrap, settings, render, DnD
@@ -60,6 +52,8 @@ manifest.json
 | Leaf activation | `lib/activate-link.js` + `lib/link-behaviors.js` |
 | Parameter collection outside the sidebar | `prompt/params.js` |
 | Search scoring | `lib/link-search.js` |
+| Inspect snapshot | `lib/link-inspect.js` |
+| Activity log | `lib/link-activity-log.js` + `activity-log/` |
 | Shortcut slots | `lib/link-shortcuts.js` |
 | Catalog change broadcast | `lib/catalog-events.js` |
 | Sidebar UI | `sidebar/` |
@@ -95,9 +89,9 @@ hl open item | id=67ee2538534501108135ddeeff7b121b
 
 Activation outcomes on these paths are never silent: failures flash the toolbar badge (`?` unknown link, `!` failed) and log to the background console, and errors thrown during activation are returned to the prompt window rather than left as unhandled rejections.
 
-### On-load + `match`
+### On-load + `match` / `exclude` / `runAt`
 
-On-load reuses link `match` inheritance from `links.json` (same rules as tab targeting). Only **Run** actions (`code` without `open`) are eligible.
+On-load reuses link `match`/`exclude` inheritance from `links.json` (same rules as tab targeting). Only **Run** actions (`code` without `open`) are eligible. Per-leaf `runAt` (`document_start` default, `document_end`, `document_idle`) is honored only on this path; the content script waits locally for end/idle. History API / hash changes do not re-inject.
 
 ### Tab / origin targeting
 
@@ -109,7 +103,7 @@ On-load reuses link `match` inheritance from `links.json` (same rules as tab tar
 
 Reverse-engineering tools have no section-level `match` — they run on the active tab.
 
-Sidebar link rows show a **green apply-dot** (tooltip: “Applies to this tab”) when the active tab URL matches the link’s resolved `match` (or when the link has no `match` and therefore always targets the active tab). Dots update on tab switch / URL change without a full catalog re-render.
+Sidebar link rows show a **green apply-dot** (tooltip: “Applies to this tab”) when the active tab URL matches the link’s resolved `match` and is not excluded (or when the link has no `match` and therefore always targets the active tab unless excluded). Dots update on tab switch / URL change without a full catalog re-render. Skip reasons are also the apply-dot tooltip and DevTools Link log rows.
 
 ## Link data model (`data/links.json`) — schema v3
 
@@ -122,7 +116,13 @@ Top-level keys are **section names** (sidebar tabs):
 }
 ```
 
-`match` is optional and inherited by nested folders/leaves unless overridden.
+`match` is optional and inherited by nested folders/leaves unless overridden. `exclude` is the same inherit-or-override model (explicit `null` clears). If `exclude` matches hostname or href, the leaf does not apply (on-load, apply-dot, inspect, tab targeting).
+
+On-load Run scriptlets may set `runAt`: `document_start` (default), `document_end`, or `document_idle`. Clicks / shortcuts / omnibox ignore it.
+
+**SPA / hash:** on-load runs at real document start, not `pushState`. If `match` includes a path or `#`, the load URL may miss; Inspect shows current URLs, DevTools **Link log** shows what ran at load.
+
+Right-click a catalog row → **Inspect** for matching tabs, frames, cached origin, params, compiled URL/code, and skip reasons (sidebar popover + page `console.table`). Activation is recorded in DevTools → **Link log**.
 
 ### Leaf actions (no `type` field)
 
@@ -149,6 +149,8 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 | `params` | Script/function bindings only (see below) |
 | `navParams` | URL/URI substitution values only (see below) |
 | `match` | Host/URL regex; `null` = active tab |
+| `exclude` | Host/URL regex; matching URLs never apply |
+| `runAt` | On-load only: `document_start` (default) / `document_end` / `document_idle` |
 | `frames` | Optional scriptlet injection targets: `top`, `nestingLevel`, `match` (see below) |
 
 Folders: `{ "name": "…", "children": [ … ] }` (no `id`).
@@ -455,6 +457,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 | Key | Purpose |
 |---|---|
 | `networkRulesLog` | Recent network rule matches (cap 100) |
+| `linkActivityLog` | Catalog activity ring buffer for DevTools Link log (cap 100) |
 | `networkTabState` | Per-tab objects for `ctx.tabState` keyed by tab id |
 | `linkBuilderPrefill` | Tab/context prefill for new builder links |
 | `linkParamPrompt` | Pending parameter prompt: `{ stableKey, windowId, rawValues }` |
@@ -466,7 +469,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 - **New reverse-engineering tools:** add to `Reverse-engineering tools` in `data/links.json`; prefer scriptlets that log to `console` and are idempotent where possible (many check a `window.__…` guard).
 - **Other bundled catalog entries:** edit `data/links.json`.
 - **Scriptlet execution:** always MAIN world — required to touch page globals. This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them. Optional `frames` selects top and/or nested documents; see Frame targeting.
-- **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
+- **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`/`exclude` and `runAt`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
 - **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.example\.com$`) still work; include path segments to restrict to specific pages.
 - Reload extension after changing `links.json` or background logic.
 

@@ -13,15 +13,18 @@ import {
   collectScriptlets,
   getEditableValueDefs,
   getParameterDefs,
-  matchesHostPattern,
+  linkAppliesToUrl,
   resolveParamValues,
+  resolveRunAt,
+  urlSkipReason,
 } from "./lib/link-model.js";
+import { StorageKeys } from "./lib/storage-keys.js";
 import { searchCatalog } from "./lib/link-search.js";
 import { findNodeByStableKey, isSlotCommand, loadShortcutSlots } from "./lib/link-shortcuts.js";
 import { createMessageRouter, respondAsync } from "./lib/message-router.js";
 import { MessageTypes, MessageTypeSet } from "./lib/message-types.js";
 import { executeScriptletWithBindings, isFrameTargeted } from "./lib/scriptlet-inject.js";
-import { StorageKeys } from "./lib/storage-keys.js";
+import { appendActivityLogQueue, ACTIVITY_LOG_KEY } from "./lib/link-activity-log.js";
 import { getActiveTab } from "./lib/tab-target.js";
 import { canonicalizeHref } from "./lib/url-normalize.js";
 import { NetworkMessageTypeSet } from "./network/message-types.js";
@@ -63,10 +66,60 @@ function codesForUrl(url) {
     return [];
   }
 
-  return injectEntries.filter((entry) => matchesHostPattern(url, entry.match));
+  return injectEntries.filter((entry) =>
+    linkAppliesToUrl(url, entry.match, entry.exclude)
+  );
 }
 
-async function runInjectEntriesForTab(tabId, entries, frameId) {
+async function logOnLoadSkips(pageUrl, { masterOff = false } = {}) {
+  if (!injectEntries.length) {
+    return;
+  }
+  for (const entry of injectEntries) {
+    const reason = masterOff
+      ? "Master On load off"
+      : urlSkipReason(pageUrl, entry.match, entry.exclude);
+    if (!masterOff && !reason) {
+      continue;
+    }
+    await appendActivityLog({
+      trigger: "on-load",
+      name: entry.name,
+      linkKey: entry.linkKey,
+      behaviorId: "run",
+      outcome: "skipped",
+      reason: reason || "URL does not match",
+      pageUrl,
+      runAt: entry.runAt,
+    });
+  }
+}
+
+async function getActivityLog() {
+  const stored = await browser.storage.session.get(ACTIVITY_LOG_KEY);
+  return stored[ACTIVITY_LOG_KEY] || [];
+}
+
+async function appendActivityLog(entry) {
+  const existing = await getActivityLog();
+  const next = appendActivityLogQueue(existing, {
+    ts: Date.now(),
+    ...entry,
+  });
+  await browser.storage.session.set({ [ACTIVITY_LOG_KEY]: next });
+  browser.runtime
+    .sendMessage({ type: MessageTypes.ACTIVITY_LOG_CHANGED })
+    .catch(() => {});
+}
+
+async function clearActivityLog() {
+  await browser.storage.session.set({ [ACTIVITY_LOG_KEY]: [] });
+  browser.runtime
+    .sendMessage({ type: MessageTypes.ACTIVITY_LOG_CHANGED })
+    .catch(() => {});
+}
+
+async function runInjectEntriesForTab(tabId, entries, frameId, meta = {}) {
   let tabFrames = null;
   async function listFrames() {
     if (!tabFrames) {
@@ -76,22 +129,73 @@ async function runInjectEntriesForTab(tabId, entries, frameId) {
   }
 
   for (const entry of entries) {
-    if (entry.frames) {
-      if (frameId != null) {
-        const frames = await listFrames();
-        const frame = frames.find((item) => item.frameId === frameId);
-        if (!frame || !isFrameTargeted(entry.frames, frame, frames)) {
+    const baseLog = {
+      trigger: meta.trigger || "on-load",
+      name: entry.name,
+      linkKey: entry.linkKey,
+      behaviorId: "run",
+      tabId,
+      pageUrl: meta.pageUrl || "",
+      runAt: meta.runAt || entry.runAt || "document_start",
+      paramValues: entry.paramValues,
+    };
+    try {
+      if (entry.frames) {
+        if (frameId != null) {
+          const frames = await listFrames();
+          const frame = frames.find((item) => item.frameId === frameId);
+          if (!frame || !isFrameTargeted(entry.frames, frame, frames)) {
+            await appendActivityLog({
+              ...baseLog,
+              outcome: "skipped",
+              reason: "Frame not in target set",
+              frameId,
+              frameUrl: frame?.url || "",
+            });
+            continue;
+          }
+          await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+          await appendActivityLog({
+            ...baseLog,
+            outcome: "ran",
+            frameId,
+            frameUrl: frame?.url || "",
+          });
           continue;
         }
-        await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+        const frames = await listFrames();
+        if (!frames.length) {
+          await appendActivityLog({
+            ...baseLog,
+            outcome: "skipped",
+            reason: "empty frames",
+          });
+          continue;
+        }
+        const outcome = await executeScriptletWithBindings(tabId, entry.code, entry.paramValues, {
+          frames: entry.frames,
+        });
+        await appendActivityLog({
+          ...baseLog,
+          outcome: outcome.someFailed ? "ran-partial" : "ran",
+          frames: outcome.successes,
+        });
         continue;
       }
-      await executeScriptletWithBindings(tabId, entry.code, entry.paramValues, {
-        frames: entry.frames,
+      await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+      await appendActivityLog({
+        ...baseLog,
+        outcome: "ran",
+        frameId: frameId ?? 0,
       });
-      continue;
+    } catch (error) {
+      await appendActivityLog({
+        ...baseLog,
+        outcome: "failed",
+        reason: error.message || String(error),
+        frameId,
+      });
     }
-    await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
   }
 }
 
@@ -124,7 +228,8 @@ async function rebuildInjectCache() {
       section.children || [],
       section.match ?? null,
       name,
-      scriptlets
+      scriptlets,
+      section.exclude ?? null
     );
   }
 
@@ -136,7 +241,11 @@ async function rebuildInjectCache() {
     const rawValues = paramValues[linkKey] || {};
     const values = resolveParamValues(parameterDefs, rawValues);
     injectEntries.push({
+      name: node.name,
+      linkKey,
       match: node.match ?? null,
+      exclude: node.exclude ?? null,
+      runAt: resolveRunAt(node),
       code: node.code,
       paramValues: values,
       ...(node.frames ? { frames: node.frames } : {}),
@@ -316,6 +425,10 @@ const messageHandlers = {
     setCspDisabledForTab,
     whenCspStateReady,
     collectNetworkSettingsPayload: (next) => Network.collectSettingsPayload(next),
+    appendActivityLog,
+    getActivityLog,
+    clearActivityLog,
+    logOnLoadSkips,
   }),
   ...Network.createMessageHandlers(),
 
@@ -326,6 +439,7 @@ const messageHandlers = {
         rawValues: message.rawValues || {},
         windowId,
         promptParams: "never",
+        trigger: "prompt",
       }).then(async (outcome) => {
         // Hand focus back to the window the action ran in; the prompt took it.
         if (outcome.ok && windowId != null) {
@@ -520,6 +634,7 @@ async function activateByStableKey(stableKey, options = {}) {
       rawValues,
       windowId,
       allowMissingParams: false,
+      trigger: options.trigger || "shortcut",
     });
   } catch (error) {
     outcome = { ok: false, message: error.message || String(error) };
@@ -566,6 +681,7 @@ browser.commands.onCommand.addListener((command) => {
     await activateByStableKey(key, {
       promptParams: "always",
       windowId: activeTab?.windowId ?? null,
+      trigger: "shortcut",
     });
   })();
 });
@@ -744,6 +860,7 @@ browser.omnibox.onInputEntered.addListener((text) => {
       await activateByStableKey(stableKey, {
         rawValues,
         windowId: activeTab?.windowId ?? null,
+        trigger: "omnibox",
       });
     } catch (error) {
       console.error("omnibox activate failed:", error);

@@ -35,7 +35,9 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 
 Drag links/folders/section tabs to reorder; order is saved and used for export.
 
-The sidebar shows the active tab origin. When a link has a `match` pattern, the extension prefers the active tab if it matches, otherwise the nearest matching tab in the current window.
+The sidebar shows the active tab origin. When a link has a `match` pattern, the extension prefers the active tab if it matches and is not excluded, otherwise the nearest matching tab in the current window.
+
+Right-click a catalog row → **Inspect** for matching tabs, frames, cached origin, params, compiled URL/code, and skip reasons (sidebar popover plus `console.table` in the target page). Activations and on-load skips appear in DevTools → **Link log**.
 
 Reload the extension in `about:debugging` after editing `data/links.json`.
 
@@ -122,17 +124,24 @@ Top-level keys are **section names** (sidebar tabs). Each section has optional `
 
 ### Folders
 
-`{ "name": "…", "children": [ … ] }` — may override `match` for descendants.
+`{ "name": "…", "children": [ … ] }` — may override `match` / `exclude` for descendants.
 
-### `match`
+### `match` / `exclude`
 
-Optional regex inherited from section or parent unless overridden. Matched against tab hostname and full href (case-insensitive).
+Optional regex inherited from section or parent unless overridden. Matched against tab hostname and full href (case-insensitive). Explicit `null` clears inheritance.
 
 | Value | Tab selection |
 |---|---|
-| Set (e.g. `\\.example\\.com$`) | Active tab if it matches; else nearest match; else remembered origin |
+| `match` set (e.g. `\\.example\\.com$`) | Active tab if it applies; else nearest match; else remembered origin |
 | `"match": null` on a link | Active tab only (overrides section inheritance) |
+| `exclude` set | URLs matching this regex never apply (on-load, apply-dot, targeting) |
 | Absent on section | Active tab in the current window |
+
+On-load Run scriptlets may set `runAt`: `document_start` (default), `document_end`, `document_idle`. Sidebar clicks always run immediately.
+
+On-load injects at real document start, not SPA `pushState`. If `match` includes a path or `#`, Inspect (current URL) vs DevTools **Link log** (what ran at load) is how you see a miss.
+
+Right-click a catalog row → **Inspect** (popover + page console). Activations appear in DevTools → **Link log**.
 
 ### Leaf actions
 

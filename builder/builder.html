@@ -91,6 +91,23 @@
                 spellcheck="false"
               />
             </label>
+            <label class="field" id="exclude-pattern-field">
+              <span class="field-label">Exclude pattern</span>
+              <select id="exclude-pattern-mode">
+                <option value="inherit">Inherit from section</option>
+                <option value="none">None</option>
+                <option value="custom">Custom regex</option>
+              </select>
+            </label>
+            <label class="field is-hidden" id="exclude-pattern-custom-field">
+              <span class="field-label">Custom exclude pattern</span>
+              <input
+                id="exclude-pattern-custom"
+                type="text"
+                placeholder="e.g. /login"
+                spellcheck="false"
+              />
+            </label>
           </section>
 
           <section class="field-group" aria-label="Action">
@@ -107,6 +124,15 @@
               </select>
             </label>
             <p id="link-type-hint" class="field-hint type-hint"></p>
+            <label class="field is-hidden" id="run-at-field">
+              <span class="field-label">On-load timing</span>
+              <select id="link-run-at">
+                <option value="document_start">document_start (default)</option>
+                <option value="document_end">document_end (DOM ready)</option>
+                <option value="document_idle">document_idle (after load)</option>
+              </select>
+              <span class="field-hint">Only used when the on-load checkbox is on. Clicks always run immediately.</span>
+            </label>
             <label class="field" id="link-code-field">
               <span class="field-label" id="link-code-label">Script</span>
               <textarea id="link-code" rows="5" spellcheck="false"></textarea>

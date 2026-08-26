@@ -301,6 +301,9 @@ export function wireBuilderFieldUi(fieldElements) {
   fieldElements.hostPatternModeSelect.addEventListener("change", () => {
     updateHostPatternFieldVisibility(fieldElements);
   });
+  fieldElements.excludePatternModeSelect?.addEventListener("change", () => {
+    updateExcludePatternFieldVisibility(fieldElements);
+  });
   fieldElements.framesModeSelect.addEventListener("change", () => {
     updateFramesFieldVisibility(fieldElements);
   });
@@ -318,6 +321,14 @@ export function wireBuilderFieldUi(fieldElements) {
 export function updateHostPatternFieldVisibility(fieldElements) {
   const mode = fieldElements.hostPatternModeSelect.value;
   setFieldVisible(fieldElements.hostPatternCustomField, mode === "custom");
+}
+
+export function updateExcludePatternFieldVisibility(fieldElements) {
+  if (!fieldElements.excludePatternModeSelect) {
+    return;
+  }
+  const mode = fieldElements.excludePatternModeSelect.value;
+  setFieldVisible(fieldElements.excludePatternCustomField, mode === "custom");
 }
 
 /**
@@ -434,6 +445,55 @@ export function populateHostPattern(fieldElements, hostPattern) {
   updateHostPatternFieldVisibility(fieldElements);
 }
 
+export function readExcludePattern(fieldElements) {
+  if (!fieldElements.excludePatternModeSelect) {
+    return undefined;
+  }
+  const mode = fieldElements.excludePatternModeSelect.value;
+  if (mode === "inherit") {
+    return undefined;
+  }
+  if (mode === "none") {
+    return null;
+  }
+  const custom = getFieldValue(fieldElements.excludePatternCustomInput).trim();
+  if (!custom) {
+    throw new Error("Enter an exclude regex or choose inherit/none.");
+  }
+  return custom;
+}
+
+export function populateExcludePattern(fieldElements, excludePattern) {
+  if (!fieldElements.excludePatternModeSelect) {
+    return;
+  }
+  if (excludePattern === null) {
+    fieldElements.excludePatternModeSelect.value = "none";
+  } else if (excludePattern === undefined) {
+    fieldElements.excludePatternModeSelect.value = "inherit";
+    setFieldValue(fieldElements.excludePatternCustomInput, "");
+  } else {
+    fieldElements.excludePatternModeSelect.value = "custom";
+    setFieldValue(fieldElements.excludePatternCustomInput, excludePattern);
+  }
+  updateExcludePatternFieldVisibility(fieldElements);
+}
+
+export function readRunAt(fieldElements) {
+  const value = fieldElements.runAtSelect?.value;
+  if (!value || value === "document_start") {
+    return undefined;
+  }
+  return value;
+}
+
+export function populateRunAt(fieldElements, runAt) {
+  if (!fieldElements.runAtSelect) {
+    return;
+  }
+  fieldElements.runAtSelect.value = runAt || "document_start";
+}
+
 export function readParameterFields(fieldElements) {
   const mode = fieldElements.parameterModeSelect.value;
   if (mode === "single") {
@@ -511,6 +571,11 @@ export function getBuilderFieldElements(root = document) {
     hostPatternModeSelect: root.getElementById("host-pattern-mode"),
     hostPatternCustomInput: root.getElementById("host-pattern-custom"),
     hostPatternCustomField: root.getElementById("host-pattern-custom-field"),
+    excludePatternModeSelect: root.getElementById("exclude-pattern-mode"),
+    excludePatternCustomInput: root.getElementById("exclude-pattern-custom"),
+    excludePatternCustomField: root.getElementById("exclude-pattern-custom-field"),
+    runAtField: root.getElementById("run-at-field"),
+    runAtSelect: root.getElementById("link-run-at"),
     framesSection: root.getElementById("frames-section"),
     framesModeSelect: root.getElementById("frames-mode"),
     framesCustomFields: root.getElementById("frames-custom-fields"),

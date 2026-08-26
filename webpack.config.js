@@ -1,7 +1,7 @@
 /**
  * Pack a loadable extension into dist/.
  *
- * Bundled entries: background, sidebar, builder, prompt, network UI, devtools.
+ * Bundled entries: background, sidebar, builder, prompt, network UI, activity log, devtools.
  * Copied (path-stable): manifest, HTML, CSS, icons, catalog JSON, classic
  * content scripts under inject/ and network/inject/.
  *
@@ -44,6 +44,7 @@ module.exports = {
     "prompt/params": "./prompt/params.js",
     "network/ui/rules": "./network/ui/rules.js",
     "devtools/devtools": "./devtools/devtools.js",
+    "activity-log/activity-log": "./activity-log/activity-log.js",
   },
   output: {
     filename: "[name].js",
