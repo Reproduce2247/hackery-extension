@@ -1,12 +1,10 @@
-# SN Links Extension — Context
+# Hackery Lab — Context
 
 ## Purpose
 
 **Primary:** A Firefox extension for **reverse-engineering and interacting with arbitrary websites**. It stores reusable JavaScript actions (bookmarklets), runs them in the page's MAIN world, and supports persistent on-load injection — useful for debugging DOM behavior, intercepting events, disabling redirects, tracing network calls, and similar site interaction work.
 
-**Secondary:** A **ServiceNow productivity tool**. The original use case was a bookmarks folder: relative instance-independent paths and scriptlets that resolve against whichever pattern-matching tab is active (or the last visited instance). Support for matching all URL regex patterns in the json is required.
-
-The repo still says "ServiceNow" in places (`manifest.json`, README); treat that as legacy naming. New work should reflect the broader scope and be renamed accordingly.
+**Secondary:** Host-pattern targeting so relative paths and scriptlets resolve against a matching tab (or the last origin remembered for that pattern). Support for matching all URL regex patterns in the json is required.
 
 ## Platform
 
@@ -70,7 +68,7 @@ manifest.json
 ### Execution flow
 
 1. User opens sidebar (toolbar or Ctrl+Period) → `sidebar.js` reads `getCatalogSnapshot()` (per-realm cache) and renders section tabs. Overlay load is one `storage.local.get` of `linksJsonOverlay`. Catalog reads never write `catalogOrder`.
-2. **Omnibox `cl`** — page-focused search/run without focusing the sidebar. Parameters go inline after `|` (see Parameter prompt).
+2. **Omnibox `hl`** — page-focused search/run without focusing the sidebar. Parameters go inline after `|` (see Parameter prompt).
 3. **Alt+1…0** — run assigned link slots (right-click a link → Assign Alt+N). Parameterized links prompt first.
 4. **Run / Open / Derive** — via `lib/activate-link.js` + behaviors.
 5. **On load / Network rules** — unchanged (see below).
@@ -87,8 +85,8 @@ The sidebar collects values in the link row. Callers without a row — Alt+N sho
 Inline omnibox syntax splits the input on `|`: the first segment is the action query, the rest are values — positional in declaration order, or `name=value` in any segment. Blank segments fall through to saved values and defaults instead of clearing them. Suggestion descriptions append the parameter state (`q=jsmith` / `q: username or name`), and typed values are carried in the suggestion `content` so selecting a suggestion does not drop them.
 
 ```
-cl find user | jsmith
-cl uib macroponent | sys_id=67ee2538534501108135ddeeff7b121b
+hl find user | jsmith
+hl open item | id=67ee2538534501108135ddeeff7b121b
 ```
 
 **Why a window, not the sidebar:** `sidebarAction.open()` only works inside an unbroken user-input handler, and Firefox counts `omnibox.onInputEntered` as user input only from 142. Resolving the catalog and stored values — needed to know whether a prompt is required at all — spends that status regardless. A window has no gesture requirement.
@@ -105,7 +103,7 @@ On-load reuses link `match` inheritance from `links.json` (same rules as tab tar
 
 | `match` | Behavior |
 |---|---|
-| Set (e.g. `\.service-now\.com$`) | Find or create a tab matching the pattern; remember origin per pattern in `lastOrigins` |
+| Set (e.g. `\.example\.com$`) | Find or create a tab matching the pattern; remember origin per pattern in `lastOrigins` |
 | Set with path (e.g. `chromewebstore\.google\.com/detail/`) | Same; pattern can match full tab URL |
 | `null` / absent on node | Use the **active tab** (overrides section inheritance when set explicitly on a link) |
 
@@ -119,7 +117,7 @@ Top-level keys are **section names** (sidebar tabs):
 
 ```json
 {
-  "match": "\\.service-now\\.com$",
+  "match": "\\.example\\.com$",
   "children": [ /* folders + leaves */ ]
 }
 ```
@@ -246,8 +244,8 @@ Script code uses bare names (`limit`), not `{limit}` or `$limit`.
     "placeholder": "extension id",
     "optional": true
   },
-  "sys_id": {
-    "placeholder": "sys_id",
+  "id": {
+    "placeholder": "id",
     "default": "67ee2538534501108135ddeeff7b121b"
   }
 }
@@ -318,7 +316,7 @@ This is still not a hard security boundary against a hostile scriptlet if the ho
 | Tear down the iframe after the run | No lingering frame with a copy of page HTML |
 | No `parent` / `top` helpers injected into the scriptlet bindings | Scriptlet sees clone `document` / `window` only |
 
-Scriptlets under `readonly-dom` **cannot** use live page globals (`GlideList2`, Angular injectors, etc.). Those actions stay on `sandbox: "main"` (default).
+Scriptlets under `readonly-dom` **cannot** use live page globals. Those actions stay on `sandbox: "main"` (default).
 
 **Known fidelity limits:** closed shadow DOM, cross-origin iframe trees, framework instance state, and any object graph beyond markup are out of scope — HTML/DOM snapshot only.
 
@@ -397,7 +395,7 @@ Scope and lifetime: applies to the tab plus any tab opened from it (`tabs.onCrea
 
 When a page-hook **redirect** changes an XHR/fetch URL, sensitive headers (e.g. `Authorization`) may not carry the way Requestly’s session DNR rules do. Header **modify** rules on fetch/XHR apply in the page hook; **webRequest** header rules apply to other resource types. Preserving auth across redirect rewritten URLs is **not implemented** — documented for future work in `network/ui/rules.html`.
 
-**Privileged request headers (Cookie / Origin / Referer / User-Agent):** page JS cannot set these on fetch/XHR. The page hook encodes them as `x-complexlinker-{name}`; `network-webrequest.js` always rewrites those dummies to the real header names in `onBeforeSendHeaders` (even when rule matching defers to the page hook). Add more names to `PRIVILEGED_REQUEST_HEADER_NAMES` in `network-rule-engine-core.js` if needed. The **User-Agent Switcher** network rule template relies on this path for fetch/XHR; navigations and other resource types get `setHeaders` from webRequest directly.
+**Privileged request headers (Cookie / Origin / Referer / User-Agent):** page JS cannot set these on fetch/XHR. The page hook encodes them as `x-hackerylab-{name}` (legacy `x-complexlinker-*` is still rewritten); `network-webrequest.js` always rewrites those dummies to the real header names in `onBeforeSendHeaders` (even when rule matching defers to the page hook). Add more names to `PRIVILEGED_REQUEST_HEADER_NAMES` in `network-rule-engine-core.js` if needed. The **User-Agent Switcher** network rule template relies on this path for fetch/XHR; navigations and other resource types get `setHeaders` from webRequest directly.
 
 When matching tabs in the target window (the current window unless a caller passed a `windowId`): the **active tab** wins if it matches; otherwise the nearest tab to the active tab (searching outward in the tab strip). Among tabs sharing a remembered origin, the nearest to the active tab is preferred.
 
@@ -419,21 +417,11 @@ General-purpose page interaction scriptlets — no host restriction. Examples:
 
 These are the **primary** reason the extension exists; extend this section when adding new debugging/interaction tools.
 
-### ServiceNow
-
-Instance-scoped actions with `match: \.service-now\.com$`. Examples:
-
-- Set list row limit (parameterized GlideList2 scriptlet)
-- Show navigator (`url` + `navParams` + `open`)
-- Upload XML, cancel transactions, app logs
-- UIB / macroponent deep links (parameterized `sys_id`)
-- External docs (community, developer portal)
-
-Originally populated from the **SN links** Firefox bookmarks folder via `scripts/parse-bookmarks.js`.
+The bundled catalog in `data/links.json` also contains other host-scoped sections. Treat that file as the source of those entries.
 
 ## User-added actions
 
-Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** opens `builder/builder.html`. Page context menu **Create Complex Linker action** opens the builder with tab URL / clicked-element `fromSelector` prefill.
+Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** opens `builder/builder.html`. Page context menu **Create Hackery Lab action** opens the builder with tab URL / clicked-element `fromSelector` prefill.
 
 - The quick-add **Type** selector drives the code field: Scriptlet → `JS script` placeholder with JavaScript lint; Link → `URL/path` placeholder with URL lint (`url` language in `lib/codemirror-fields.js`, resolved like runtime paths)
 - The builder **Type** selector maps one-to-one onto behaviors, with a hint line per type: `scriptlet` → `run` (no `open`, on-load eligible), `scriptlet-url` → `open-from-script` (`open` required, script returns the URL), `navigate` / `derived-url` → `open-url`. Navigation mode is only offered for types that carry `open`, so a Run scriptlet cannot pick one up by switching types.
@@ -476,10 +464,10 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 ## Conventions for changes
 
 - **New reverse-engineering tools:** add to `Reverse-engineering tools` in `data/links.json`; prefer scriptlets that log to `console` and are idempotent where possible (many check a `window.__…` guard).
-- **New ServiceNow links:** edit `data/links.json` ServiceNow section.
-- **Scriptlet execution:** always MAIN world — required to touch page globals (`window`, `GlideList2`, etc.). This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them. Optional `frames` selects top and/or nested documents; see Frame targeting.
+- **Other bundled catalog entries:** edit `data/links.json`.
+- **Scriptlet execution:** always MAIN world — required to touch page globals. This includes `open-from-script` navigation scripts: activation and copy-link both inject them, and no code path evaluates them in an extension realm (extension pages have no `unsafe-eval` under MV3, and the page globals would be missing anyway). Row hints therefore never show a resolved URL for them. Optional `frames` selects top and/or nested documents; see Frame targeting.
 - **On-load inject:** only for Run actions (`code` without `open`); respects per-link `match`; background re-registers and re-injects on open tabs when `injectOnLoad` or `injectOnLoadEnabled` changes.
-- **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.service-now\.com$`) still work; include path segments to restrict to specific pages.
+- **Match patterns:** regex tested against tab `URL.hostname` and `URL.href` (case-insensitive). Hostname-only patterns (e.g. `\.example\.com$`) still work; include path segments to restrict to specific pages.
 - Reload extension after changing `links.json` or background logic.
 
 ## Known limitations
@@ -492,5 +480,4 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 
 ## Related tooling
 
-- **ServiceNow CLI (`snc`):** for instance queries when debugging SN-specific scriptlets — not part of this extension.
 - **Bookmarks source:** legacy import path; manual `links.json` edits are now the normal workflow for reverse-engineering tools.

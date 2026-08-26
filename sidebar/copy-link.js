@@ -58,9 +58,9 @@ async function resolveCopyText(node, row) {
   if (behavior.id === "open-from-script") {
     const matchPattern = node.match ?? null;
     const { tab, origin } = await getTargetTab(matchPattern);
-    // Nav scripts read page globals (g_form, g_list, GlideList2) and the page
-    // DOM, so only the page can produce the URL. Same injection path as
-    // activation, so copying succeeds exactly when Run does.
+    // Nav scripts read page globals and the page DOM, so only the page can
+    // produce the URL. Same injection path as activation, so copying succeeds
+    // exactly when Run does.
     const outcome = await executeScriptletWithBindings(tab.id, node.code, paramValues, {
       frames: node.frames,
     });

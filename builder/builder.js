@@ -72,13 +72,13 @@ attachCodeMirrorAll({
     element: builderElements.fieldElements.hostPatternCustomInput,
     language: "regex",
     compact: true,
-    placeholder: "e.g. \\.service-now\\.com$",
+    placeholder: "e.g. \\.example\\.com$",
   },
   framesMatch: {
     element: builderElements.fieldElements.framesMatchInput,
     language: "regex",
     compact: true,
-    placeholder: "e.g. incident\\.do",
+    placeholder: "e.g. /edit$",
   },
 });
 

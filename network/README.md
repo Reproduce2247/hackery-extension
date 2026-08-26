@@ -1,6 +1,6 @@
 # Network rules plugin
 
-Self-contained network-rules feature pack for Complex Linker. Designed so the
+Self-contained network-rules feature pack for Hackery Lab. Designed so the
 tree can become its own Firefox extension later with minimal glue.
 
 ## Layout
@@ -68,7 +68,7 @@ non-fetch scripting is needed later.
 Modify rules run field replacements first, then the phase script.
 
 **Privileged headers:** Set/replace of `Cookie`, `Origin`, or `Referer` on
-fetch/XHR is encoded as `x-complexlinker-*` in the page hook; webRequest
+fetch/XHR is encoded as `x-hackerylab-*` in the page hook; webRequest
 rewrites those to the real names on `onBeforeSendHeaders` (Greasemonkey-style).
 See `encodePrivilegedRequestHeaders` / `rewritePrivilegedRequestHeaders` in
 `engine/network-rule-engine-core.js`.

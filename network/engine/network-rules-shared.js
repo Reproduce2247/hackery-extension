@@ -16,9 +16,14 @@ export {
   PRIVILEGED_REQUEST_HEADER_PREFIX,
   rewritePrivilegedRequestHeaders,
 };
-export const NETWORK_MAIN_HOOK_SCRIPT_ID = "complex-linker-network-hook-main";
-export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "complex-linker-network-log-bridge";
-export const NETWORK_EARLY_HOOK_SCRIPT_ID = "complex-linker-network-early-hook";
+export const NETWORK_MAIN_HOOK_SCRIPT_ID = "hackery-lab-network-hook-main";
+export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "hackery-lab-network-log-bridge";
+export const NETWORK_EARLY_HOOK_SCRIPT_ID = "hackery-lab-network-early-hook";
+export const LEGACY_NETWORK_CONTENT_SCRIPT_IDS = [
+  "complex-linker-network-hook-main",
+  "complex-linker-network-log-bridge",
+  "complex-linker-network-early-hook",
+];
 const NETWORK_LOG_LIMIT = 100;
 
 export const NETWORK_ACTIONS = ["block", "redirect", "modify", "mock"];

@@ -10,6 +10,7 @@ import {
   compileRulesForMatching,
   defaultNetworkRulesState,
   getNetworkHookVersion,
+  LEGACY_NETWORK_CONTENT_SCRIPT_IDS,
   NETWORK_EARLY_HOOK_SCRIPT_ID,
   NETWORK_LOG_BRIDGE_SCRIPT_ID,
   NETWORK_MAIN_HOOK_SCRIPT_ID,
@@ -195,6 +196,7 @@ async function syncNetworkHookRegistration() {
     NETWORK_EARLY_HOOK_SCRIPT_ID,
     NETWORK_MAIN_HOOK_SCRIPT_ID,
     NETWORK_LOG_BRIDGE_SCRIPT_ID,
+    ...LEGACY_NETWORK_CONTENT_SCRIPT_IDS,
   ];
 
   for (const id of scriptIds) {
@@ -271,7 +273,7 @@ async function injectRuleTestToast(tabId, message, success) {
       world: "MAIN",
       injectImmediately: true,
       func: (text, ok) => {
-        const id = "complex-linker-rule-test-toast";
+        const id = "hackery-lab-rule-test-toast";
         let el = document.getElementById(id);
         if (!el) {
           el = document.createElement("div");
@@ -283,8 +285,8 @@ async function injectRuleTestToast(tabId, message, success) {
         el.style.background = ok ? "#2f7d62" : "#6b7280";
         el.textContent = text;
         el.style.opacity = "1";
-        clearTimeout(el.__ComplexLinkerHideTimer);
-        el.__ComplexLinkerHideTimer = setTimeout(() => {
+        clearTimeout(el.__HackeryLabHideTimer);
+        el.__HackeryLabHideTimer = setTimeout(() => {
           el.style.opacity = "0";
         }, 4000);
       },

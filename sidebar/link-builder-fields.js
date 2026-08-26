@@ -197,7 +197,7 @@ function createNavParamRow(values = {}) {
     <div class="nav-param-head">
       <label class="field nav-name-field">
         <span class="field-label">Param name</span>
-        <input data-field="nav-name" type="text" placeholder="sys_id" />
+        <input data-field="nav-name" type="text" placeholder="id" />
       </label>
       <label class="field nav-kind-field">
         <span class="field-label">Value source</span>
@@ -211,12 +211,12 @@ function createNavParamRow(values = {}) {
     </div>
     <label class="field nav-url-field is-hidden">
       <span class="field-label">fromUrl regex (capture group 1)</span>
-      <textarea data-field="nav-from-url" rows="1" spellcheck="false" placeholder="e.g. sys_id=([0-9a-f]{32})"></textarea>
+      <textarea data-field="nav-from-url" rows="1" spellcheck="false" placeholder="e.g. /items/([^/?#]+)"></textarea>
     </label>
     <div class="nav-dom-fields is-hidden">
       <label class="field nav-selector-field">
         <span class="field-label">CSS selector</span>
-        <input data-field="nav-from-selector" type="text" placeholder="e.g. #incident_number" />
+        <input data-field="nav-from-selector" type="text" placeholder="e.g. #record-title" />
       </label>
       <label class="field nav-string-source-field">
         <span class="field-label">String source</span>
@@ -292,7 +292,7 @@ function createNavParamRow(values = {}) {
   attachCodeMirror(row.querySelector('[data-field="nav-from-url"]'), {
     language: "regex",
     compact: true,
-    placeholder: "e.g. sys_id=([0-9a-f]{32})",
+    placeholder: "e.g. /items/([^/?#]+)",
   });
   return row;
 }

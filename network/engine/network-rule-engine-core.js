@@ -2,10 +2,12 @@ const MAX_PATTERN_INPUT_LENGTH = 65536;
 
 /**
  * Page JS cannot set these on fetch/XHR (Fetch "forbidden request headers").
- * The page hook sends them as x-complexlinker-* and webRequest rewrites them
+ * The page hook sends them as x-hackerylab-* and webRequest rewrites them
  * back before the request leaves the browser (Greasemonkey-style).
+ * x-complexlinker-* is still rewritten so existing in-flight / saved rules work.
  */
-const PRIVILEGED_REQUEST_HEADER_PREFIX = "x-complexlinker-";
+const PRIVILEGED_REQUEST_HEADER_PREFIX = "x-hackerylab-";
+const LEGACY_PRIVILEGED_REQUEST_HEADER_PREFIX = "x-complexlinker-";
 const PRIVILEGED_REQUEST_HEADER_NAMES = [
   "cookie",
   "origin",
@@ -22,7 +24,7 @@ function isPrivilegedRequestHeaderName(name) {
 }
 
 /**
- * Replace privileged header keys with x-complexlinker-* so MAIN-world
+ * Replace privileged header keys with x-hackerylab-* so MAIN-world
  * Headers / setRequestHeader accept them.
  * @param {Record<string, string>|null|undefined} headers
  * @returns {Record<string, string>}
@@ -59,7 +61,7 @@ function findWebRequestHeaderIndex(headers, name) {
 }
 
 /**
- * Rewrite x-complexlinker-{cookie|origin|referer|user-agent} into the real header names.
+ * Rewrite x-hackerylab-* / x-complexlinker-* dummy names into the real headers.
  * @param {{name: string, value?: string}[]|null|undefined} headerList
  * @returns {{ headers: {name: string, value?: string}[], changed: boolean }}
  */
@@ -70,10 +72,16 @@ function rewritePrivilegedRequestHeaders(headerList) {
   const headers = headerList.slice();
   let changed = false;
   for (const name of PRIVILEGED_REQUEST_HEADER_NAMES) {
-    const prefixedIndex = findWebRequestHeaderIndex(
+    let prefixedIndex = findWebRequestHeaderIndex(
       headers,
       PRIVILEGED_REQUEST_HEADER_PREFIX + name
     );
+    if (prefixedIndex < 0) {
+      prefixedIndex = findWebRequestHeaderIndex(
+        headers,
+        LEGACY_PRIVILEGED_REQUEST_HEADER_PREFIX + name
+      );
+    }
     if (prefixedIndex < 0) {
       continue;
     }

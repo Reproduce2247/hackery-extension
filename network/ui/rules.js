@@ -81,7 +81,7 @@ const PATTERN_FIELDS = [
     flagKey: "pageUrlPatternIsRegex",
     element: document.getElementById("rule-page-url-pattern"),
     regexEl: document.getElementById("rule-page-url-pattern-regex"),
-    placeholders: { wildcard: "*/now/nav/*", regex: "/now/nav/.*" },
+    placeholders: { wildcard: "*/app/*", regex: "/app/.*" },
   },
   {
     key: "requestUrlPattern",
@@ -89,8 +89,8 @@ const PATTERN_FIELDS = [
     element: document.getElementById("rule-request-url-pattern"),
     regexEl: document.getElementById("rule-request-url-pattern-regex"),
     placeholders: {
-      wildcard: "*/api/now/table/*",
-      regex: "/api/now/table/.*",
+      wildcard: "*/api/v1/items/*",
+      regex: "/api/v1/items/.*",
     },
   },
   {
@@ -99,8 +99,8 @@ const PATTERN_FIELDS = [
     element: document.getElementById("rule-body-pattern"),
     regexEl: document.getElementById("rule-body-pattern-regex"),
     placeholders: {
-      wildcard: "*sysparm_query=*active=true*",
-      regex: "sysparm_query=.*active=true",
+      wildcard: "*q=*status=open*",
+      regex: "q=.*status=open",
     },
   },
   {

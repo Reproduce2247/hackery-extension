@@ -40,8 +40,12 @@ const {
 
 const HTTP_CONTENT_SCRIPT_MATCHES = ["http://*/*", "https://*/*"];
 
-const INJECT_SCRIPT_ID = "complex-linker-on-load";
-const CONTEXT_TARGET_SCRIPT_ID = "complex-linker-context-target";
+const INJECT_SCRIPT_ID = "hackery-lab-on-load";
+const CONTEXT_TARGET_SCRIPT_ID = "hackery-lab-context-target";
+const LEGACY_CONTENT_SCRIPT_IDS = [
+  "complex-linker-on-load",
+  "complex-linker-context-target",
+];
 const PARAM_PROMPT_PAGE = "prompt/params.html";
 const REFRESH_DEBOUNCE_MS = 300;
 
@@ -140,12 +144,22 @@ async function rebuildInjectCache() {
   }
 }
 
-async function syncInjectRegistration() {
-  try {
-    await browser.scripting.unregisterContentScripts({ ids: [INJECT_SCRIPT_ID] });
-  } catch {
-    // not registered yet
+async function unregisterContentScriptIds(ids) {
+  for (const id of ids) {
+    try {
+      await browser.scripting.unregisterContentScripts({ ids: [id] });
+    } catch {
+      // not registered yet
+    }
   }
+}
+
+async function syncInjectRegistration() {
+  await unregisterContentScriptIds([
+    INJECT_SCRIPT_ID,
+    CONTEXT_TARGET_SCRIPT_ID,
+    ...LEGACY_CONTENT_SCRIPT_IDS,
+  ]);
 
   if (!extensionSettings.injectOnLoadEnabled || injectEntries.length === 0) {
     return;
@@ -167,13 +181,11 @@ async function syncInjectRegistration() {
  * Late injection on menu click misses the event that just opened the menu.
  */
 async function syncContextTargetRegistration() {
-  try {
-    await browser.scripting.unregisterContentScripts({
-      ids: [CONTEXT_TARGET_SCRIPT_ID],
-    });
-  } catch {
-    // not registered yet
-  }
+  await unregisterContentScriptIds([
+    INJECT_SCRIPT_ID,
+    CONTEXT_TARGET_SCRIPT_ID,
+    ...LEGACY_CONTENT_SCRIPT_IDS,
+  ]);
 
   await browser.scripting.registerContentScripts([
     {
@@ -525,7 +537,7 @@ async function activateByStableKey(stableKey, options = {}) {
   if (!outcome.ok) {
     flashBadge("!");
     console.warn(
-      `complex-linker: "${node.name}" not activated: ${
+      `hackery-lab: "${node.name}" not activated: ${
         outcome.message || "unknown error"
       }`
     );
@@ -649,7 +661,7 @@ function describeOmniboxParams(defs, values) {
 
 browser.omnibox.setDefaultSuggestion({
   description:
-    "Search Complex Linker actions (Enter to run top match; add | value for parameters)",
+    "Search Hackery Lab actions (Enter to run top match; add | value for parameters)",
 });
 
 browser.omnibox.onInputChanged.addListener((text, suggest) => {
@@ -820,7 +832,7 @@ function initContextMenus() {
   browser.contextMenus.removeAll().then(() => {
     browser.contextMenus.create({
       id: "cl-create-action",
-      title: "Create Complex Linker action",
+      title: "Create Hackery Lab action",
       contexts: ["page", "link", "selection", "editable"],
     });
   });

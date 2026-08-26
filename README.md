@@ -1,6 +1,6 @@
-Firefox extension
+# Hackery Lab
 
-Firefox extension for reusable page actions: run JavaScript in the page MAIN world, open derived or declared URLs, and optionally inject scriptlets at document start. Includes a large **ServiceNow** section and a **Reverse-engineering tools** section for general site debugging.
+Firefox extension for reusable page actions: run JavaScript in the page MAIN world, open derived or declared URLs, and optionally inject scriptlets at document start. The bundled catalog in `data/links.json` includes reverse-engineering tools plus other sections.
 
 ## Install (temporary)
 
@@ -25,13 +25,13 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
    - **Open** — relative path on the target tab
    - **Web** — absolute URL
 
-**Search without focusing the sidebar:** type `cl` in the address bar (omnibox), then a query; Enter runs the top match.
+**Search without focusing the sidebar:** type `hl` in the address bar (omnibox), then a query; Enter runs the top match.
 
 **In-sidebar search:** focus the search field with `/` or **Ctrl+K** (no type-anywhere capture — the page keeps keyboard focus when the sidebar is open but unfocused).
 
 **Shortcuts:** right-click a link → Assign Alt+1…0. Those keys run the link globally.
 
-**Create from page:** right-click the page/link/selection → **Create Complex Linker action** (opens the advanced builder; clicked elements prefill a `fromSelector` navParam).
+**Create from page:** right-click the page/link/selection → **Create Hackery Lab action** (opens the advanced builder; clicked elements prefill a `fromSelector` navParam).
 
 Drag links/folders/section tabs to reorder; order is saved and used for export.
 
@@ -41,14 +41,50 @@ Reload the extension in `about:debugging` after editing `data/links.json`.
 
 **Schema v3 note:** updating to the `params` / `navParams` split clears saved parameter values and on-load preferences once. Re-enable on-load checkboxes and re-enter saved values after reload.
 
+## Recommended complementary tools
+
+This extension does not reimplement capabilities that existing add-ons or Firefox itself already cover well. Pair it with:
+
+| Tool | Role |
+|---|---|
+| [Wappalyzer](https://www.wappalyzer.com/) | Identify CMS, frameworks, CDNs, and other stack fingerprints |
+| [React Developer Tools](https://addons.mozilla.org/firefox/addon/react-devtools/) | Inspect React component trees and props |
+| [Angular DevTools](https://addons.mozilla.org/firefox/addon/angular-devtools/) | Inspect Angular component trees and change detection |
+| [CSP Evaluator](https://addons.mozilla.org/firefox/addon/csp-evaluator/) | Review Content-Security-Policy headers |
+| [uBlock Origin](https://addons.mozilla.org/firefox/addon/ublock-origin/) | Network/filter blocking |
+| [NoScript](https://addons.mozilla.org/firefox/addon/noscript/) | Per-site script allowlisting |
+| [uMatrix](https://addons.mozilla.org/firefox/addon/umatrix/) | Per-request-type matrix blocking (**abandoned**, still useful) |
+| [Stylus](https://addons.mozilla.org/firefox/addon/styl-us/) | User stylesheets per site, without touching the profile `chrome` folder |
+
+### Firefox built-in (Developer Tools)
+
+Open with **F12** / **Ctrl+Shift+I**. These are the inspectors this extension does not duplicate:
+
+- **Inspector** — HTML/CSS: select nodes, search, live-edit markup and styles, pretty-print
+- **Debugger** — JS: sources, breakpoints, pretty-print minified files, search
+- **Console** — runtime JS against the page (and selected iframe)
+- **Network** — request/response headers, bodies, timing, replay
+- **Storage** — cookies, local/session storage, IndexedDB, Cache Storage (view and edit)
+
+### Firefox user CSS (profile `chrome` folder)
+
+Persistent CSS without an extension. Create a `chrome` directory in the **profile folder** (`about:support` → **Profile Folder** → Open Folder):
+
+| File | Applies to |
+|---|---|
+| `chrome/userChrome.css` | Firefox chrome (toolbars, sidebar, menus, DevTools chrome) |
+| `chrome/userContent.css` | Page content (web pages, `about:` documents) |
+
+Firefox 69+ ignores these unless `toolkit.legacyUserProfileCustomizations.stylesheets` is `true` in `about:config`. Restart after changing the pref or the CSS files. Stylus is the easier per-site alternative; `userContent.css` is global to the profile.
+
 ## Link catalog (`data/links.json`)
 
 Top-level keys are **section names** (sidebar tabs). Each section has optional `match` and a `children` array (folders and leaf actions). Leaves have **no `type` field** — behavior is inferred from properties.
 
 ```json
 {
-  "ServiceNow": {
-    "match": "\\.service-now\\.com$",
+  "Example": {
+    "match": "\\.example\\.com$",
     "children": [ ]
   },
   "Reverse-engineering tools": {
@@ -67,7 +103,7 @@ Optional regex inherited from section or parent unless overridden. Matched again
 
 | Value | Tab selection |
 |---|---|
-| Set (e.g. `\\.service-now\\.com$`) | Active tab if it matches; else nearest match; else remembered origin |
+| Set (e.g. `\\.example\\.com$`) | Active tab if it matches; else nearest match; else remembered origin |
 | `"match": null` on a link | Active tab only (overrides section inheritance) |
 | Absent on section | Active tab in the current window |
 
@@ -84,7 +120,7 @@ Optional regex inherited from section or parent unless overridden. Matched again
 ```json
 {
   "name": "Set list item limit",
-  "code": "glideListClassRef.setRowsPerPage(limit);",
+  "code": "list.setPageSize(limit);",
   "params": {
     "limit": { "placeholder": "limit", "default": "100" }
   }
@@ -99,9 +135,9 @@ Optional `frames` selects which documents the script runs in (see below).
 
 ```json
 {
-  "name": "Cancel transactions",
+  "name": "Open settings",
   "open": "tab",
-  "url": "/cancel_my_transaction.do"
+  "url": "/settings"
 }
 ```
 
@@ -109,14 +145,14 @@ Derived URL with `navParams` + template:
 
 ```json
 {
-  "name": "Show navigator",
+  "name": "Open item",
   "open": "same-tab",
   "navParams": {
-    "target": {
-      "fromUrl": "^https?://[^/]+/(?!now\\/nav\\/ui\\/classic\\/params\\/target\\/)(.+)$"
+    "id": {
+      "fromUrl": "/items/([^/?#]+)"
     }
   },
-  "url": "{origin}/now/nav/ui/classic/params/target/{encode:target}"
+  "url": "{origin}/items/{encode:id}"
 }
 ```
 
@@ -154,8 +190,8 @@ Mutual exclusion: `params` on `code` actions, `navParams` on `url` actions. Do n
     "placeholder": "extension id",
     "optional": true
   },
-  "sys_id": {
-    "placeholder": "sys_id",
+  "id": {
+    "placeholder": "id",
     "default": "abc123"
   }
 }
@@ -190,7 +226,7 @@ Do not add `"frames": { "top": true }` just to mean “default”: that object i
 "frames": {
   "top": true,
   "nestingLevel": 1,
-  "match": ["incident\\.do"]
+  "match": ["/edit$"]
 }
 ```
 
@@ -207,8 +243,8 @@ Depth is hops from the top document (a direct `<iframe>` is 1). `match` does not
 | Top + first-level iframes | `{ "top": true, "nestingLevel": 1 }` |
 | First-level iframes only | `{ "nestingLevel": 1 }` |
 | Entire tree | `{ "top": true, "nestingLevel": -1 }` |
-| Form iframe at any depth | `{ "match": ["incident\\.do"] }` |
-| First-level form iframe | `{ "nestingLevel": 1, "match": ["incident\\.do"] }` |
+| Form iframe at any depth | `{ "match": ["/edit$"] }` |
+| First-level form iframe | `{ "nestingLevel": 1, "match": ["/edit$"] }` |
 
 After a run, the **page** console (top document) logs a table of `frameId`, `depth`, `url`, `ok`, `error`. Mixed results: `failed in some frames`. Zero successes: `failed in all frames`. Copy still writes successful `open-from-script` URLs, then shows the partial-failure message.
 

@@ -5,10 +5,12 @@ const MAX_PATTERN_INPUT_LENGTH = 65536;
 
 /**
  * Page JS cannot set these on fetch/XHR (Fetch "forbidden request headers").
- * The page hook sends them as x-complexlinker-* and webRequest rewrites them
+ * The page hook sends them as x-hackerylab-* and webRequest rewrites them
  * back before the request leaves the browser (Greasemonkey-style).
+ * x-complexlinker-* is still rewritten so existing in-flight / saved rules work.
  */
-const PRIVILEGED_REQUEST_HEADER_PREFIX = "x-complexlinker-";
+const PRIVILEGED_REQUEST_HEADER_PREFIX = "x-hackerylab-";
+const LEGACY_PRIVILEGED_REQUEST_HEADER_PREFIX = "x-complexlinker-";
 const PRIVILEGED_REQUEST_HEADER_NAMES = [
   "cookie",
   "origin",
@@ -25,7 +27,7 @@ function isPrivilegedRequestHeaderName(name) {
 }
 
 /**
- * Replace privileged header keys with x-complexlinker-* so MAIN-world
+ * Replace privileged header keys with x-hackerylab-* so MAIN-world
  * Headers / setRequestHeader accept them.
  * @param {Record<string, string>|null|undefined} headers
  * @returns {Record<string, string>}
@@ -62,7 +64,7 @@ function findWebRequestHeaderIndex(headers, name) {
 }
 
 /**
- * Rewrite x-complexlinker-{cookie|origin|referer|user-agent} into the real header names.
+ * Rewrite x-hackerylab-* / x-complexlinker-* dummy names into the real headers.
  * @param {{name: string, value?: string}[]|null|undefined} headerList
  * @returns {{ headers: {name: string, value?: string}[], changed: boolean }}
  */
@@ -73,10 +75,16 @@ function rewritePrivilegedRequestHeaders(headerList) {
   const headers = headerList.slice();
   let changed = false;
   for (const name of PRIVILEGED_REQUEST_HEADER_NAMES) {
-    const prefixedIndex = findWebRequestHeaderIndex(
+    let prefixedIndex = findWebRequestHeaderIndex(
       headers,
       PRIVILEGED_REQUEST_HEADER_PREFIX + name
     );
+    if (prefixedIndex < 0) {
+      prefixedIndex = findWebRequestHeaderIndex(
+        headers,
+        LEGACY_PRIVILEGED_REQUEST_HEADER_PREFIX + name
+      );
+    }
     if (prefixedIndex < 0) {
       continue;
     }
@@ -624,7 +632,8 @@ function createNetworkRuleEngine(options = {}) {
   };
 }
   const root = typeof globalThis !== "undefined" ? globalThis : window;
-  const prevHook = root.__ComplexLinkerNetworkHook;
+  const prevHook =
+    root.__HackeryLabNetworkHook || root.__ComplexLinkerNetworkHook;
   const injectedTabUrl =
     typeof sharedStateBundle?.tabUrl === "string" ? sharedStateBundle.tabUrl : "";
   if (
@@ -720,7 +729,7 @@ function createNetworkRuleEngine(options = {}) {
   function postSharedStateUpdate() {
     root.postMessage(
       {
-        source: "complex-linker-network-hook",
+        source: "hackery-lab-network-hook",
         type: "sharedState",
         token: logToken,
         persistent: stateView.persistent,
@@ -733,7 +742,7 @@ function createNetworkRuleEngine(options = {}) {
   function postLog(entry) {
     root.postMessage(
       {
-        source: "complex-linker-network-hook",
+        source: "hackery-lab-network-hook",
         type: "log",
         token: logToken,
         entry: { ...entry, ts: Date.now() },
@@ -919,7 +928,7 @@ function createNetworkRuleEngine(options = {}) {
   function objectToHeaders(headers) {
     const next = new Headers();
     // Cookie/Origin/Referer/User-Agent are forbidden in page JS — send as
-    // x-complexlinker-* and let webRequest rewrite them (see
+    // x-hackerylab-* and let webRequest rewrite them (see
     // rewritePrivilegedRequestHeaders).
     for (const [key, value] of Object.entries(
       encodePrivilegedRequestHeaders(headers)
@@ -992,7 +1001,8 @@ function createNetworkRuleEngine(options = {}) {
     }, 0);
   }
 
-  const earlyHook = root.__ComplexLinkerNetworkEarlyHook;
+  const earlyHook =
+    root.__HackeryLabNetworkEarlyHook || root.__ComplexLinkerNetworkEarlyHook;
   const natives = prevHook?.natives || earlyHook?.natives || {
     fetch: root.fetch.bind(root),
     xhrOpen: XMLHttpRequest.prototype.open,
@@ -1006,7 +1016,7 @@ function createNetworkRuleEngine(options = {}) {
   XMLHttpRequest.prototype.setRequestHeader = natives.xhrSetRequestHeader;
 
   const origFetch = natives.fetch;
-  root.fetch = async function ComplexLinkerFetch(input, init) {
+  root.fetch = async function HackeryLabFetch(input, init) {
     const isHookOriginated = hookDepth > 0;
     hookDepth += 1;
     try {
@@ -1158,14 +1168,14 @@ function createNetworkRuleEngine(options = {}) {
   const origSend = natives.xhrSend;
   const origSetRequestHeader = natives.xhrSetRequestHeader;
 
-  XMLHttpRequest.prototype.open = function ComplexLinkerOpen(
+  XMLHttpRequest.prototype.open = function HackeryLabOpen(
     method,
     url,
     async,
     user,
     password
   ) {
-    this.__ComplexLinker = {
+    this.__HackeryLab = {
       method: String(method || "GET").toUpperCase(),
       url: String(url),
       async: async !== false,
@@ -1176,21 +1186,23 @@ function createNetworkRuleEngine(options = {}) {
     return origOpen.call(this, method, url, async, user, password);
   };
 
-  XMLHttpRequest.prototype.setRequestHeader = function ComplexLinkerSetHeader(
+  XMLHttpRequest.prototype.setRequestHeader = function HackeryLabSetHeader(
     name,
     value
   ) {
-    if (this.__ComplexLinker) {
+    if (this.__HackeryLab) {
+      this.__HackeryLab.headers[name] = value;
+    } else if (this.__ComplexLinker) {
       this.__ComplexLinker.headers[name] = value;
     }
     return origSetRequestHeader.call(this, name, value);
   };
 
-  XMLHttpRequest.prototype.send = function ComplexLinkerSend(body) {
+  XMLHttpRequest.prototype.send = function HackeryLabSend(body) {
     const isHookOriginated = hookDepth > 0;
     hookDepth += 1;
     try {
-    const meta = this.__ComplexLinker || {
+    const meta = this.__HackeryLab || this.__ComplexLinker || {
       method: "GET",
       url: "",
       headers: {},
@@ -1286,7 +1298,7 @@ function createNetworkRuleEngine(options = {}) {
 
     const xhr = this;
     const origReady = xhr.onreadystatechange;
-    xhr.onreadystatechange = function ComplexLinkerReadyState() {
+    xhr.onreadystatechange = function HackeryLabReadyState() {
       if (xhr.readyState === 4) {
         try {
           const responseCtx = processRules(
@@ -1335,7 +1347,7 @@ function createNetworkRuleEngine(options = {}) {
     }
   };
 
-  root.__ComplexLinkerNetworkHook = {
+  root.__HackeryLabNetworkHook = {
     version,
     logToken,
     tabUrl: injectedTabUrl,
@@ -1347,5 +1359,5 @@ function createNetworkRuleEngine(options = {}) {
 }
 
 export function buildLogBridgeBootstrap(logToken) {
-  return `(function(){var LOG_TOKEN=${JSON.stringify(logToken)};window.addEventListener("message",function(event){if(event.source!==window)return;var data=event.data;if(!data||data.source!=="complex-linker-network-hook"||data.token!==LOG_TOKEN)return;if(data.type==="log"){browser.runtime.sendMessage({type:"NETWORK_RULE_LOG",entry:data.entry}).catch(function(){});return;}if(data.type==="sharedState"){browser.runtime.sendMessage({type:"NETWORK_SHARED_STATE",persistent:data.persistent,tab:data.tab}).catch(function(){});}});})();`;
+  return `(function(){var LOG_TOKEN=${JSON.stringify(logToken)};window.addEventListener("message",function(event){if(event.source!==window)return;var data=event.data;if(!data||(data.source!=="hackery-lab-network-hook"&&data.source!=="complex-linker-network-hook")||data.token!==LOG_TOKEN)return;if(data.type==="log"){browser.runtime.sendMessage({type:"NETWORK_RULE_LOG",entry:data.entry}).catch(function(){});return;}if(data.type==="sharedState"){browser.runtime.sendMessage({type:"NETWORK_SHARED_STATE",persistent:data.persistent,tab:data.tab}).catch(function(){});}});})();`;
 }

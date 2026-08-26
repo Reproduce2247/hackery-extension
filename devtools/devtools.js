@@ -7,7 +7,7 @@ browser.devtools.panels
     "/network/ui/rules.html"
   )
   .catch((error) => {
-    console.error("Complex Linker: failed to create Network Rules panel", error);
+    console.error("Hackery Lab: failed to create Network Rules panel", error);
     return browser.devtools.panels.create(
       "Network Rules",
       "",
