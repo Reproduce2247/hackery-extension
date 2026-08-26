@@ -55,6 +55,8 @@ This extension does not reimplement capabilities that existing add-ons or Firefo
 | [NoScript](https://addons.mozilla.org/firefox/addon/noscript/) | Per-site script allowlisting |
 | [uMatrix](https://addons.mozilla.org/firefox/addon/umatrix/) | Per-request-type matrix blocking (**abandoned**, still useful) |
 | [Stylus](https://addons.mozilla.org/firefox/addon/styl-us/) | User stylesheets per site, without touching the profile `chrome` folder |
+| [Video DownloadHelper](https://addons.mozilla.org/firefox/addon/video-downloadhelper/) | Download videos and streams (HLS/DASH) from the page |
+| [DownThemAll](https://addons.mozilla.org/firefox/addon/downthemall/) | Select, filter, and queue bulk downloads of page links and media |
 
 ### Firefox built-in (Developer Tools)
 
@@ -76,6 +78,31 @@ Persistent CSS without an extension. Create a `chrome` directory in the **profil
 | `chrome/userContent.css` | Page content (web pages, `about:` documents) |
 
 Firefox 69+ ignores these unless `toolkit.legacyUserProfileCustomizations.stylesheets` is `true` in `about:config`. Restart after changing the pref or the CSS files. Stylus is the easier per-site alternative; `userContent.css` is global to the profile.
+
+### Custom software (control Firefox / offload analysis)
+
+Hackery Lab does not implement a local-app bridge. Use one of the Firefox-supported channels below. Pick by who should own the session: **this extension** (native messaging), **an automation client** (WebDriver BiDi), or **the network path** (local proxy).
+
+| Channel | Best for | How it attaches |
+|---|---|---|
+| [Native messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging) | Dumping page/network data from an extension into Python/Go/etc. for parsing, graphs, export | Extension `runtime.connectNative` / `sendNativeMessage` ↔ host process **stdin/stdout** |
+| [WebDriver BiDi](https://developer.mozilla.org/en-US/docs/Web/WebDriver/How_to/Create_BiDi_connection) | Driving tabs, executing JS, subscribing to network/console/DOM events from Playwright, Selenium, or a raw WebSocket client | Launch with `--remote-debugging-port`; WebSocket at `ws://127.0.0.1:PORT/session` |
+| [geckodriver](https://firefox-source-docs.mozilla.org/testing/geckodriver/) / Marionette | Classic WebDriver HTTP (navigate, click, screenshot); BiDi can ride on the same session via `webSocketUrl` | Client → geckodriver → Firefox Marionette |
+| Local MITM proxy (mitmproxy, Burp, …) | Full HTTP(S) bodies and WebSockets without writing an extension | Firefox proxy settings / PAC; install the proxy CA for HTTPS |
+
+**Native messaging (extension → local app).** Requires `"nativeMessaging"` on the extension and a **host manifest** JSON whose `allowed_extensions` lists this add-on’s gecko id (`punk@local.dev`). On Windows the browser finds the host via `HKCU`/`HKLM` `\Software\Mozilla\NativeMessagingHosts\<name>` pointing at that JSON; on Linux/macOS the JSON lives under a Mozilla native-messaging directory. Messages are length-prefixed JSON (host → extension max **1 MB** per message). Content scripts cannot talk to the host directly — the background script is the pipe. This is the path if you want Hackery Lab (or a thin companion add-on) to collect DOM/HAR-like data and hand it to heavier analysis code. Not implemented here.
+
+**WebDriver BiDi (external client → Firefox).** Does not need this extension. Firefox CDP support is gone (removed after deprecation in 129+); do not target CDP. Example:
+
+```text
+firefox --remote-debugging-port 9222
+```
+
+Then connect to `ws://127.0.0.1:9222/session` (Firefox binds `127.0.0.1`, not `localhost`). BiDi can execute scripts, inspect browsing contexts, and stream network/log events — enough for custom analysis pipelines that also need to *control* the browser. Playwright and current Selenium speak BiDi; a custom client can send the JSON protocol directly.
+
+**Proxy.** Complements (and can overlap) this extension’s network rules. Use it when you need durable capture, replay, or tooling that already exists outside Firefox. Proxy TLS interception is a separate trust decision from add-on permissions.
+
+**Do not** expose `--remote-debugging-port` on a non-loopback interface. Native hosts run with the user’s OS privileges; treat the host binary like any local installer.
 
 ## Link catalog (`data/links.json`)
 

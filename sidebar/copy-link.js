@@ -15,7 +15,10 @@ import {
   coerceScriptletNavigationUrl,
   resolveUrlAction,
 } from "../lib/navigation-shared.js";
-import { executeScriptletWithBindings } from "../lib/scriptlet-inject.js";
+import {
+  compileScriptletSource,
+  executeScriptletWithBindings,
+} from "../lib/scriptlet-inject.js";
 import { getTargetTab } from "../lib/tab-target.js";
 
 async function resolveCopyText(node, row) {
@@ -79,16 +82,7 @@ async function resolveCopyText(node, row) {
   }
 
   if (behavior.id === "run") {
-    const code = node.code || "";
-    // Injection binds params as function arguments (see executeScriptletWithBindings);
-    // pasted code has no such scope, so emit them as declarations ahead of the snippet.
-    const declarations = runtimeDefs
-      .filter((def) => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(def.name))
-      .map(
-        (def) =>
-          `var ${def.name} = ${JSON.stringify(paramValues[def.name] ?? "")};`
-      );
-    return declarations.length ? `${declarations.join("\n")}\n${code}` : code;
+    return compileScriptletSource(node.code || "", paramValues);
   }
 
   const matchPattern = node.match ?? null;

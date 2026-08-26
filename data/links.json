@@ -607,7 +607,7 @@
             "default": "60"
           }
         },
-        "code": "(function(){var sec=Math.max(0,parseInt('seconds',10)||60);var ms=sec*1000;var _st=setTimeout;window.setInterval=function(){console.log('blocked setInterval',arguments[0]);return 0};window.setTimeout=function(fn,t){var d=Math.max(t||0,ms);if(t!=null&&t<ms)console.log('setTimeout stretched',t,'→',d);return _st(fn,d)};console.log('Intervals blocked; timeouts min '+sec+'s')})();"
+        "code": "(function(){var sec=Math.max(0,parseInt(seconds,10)||60);var ms=sec*1000;var _st=setTimeout;window.setInterval=function(){console.log('blocked setInterval',arguments[0]);return 0};window.setTimeout=function(fn,t){var d=Math.max(t||0,ms);if(t!=null&&t<ms)console.log('setTimeout stretched',t,'→',d);return _st(fn,d)};console.log('Intervals blocked; timeouts min '+sec+'s')})();"
       },
       {
         "id": "04878d72-0eac-4e2b-a997-6b95f0811a7a",
@@ -624,7 +624,7 @@
             "optional": true
           }
         },
-        "code": "(function(){var sel='selector'.replace(/['\"]/g,'');var origFetch=window.fetch;if(origFetch)window.fetch=function(){console.log('fetch',arguments[0]);return origFetch.apply(this,arguments)};var xopen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){console.log('XHR',m,u);return xopen.apply(this,arguments)};function desc(el){if(!el||el.nodeType!==1)return null;var o={tag:el.tagName,id:el.id,className:el.className};['name','type','value','disabled','formAction','formMethod','href'].forEach(function(k){if(el[k]!=null&&el[k]!=='')o[k]=el[k]});o.onclick=el.getAttribute('onclick');Array.from(el.attributes).forEach(function(a){if(/^(data-|ng-|sn-|aria-)/.test(a.name))o[a.name]=a.value});return o}function trace(el){if(!el){console.warn('No element');return}console.log('Element',desc(el),el);if(el.disabled){el.disabled=false;console.log('disabled cleared')}if(el.getAttribute('aria-disabled')==='true')el.setAttribute('aria-disabled','false');var form=el.form||el.closest('form');if(form)console.log('Form',form.action||form.getAttribute('action'),form.method);el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));console.log('Dispatched click; check fetch/XHR logs above')}if(sel){trace(document.querySelector(sel));return}console.log('Click the button to trace (elementFromPoint; works when disabled)');document.addEventListener('mousedown',function pick(e){document.removeEventListener('mousedown',pick,true);var el=document.elementFromPoint(e.clientX,e.clientY);if(el)el=el.closest('button,input[type=button],input[type=submit],a,[role=button]')||el;trace(el)},true)})();"
+        "code": "(function(){var sel=String(selector||'').replace(/['\"]/g,'');var origFetch=window.fetch;if(origFetch)window.fetch=function(){console.log('fetch',arguments[0]);return origFetch.apply(this,arguments)};var xopen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){console.log('XHR',m,u);return xopen.apply(this,arguments)};function desc(el){if(!el||el.nodeType!==1)return null;var o={tag:el.tagName,id:el.id,className:el.className};['name','type','value','disabled','formAction','formMethod','href'].forEach(function(k){if(el[k]!=null&&el[k]!=='')o[k]=el[k]});o.onclick=el.getAttribute('onclick');Array.from(el.attributes).forEach(function(a){if(/^(data-|ng-|sn-|aria-)/.test(a.name))o[a.name]=a.value});return o}function trace(el){if(!el){console.warn('No element');return}console.log('Element',desc(el),el);if(el.disabled){el.disabled=false;console.log('disabled cleared')}if(el.getAttribute('aria-disabled')==='true')el.setAttribute('aria-disabled','false');var form=el.form||el.closest('form');if(form)console.log('Form',form.action||form.getAttribute('action'),form.method);el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));console.log('Dispatched click; check fetch/XHR logs above')}if(sel){trace(document.querySelector(sel));return}console.log('Click the button to trace (elementFromPoint; works when disabled)');document.addEventListener('mousedown',function pick(e){document.removeEventListener('mousedown',pick,true);var el=document.elementFromPoint(e.clientX,e.clientY);if(el)el=el.closest('button,input[type=button],input[type=submit],a,[role=button]')||el;trace(el)},true)})();"
       },
       {
         "id": "1f937c74-6234-430c-bb94-18da4559b411",
@@ -709,6 +709,148 @@
           "synthetic"
         ],
         "code": "(function(){if(window.__SN_DISPATCH_HOOK__)return;window.__SN_DISPATCH_HOOK__=1;var orig=EventTarget.prototype.dispatchEvent;EventTarget.prototype.dispatchEvent=function(ev){console.log('dispatchEvent',ev&&ev.type,this,ev);return orig.call(this,ev)};console.log('dispatchEvent hooked')})();"
+      }
+    ]
+  },
+  "YouTube": {
+    "children": [
+      {
+        "name": "Media mode (audio-only / video-only)",
+        "searchTags": [
+          "audio",
+          "video",
+          "mute",
+          "bandwidth"
+        ],
+        "frames": {
+          "top": true,
+          "nestingLevel": -1,
+          "match": [
+            "youtube(-nocookie)?\\.com/embed"
+          ]
+        },
+        "params": {
+          "mode": {
+            "placeholder": "mode",
+            "default": "audio",
+            "choices": [
+              "audio",
+              "video",
+              "reset"
+            ]
+          }
+        },
+        "code": "(function(){var p=document.querySelector('#movie_player,#shorts-player,.html5-video-player');if(!p){console.log('No YouTube player in this frame');return}var v=p.querySelector('video');var m=String(mode||'audio');if(m==='audio'){if(p.unMute)p.unMute();/* setPlaybackQualityRange is the internal player API; the documented setPlaybackQuality is a no-op */if(p.setPlaybackQualityRange)try{p.setPlaybackQualityRange('tiny','tiny')}catch(e){}if(v)v.style.setProperty('visibility','hidden','important')}else if(m==='video'){if(p.mute)p.mute();if(v)v.style.removeProperty('visibility')}else{if(p.unMute)p.unMute();if(p.setPlaybackQualityRange)try{p.setPlaybackQualityRange('tiny','highres')}catch(e){}if(v)v.style.removeProperty('visibility')}console.log('Media mode: '+m+'. Bandwidth is reduced, not blocked - both streams are still fetched.')})();"
+      },
+      {
+        "name": "Set playback rate",
+        "searchTags": [
+          "speed",
+          "playbackRate"
+        ],
+        "frames": {
+          "top": true,
+          "nestingLevel": -1,
+          "match": [
+            "youtube(-nocookie)?\\.com/embed"
+          ]
+        },
+        "params": {
+          "rate": {
+            "placeholder": "rate",
+            "default": "2",
+            "choices": [
+              "0.5",
+              "1",
+              "1.5",
+              "2",
+              "3",
+              "4",
+              "8"
+            ]
+          }
+        },
+        "code": "(function(){var p=document.querySelector('#movie_player,#shorts-player,.html5-video-player');var v=(p&&p.querySelector('video'))||document.querySelector('video');if(!v){console.log('No video element in this frame');return}var r=parseFloat(rate)||1;v.playbackRate=r;if(p&&p.setPlaybackRate)try{p.setPlaybackRate(r)}catch(e){}console.log('playbackRate='+v.playbackRate+' (UI menu caps at 2; the player may reset this on navigation)')})();"
+      },
+      {
+        "name": "Player stats",
+        "searchTags": [
+          "stats for nerds",
+          "dropped frames",
+          "state"
+        ],
+        "frames": {
+          "top": true,
+          "nestingLevel": -1,
+          "match": [
+            "youtube(-nocookie)?\\.com/embed"
+          ]
+        },
+        "code": "(function(){var p=document.querySelector('#movie_player,#shorts-player,.html5-video-player');if(!p){console.log('No YouTube player in this frame');return}var v=p.querySelector('video');var out={state:p.getPlayerState&&p.getPlayerState(),time:p.getCurrentTime&&Math.round(p.getCurrentTime()),duration:p.getDuration&&Math.round(p.getDuration()),rate:v&&v.playbackRate,muted:p.isMuted&&p.isMuted(),volume:p.getVolume&&p.getVolume(),src:v&&v.currentSrc};if(p.getVideoData)out.video=p.getVideoData();if(p.getStatsForNerds)try{out.nerds=p.getStatsForNerds()}catch(e){}if(v&&v.getVideoPlaybackQuality)out.frames=v.getVideoPlaybackQuality();console.log(location.href,out)})();"
+      },
+      {
+        "name": "Pin quality & rate across navigation",
+        "searchTags": [
+          "spa",
+          "yt-navigate-finish",
+          "persist",
+          "quality"
+        ],
+        "frames": {
+          "top": true,
+          "nestingLevel": -1,
+          "match": [
+            "youtube(-nocookie)?\\.com/embed"
+          ]
+        },
+        "params": {
+          "quality": {
+            "placeholder": "quality",
+            "default": "hd1080",
+            "choices": [
+              "tiny",
+              "medium",
+              "large",
+              "hd720",
+              "hd1080",
+              "hd1440",
+              "hd2160",
+              "highres",
+              "auto"
+            ]
+          },
+          "rate": {
+            "placeholder": "rate",
+            "default": "1"
+          }
+        },
+        "code": "(function(){var q=String(quality||'auto');var r=parseFloat(rate)||1;if(window.__ytPin){window.__ytPin.quality=q;window.__ytPin.rate=r;console.log('Pin updated',q,r);return}/* Skip frames that will never host a player, so no stray interval is left behind */if(!document.querySelector('#movie_player,#shorts-player,.html5-video-player')&&!/(^|\\.)(youtube|youtube-nocookie)\\.com$/i.test(location.hostname)){console.log('No YouTube player in this frame');return}window.__ytPin={quality:q,rate:r};function apply(){var p=document.querySelector('#movie_player,#shorts-player,.html5-video-player');if(!p)return;var v=p.querySelector('video');var want=window.__ytPin.quality;if(want&&want!=='auto'&&p.setPlaybackQualityRange)try{p.setPlaybackQualityRange(want,want)}catch(e){}if(v&&v.playbackRate!==window.__ytPin.rate)v.playbackRate=window.__ytPin.rate}/* Watch pages are an SPA: no reload between videos, so re-apply on route change and on a timer for adaptive overrides */document.addEventListener('yt-navigate-finish',function(){setTimeout(apply,500)});window.__ytPin.timer=setInterval(apply,2000);apply();console.log('Pinning',q,r,'- stop with clearInterval(window.__ytPin.timer)')})();"
+      },
+      {
+        "name": "A-B loop",
+        "searchTags": [
+          "loop",
+          "repeat",
+          "segment"
+        ],
+        "frames": {
+          "top": true,
+          "nestingLevel": -1,
+          "match": [
+            "youtube(-nocookie)?\\.com/embed"
+          ]
+        },
+        "params": {
+          "start": {
+            "placeholder": "start seconds",
+            "default": "0"
+          },
+          "end": {
+            "placeholder": "end seconds (0 = clear)",
+            "default": "0"
+          }
+        },
+        "code": "(function(){var p=document.querySelector('#movie_player,#shorts-player,.html5-video-player');var v=(p&&p.querySelector('video'))||document.querySelector('video');if(!v){console.log('No video element in this frame');return}var a=parseFloat(start)||0;var b=parseFloat(end)||0;if(window.__ytLoop){v.removeEventListener('timeupdate',window.__ytLoop);window.__ytLoop=null}if(!(b>a)){console.log('A-B loop cleared');return}window.__ytLoop=function(){if(v.currentTime>=b||v.currentTime<a)v.currentTime=a};v.addEventListener('timeupdate',window.__ytLoop);v.currentTime=a;console.log('Looping '+a+'s - '+b+'s')})();"
       }
     ]
   },
