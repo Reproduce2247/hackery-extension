@@ -6,6 +6,7 @@ import {
   setFieldValue,
 } from "../../lib/codemirror-fields.bundle.js";
 import { MessageTypes } from "../../lib/message-types.js";
+import { createNetworkArmControl } from "../../lib/network-arm-control.js";
 import { createUiMessage } from "../../lib/ui-message.js";
 import {
   createEmptyRule,
@@ -32,7 +33,7 @@ const rulesListEl = document.getElementById("rules-list");
 const rulesLogEl = document.getElementById("rules-log");
 const ruleCountEl = document.getElementById("rule-count");
 const messageEl = document.getElementById("message");
-const rulesEnabledEl = document.getElementById("rules-enabled");
+const networkArmEl = document.getElementById("network-arm");
 const ruleFormEl = document.getElementById("rule-form");
 const editorTitleEl = document.getElementById("editor-title");
 const editorPanelEl = document.getElementById("editor-panel");
@@ -801,7 +802,6 @@ async function importRulesFromFile(file) {
     rulesState = next;
     selectedRuleId = rulesState.rules[0]?.id || null;
     await persistRulesState();
-    rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
     loadRuleIntoForm(getSelectedRule());
     updateNetworkStatusDot();
@@ -918,6 +918,8 @@ function readRuleFromForm(existingRule) {
       mockStatus: Number(ruleMockStatusEl.value) || 200,
       mockStatusText: ruleMockStatusTextEl.value.trim() || "OK",
       mockBody: getFieldValue(ruleMockBodyEl),
+      cspSeed: existingRule?.modify?.cspSeed || "",
+      cspMode: existingRule?.modify?.cspMode || "",
     },
   };
 }
@@ -930,7 +932,6 @@ async function loadState() {
     );
     lastPersistedRulesSnapshot = JSON.stringify(rulesState);
   }
-  rulesEnabledEl.checked = rulesState.enabled !== false;
   renderRulesList();
 }
 
@@ -955,14 +956,18 @@ async function updateNetworkStatusDot(logEntries = null) {
     type: HT.GET_EXTENSION_SETTINGS,
   });
   const hooksEnabled =
-    settingsResponse?.ok && settingsResponse.settings?.networkHooksEnabled !== false;
+    settingsResponse?.ok &&
+    (settingsResponse.settings?.networkArm?.armed === true ||
+      settingsResponse.settings?.networkHooksEnabled === true);
 
   networkStatusDotEl.classList.remove("is-disabled", "is-matched");
 
   if (!hooksEnabled || rulesState.enabled === false) {
     networkStatusDotEl.classList.add("is-disabled");
     setNetworkStatusText(
-      "Network hooks or this rule set is disabled. Check the sidebar Network toggle and the Enabled checkbox."
+      rulesState.enabled === false
+        ? "This rule set is disabled (imported that way). Click Arm rules to re-enable it and start the session."
+        : "Network rules are not armed. Click Arm rules to start a session."
     );
     return;
   }
@@ -1111,13 +1116,19 @@ if (importRulesBtn && importRulesFileEl) {
   });
 }
 
-rulesEnabledEl.addEventListener("change", async () => {
-  hideMessage();
-  rulesState.enabled = rulesEnabledEl.checked;
-  await persistRulesState();
-  updateNetworkStatusDot();
-  showMessage(rulesState.enabled ? "Rules enabled." : "Rules disabled.");
-});
+const networkArm = networkArmEl
+  ? createNetworkArmControl(networkArmEl, {
+      // The arm control is the only global switch left in this panel, so an
+      // imported rule set that disabled itself must not silently swallow it.
+      async beforeArm() {
+        if (rulesState.enabled === false) {
+          rulesState.enabled = true;
+          await persistRulesState();
+          renderRulesList();
+        }
+      },
+    })
+  : null;
 
 ruleActionEl.addEventListener("change", updateFormVisibility);
 phaseRequestEl.addEventListener("change", updateFormVisibility);
@@ -1262,7 +1273,6 @@ browser.storage.onChanged.addListener((changes, area) => {
     }
     rulesState = normalizeNetworkRulesState(incoming);
     lastPersistedRulesSnapshot = JSON.stringify(rulesState);
-    rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
     loadRuleIntoForm(getSelectedRule());
     updateNetworkStatusDot();
@@ -1271,6 +1281,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 loadRuleTemplates();
 loadState().then(() => {
+  void networkArm?.refresh();
   loadLog();
   defaultTestUrl().then((url) => {
     if (ruleTestUrlEl && url) {

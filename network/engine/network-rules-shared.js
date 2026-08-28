@@ -93,6 +93,8 @@ export function createEmptyRule() {
       mockStatus: 200,
       mockStatusText: "OK",
       mockBody: "",
+      cspSeed: "",
+      cspMode: "",
     },
   };
 }

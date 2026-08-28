@@ -612,6 +612,10 @@
       {
         "id": "04878d72-0eac-4e2b-a997-6b95f0811a7a",
         "name": "Enable form controls",
+        "frames": {
+          "top": true,
+          "nestingLevel": -1
+        },
         "code": "(function(){var n=0;document.querySelectorAll('button,input,select,textarea,fieldset').forEach(function(el){if(el.disabled)el.disabled=false,n++;if(el.readOnly)el.readOnly=false,n++});document.querySelectorAll('[aria-disabled=\"true\"]').forEach(function(el){el.setAttribute('aria-disabled','false');n++});console.log('Enabled '+n+' controls')})();"
       },
       {
