@@ -28,6 +28,8 @@ async function main() {
     shouldRewriteCsp,
     shouldSeedOriginal,
     wildcardToDnrUrlFilter,
+    policyHasNonceOrHash,
+    policyNeedsDnrStrip,
   } = await import("../lib/csp-compose-core.js");
 
   assert.equal(networkArmTimerActive(true, 0), false);
@@ -76,6 +78,35 @@ async function main() {
   );
   assert.equal(
     shouldRewriteCsp({
+      nonceToggle: true,
+      networkArmed: false,
+      matchingCspRules: [],
+      resourceType: "xmlhttprequest",
+    }),
+    false
+  );
+  assert.equal(
+    shouldRewriteCsp({
+      nonceToggle: true,
+      networkArmed: false,
+      matchingCspRules: [],
+      resourceType: "main_frame",
+      borrowableNonce: true,
+    }),
+    false
+  );
+  assert.equal(
+    shouldRewriteCsp({
+      nonceToggle: true,
+      networkArmed: true,
+      matchingCspRules: [disableRule],
+      resourceType: "main_frame",
+      borrowableNonce: true,
+    }),
+    true
+  );
+  assert.equal(
+    shouldRewriteCsp({
       nonceToggle: false,
       networkArmed: false,
       matchingCspRules: [disableRule],
@@ -117,6 +148,23 @@ async function main() {
     modify: { cspMode: "disable" },
   };
   assert.equal(isCspTouchingRule(xhrOnly), false);
+
+  assert.equal(policyHasNonceOrHash("script-src 'self' 'nonce-abc'"), true);
+  assert.equal(policyHasNonceOrHash("script-src github.githubassets.com"), false);
+  assert.equal(
+    policyNeedsDnrStrip(
+      "default-src 'none'; script-src github.githubassets.com; style-src 'unsafe-inline'"
+    ),
+    true
+  );
+  assert.equal(
+    policyNeedsDnrStrip("script-src 'self' 'nonce-page' 'unsafe-inline'"),
+    false
+  );
+  assert.equal(
+    policyNeedsDnrStrip("script-src 'self' 'unsafe-inline'"),
+    false
+  );
 
   console.log("test-csp-compose: ok");
 }

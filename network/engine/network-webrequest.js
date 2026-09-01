@@ -9,7 +9,9 @@ import {
   applyCspTouchingRules,
   isCspHeaderName,
   isCspTouchingRule,
+  isDocumentResourceType,
   originFromUrl,
+  policyHasNonceOrHash,
   ruleDisablesCsp,
   shouldRewriteCsp,
   shouldSeedOriginal,
@@ -417,11 +419,17 @@ function composeDocumentCsp(details, matching, responseHeaders) {
   const nonceToggle = isCspNonceTab(details.tabId);
   const cspRules = matching.filter(isCspTouchingRule);
   const frameId = details.frameId ?? 0;
+  const headerPolicy = String(
+    (responseHeaders || []).find((header) => isCspHeaderName(header.name))
+      ?.value || ""
+  ).trim();
   if (
     !shouldRewriteCsp({
       nonceToggle,
       networkArmed: webRequestEnabled,
       matchingCspRules: cspRules,
+      resourceType: details.type,
+      borrowableNonce: policyHasNonceOrHash(headerPolicy),
     })
   ) {
     return { headers: responseHeaders, meta: null };
@@ -431,10 +439,6 @@ function composeDocumentCsp(details, matching, responseHeaders) {
   // A policy still on the response beats any cached read: DNR has not stripped
   // this one, and a cookie-gated app can answer the background seed fetch
   // without the policy it sends to a signed-in navigation.
-  const headerPolicy = String(
-    (responseHeaders || []).find((header) => isCspHeaderName(header.name))
-      ?.value || ""
-  ).trim();
   if (headerPolicy) {
     cacheCspPolicy(details.url, headerPolicy);
   }
@@ -705,13 +709,15 @@ function onHeadersReceived(details) {
       ?.value || ""
   );
   // Seed the cache from ordinary browsing, whether or not the toggle is on.
-  // This listener already sees every document, so the policy is free here and
-  // exactly the one the browser enforced. The alternative — a second background
-  // request per origin — doubled every navigation and still read the wrong
-  // policy on cookie-gated apps, because the seed fetch is not a navigation.
+  // Documents only: XHR/image CSP (often `default-src 'none'`) must not become
+  // the origin seed, and punching those responses merged a second policy under
+  // MV3. The alternative — a second background request per origin — doubled
+  // every navigation and still read the wrong policy on cookie-gated apps.
   // Once the tab's strip rule is installed there is nothing left to observe, so
   // the seed has to come from a load that happened before it.
-  cacheCspPolicy(details.url, sitePolicy);
+  if (isDocumentResourceType(details.type)) {
+    cacheCspPolicy(details.url, sitePolicy);
+  }
 
   const composed = composeDocumentCsp(details, matching, responseHeaders);
   responseHeaders = composed.headers;
