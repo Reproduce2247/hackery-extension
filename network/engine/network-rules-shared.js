@@ -66,7 +66,7 @@ export function createEmptyRule() {
     name: "New rule",
     enabled: true,
     priority: 100,
-    pageUrlPattern: "",
+    pageUrlPattern: "", //TODO: auto-fill with current page host and wildcards
     pageUrlPatternIsRegex: false,
     requestUrlPattern: "",
     requestUrlPatternIsRegex: false,
