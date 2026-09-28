@@ -19,6 +19,18 @@
         "code": "var glideListClassRef = globalThis.g_list ?? globalThis.gsft_main?.g_list ?? globalThis.GlideList2 ?? globalThis.gsft_main.GlideList2; if (!glideListClassRef.table) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new GlideList2(ids[0]) } glideListClassRef.setRowsPerPage(limit);"
       },
       {
+        "id": "0921319e-b480-4090-a22b-9a4093275e2e",
+        "name": "Get checked sys_ids",
+        "searchTags": [
+          "checked",
+          "sys_ids",
+          "rows",
+          "list",
+          "g_list"
+        ],
+        "code": "var context = globalThis.gsft_main ?? globalThis;\nvar glideListClassRef = context.g_list; if (!glideListClassRef) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new context.GlideList2(ids[0]) }\nvar checkedList = glideListClassRef.getChecked();\n//await navigator.clipboard.writeText(checkedList);\nconsole.log(\n    checkedList\n);"
+      },
+      {
         "id": "c8f780eb-9db7-440f-89de-3585c2d1b956",
         "name": "Clear mandatory fields",
         "searchTags": [
