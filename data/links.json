@@ -322,11 +322,34 @@
         "name": "App Log (current hour)",
         "searchTags": [
           "syslog",
+          "app log",
+          "log"
+        ],
+        "navParams": {
+          "minutes": {
+            "placeholder": "minutes ago",
+            "default": "60"
+          }
+        },
+        "open": "tab",
+        "url": "/syslog_app_scope_list.do?sysparm_query=sys_created_onBETWEENjavascript:new GlideDateTime(gs.minutesAgo({minutes}))@javascript:new GlideDateTime()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
+      },
+      {
+        "id": "22910600-154a-429a-8842-61b5583e468d",
+        "name": "System Log",
+        "searchTags": [
+          "syslog",
           "system log",
           "log"
         ],
+        "navParams": {
+          "minutes": {
+            "placeholder": "minutes ago",
+            "default": "5"
+          }
+        },
         "open": "tab",
-        "url": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
+        "url": "/syslog_list.do?sysparm_query=sys_created_onBETWEENjavascript:new GlideDateTime(gs.minutesAgo({minutes}))@javascript:new GlideDateTime()"
       },
       {
         "id": "998c8654-9d0f-491e-bd5f-91260a21164c",
