@@ -180,6 +180,26 @@
         "url": "{origin}/{table}.do?sys_id={sys_id}&JSONv2"
       },
       {
+        "id": "675ac488-014f-4347-818c-6c975d27e76d",
+        "name": "sys_audit Audit log",
+        "searchTags": [
+          "updates",
+          "log",
+          "audit"
+        ],
+        "open": "tab",
+        "match": "^https?://[^/]+/(?:now/nav/ui/classic/params/target/)?[^/?]+(?<!_list)\\.do(?:\\?sys_id=|%3Fsys_id%3D)[0-9a-f]{32}",
+        "navParams": {
+          "table": {
+            "fromUrl": "(?:now/nav/ui/classic/params/target/)?([^/?]+)\\.do(?:\\?sys_id=|%3Fsys_id%3D)[0-9a-f]{32}"
+          },
+          "sys_id": {
+            "fromUrl": "(?:sys_id(?:%3D|=))([0-9a-f]{32})"
+          }
+        },
+        "url": "{origin}/sys_audit.do?document_id={sys_id}^tablename={table}"
+      },
+      {
         "id": "1967b05a-d6be-40f9-a9a7-27d8a1005cbd",
         "name": "SN Upload XML",
         "searchTags": [
@@ -194,7 +214,7 @@
         "name": "Cancel transactions",
         "searchTags": [
           "cancel",
-          "txn"
+          "slow"
         ],
         "open": "tab",
         "url": "/cancel_my_transaction.do"
@@ -333,6 +353,19 @@
         },
         "open": "tab",
         "url": "/syslog_app_scope_list.do?sysparm_query=sys_created_onBETWEENjavascript:new GlideDateTime(gs.minutesAgo({minutes}))@javascript:new GlideDateTime()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
+      },
+      {
+        "id": "484a7ecb-adf4-409f-8cc5-a8698ef67a11",
+        "name": "Upgrade History",
+        "searchTags": [
+          "upgrade",
+          "history",
+          "pull",
+          "log",
+          "source control"
+        ],
+        "open": "tab",
+        "url": "/sys_upgrade_history_list.do?sysparm_query=ORDERBYDESCupgrade_finished"
       },
       {
         "id": "22910600-154a-429a-8842-61b5583e468d",
