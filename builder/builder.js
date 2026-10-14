@@ -56,7 +56,7 @@ function currentScriptletParamNames() {
   if (fields.parameter?.name) {
     return [fields.parameter.name];
   }
-  const bag = fields.parameters || fields.params;
+  const bag = fields.parameters || fields.scriptParams;
   return bag ? Object.keys(bag) : [];
 }
 

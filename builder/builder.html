@@ -172,8 +172,16 @@
             <div id="single-parameter-fields" class="parameter-panel is-hidden">
               <div class="builder-row">
                 <input data-field="param-name" type="text" placeholder="name" />
+                <select data-field="param-type" aria-label="Type">
+                  <option value="string">string</option>
+                  <option value="boolean">boolean</option>
+                </select>
                 <input data-field="param-placeholder" type="text" placeholder="placeholder" />
                 <input data-field="param-default" type="text" placeholder="default" />
+                <label class="inline-check param-default-bool is-hidden">
+                  <input data-field="param-default-bool" type="checkbox" />
+                  Default on
+                </label>
               </div>
               <div class="builder-row">
                 <label class="inline-check">

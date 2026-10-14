@@ -8,7 +8,9 @@ async function main() {
     normalizeLeafNode,
     resolveExclude,
     resolveMatch,
+    resolveParamValues,
     resolveRunAt,
+    seedNavParamValues,
   } = await import("../lib/link-model.js");
   const { walkCatalogNodes } = await import("../lib/catalog-walk.js");
 
@@ -66,7 +68,7 @@ async function main() {
   const rewritten = normalizeLeafNode({
     name: "Rewrite",
     code: "void {limit}; void $limit; void arguments;",
-    params: { limit: {} },
+    scriptParams: { limit: {} },
   });
   assert.equal(rewritten.code.includes("{limit}"), false);
   assert.match(rewritten.code, /void arguments;/);
@@ -109,6 +111,88 @@ async function main() {
   assert.equal(traced.url, "https://ex.test/42");
   assert.equal(traced.sources.id, "fromUrl");
   assert.equal(traced.values.id, "42");
+
+  const boolScript = normalizeLeafNode({
+    name: "Bool",
+    code: "void verbose;",
+    scriptParams: {
+      verbose: { type: "boolean", default: false },
+      limit: { type: "string", default: "1" },
+    },
+  });
+  assert.equal(boolScript.scriptParams.verbose.type, "boolean");
+  assert.equal(boolScript.scriptParams.verbose.default, false);
+  assert.equal(boolScript.scriptParams.limit.type, undefined);
+  assert.deepEqual(
+    resolveParamValues(
+      [
+        { name: "verbose", type: "boolean", default: false },
+        { name: "limit", type: "string", default: "1" },
+      ],
+      { verbose: "false", limit: "" }
+    ),
+    { verbose: false, limit: "1" }
+  );
+  assert.throws(() =>
+    normalizeLeafNode({
+      name: "Bad",
+      code: "1",
+      scriptParams: { flag: { type: "number" } },
+    })
+  );
+
+  const boolNav = normalizeLeafNode({
+    name: "Nav",
+    url: "https://ex.test/?on={flag}",
+    open: "tab",
+    navParams: {
+      flag: {
+        type: "boolean",
+        default: true,
+        fromUrl: "on=(\\w+)",
+        choices: ["true", "false"],
+      },
+    },
+  });
+  assert.deepEqual(boolNav.navParams.flag, { type: "boolean", default: "true" });
+  assert.deepEqual(
+    seedNavParamValues([{ name: "flag", type: "boolean", default: "false" }], {}),
+    {}
+  );
+  assert.deepEqual(
+    seedNavParamValues(
+      [{ name: "flag", type: "boolean", default: "true" }],
+      { flag: "false" }
+    ),
+    { flag: "false" }
+  );
+
+  const boolTrace = await resolveDerivedUrlTraced(
+    {
+      url: "https://ex.test/?on={flag}",
+      navParams: {
+        flag: { type: "boolean", default: "false", fromUrl: "on=(\\w+)" },
+      },
+    },
+    "https://page.test/?on=yes",
+    { flag: "false" }
+  );
+  assert.equal(boolTrace.values.flag, "false");
+  assert.equal(boolTrace.sources.flag, "manual");
+  assert.equal(boolTrace.url, "https://ex.test/?on=false");
+
+  const boolDefault = await resolveDerivedUrlTraced(
+    {
+      url: "https://ex.test/?on={flag}",
+      navParams: {
+        flag: { type: "boolean", default: "false", fromUrl: "on=(\\w+)" },
+      },
+    },
+    "https://page.test/?on=yes",
+    {}
+  );
+  assert.equal(boolDefault.values.flag, "false");
+  assert.equal(boolDefault.sources.flag, "default");
 
   const { appendActivityLogQueue } = await import("../lib/link-activity-log.js");
   const queued = appendActivityLogQueue([{ n: 1 }], { n: 2 }, { maxEntries: 2 });

@@ -55,6 +55,18 @@ body {
   font-style: italic;
 }
 
+.field:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.field input[type="checkbox"] {
+  width: auto;
+  margin: 2px 0 0;
+  padding: 0;
+}
+
 .field input {
   padding: 7px 9px;
   border: 1px solid var(--border);

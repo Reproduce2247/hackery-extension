@@ -49,7 +49,7 @@ Right-click a catalog row → **Inspect** for matching tabs, frames, cached orig
 
 Reload the extension in `about:debugging` after editing `data/links.json`.
 
-**Schema v3 note:** updating to the `params` / `navParams` split clears saved parameter values and on-load preferences once. Re-enable on-load checkboxes and re-enter saved values after reload.
+**Schema v3 note:** script bindings are `scriptParams`. A leaf `params` key is not read.
 
 ## Recommended complementary tools
 
@@ -165,13 +165,13 @@ Right-click a catalog row → **Inspect** (popover + page console). Activations 
 {
   "name": "Set list item limit",
   "code": "list.setPageSize(limit);",
-  "params": {
+  "scriptParams": {
     "limit": { "placeholder": "limit", "default": "100" }
   }
 }
 ```
 
-Script `params` are **lexical bindings** — use bare names in `code` (`limit`), not `{limit}` or `$limit`.
+Script `scriptParams` are **lexical bindings** — use bare names in `code` (`limit`), not `{limit}` or `$limit`. Omit `type` for a string. `"type": "boolean"` binds a real boolean.
 
 Optional `frames` selects which documents the script runs in (see below).
 
@@ -194,9 +194,12 @@ Derived URL with `navParams` + template:
   "navParams": {
     "id": {
       "fromUrl": "/items/([^/?#]+)"
+    },
+    "showAll": {
+      "type": "boolean",
     }
   },
-  "url": "{origin}/items/{encode:id}"
+  "url": "{origin}/items/{encode:id}?show_all={showAll}"
 }
 ```
 
@@ -213,15 +216,16 @@ Required on URL actions. On scriptlets only when returning a URL (`code` + `open
 | `background` | New background tab |
 | `download` | `browser.downloads.download` |
 
-### `params` (scripts) vs `navParams` (URLs)
+### `scriptParams` (scripts) vs `navParams` (URLs)
 
-Mutual exclusion: `params` on `code` actions, `navParams` on `url` actions. Do not declare both on one leaf.
+Mutual exclusion: `scriptParams` on `code` actions, `navParams` on `url` actions. Do not declare both on one leaf.
 
-**`params`** — script bindings only (bare names in `code`):
+**`scriptParams`** — script bindings only (bare names in `code`):
 
 ```json
-"params": {
-  "limit": { "default": "100", "placeholder": "limit", "choices": ["50", "100"] }
+"scriptParams": {
+  "limit": { "default": "100", "placeholder": "limit", "choices": ["50", "100"] },
+  "verbose": { "type": "boolean", "default": false }
 }
 ```
 
@@ -240,16 +244,19 @@ Mutual exclusion: `params` on `code` actions, `navParams` on `url` actions. Do n
   }
 }
 ```
-
-| `navParams` key | Role |
+ `navParams`
+| key | Role |
 |---|---|
 | `fromUrl` | Regex on tab URL (capture group 1); xor `fromSelector` |
 | `fromSelector` | CSS selector on tab DOM |
-| `placeholder` | Show popup input (including `""`); never a value |
-| `default` | After derivation if still empty |
+|---| **Below this line also applies to scriptParams** |
+| `type` | `boolean` → checkbox, URL strings `"true"` / `"false"`. Omit for string. No derivation |
+| `placeholder` | Show popup input (including `""`); never a value. Boolean checkbox label |
+| `default` | After derivation if still empty. Boolean: `"true"` or `"false"` |
 | `optional` | Allow empty; else missing required → no-op |
+| `type` | Type of input to display; supports "string" and "boolean", may add others later. Everything is coerced to a string for navParams. |
 
-Resolve order: non-empty manual → derive → `default`. Blank input = no manual value.
+Resolve order: non-empty manual → derive → `default`. Blank input = no manual value. A boolean is always the string `"true"` or `"false"` and does not fall through to derivation.
 
 Saved values live under `linkParamValues`. See `CONTEXT.md` and [ADR 0001](docs/adr/0001-params-vs-navparams.md).
 

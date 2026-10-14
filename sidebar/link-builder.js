@@ -76,8 +76,8 @@ const CODE_PLACEHOLDERS = {
 };
 
 function paramsFromFormFields(parameterFields) {
-  if (parameterFields.params) {
-    return parameterFields.params;
+  if (parameterFields.scriptParams) {
+    return parameterFields.scriptParams;
   }
   return undefined;
 }
@@ -179,7 +179,7 @@ export function buildLinkNodeFromForm(form) {
 
   if (type === "scriptlet" || type === "scriptlet-url") {
     if (params) {
-      draft.params = params;
+      draft.scriptParams = params;
     }
     const code = normalizeScriptInput(form.code);
     if (!code) {

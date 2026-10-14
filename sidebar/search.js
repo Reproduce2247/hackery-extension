@@ -1,6 +1,10 @@
 /**
  * Explicit sidebar search (/ or Ctrl+K). Scoring from lib/link-search.js.
  * No type-anywhere capture — omnibox is the page-focused launcher.
+ *
+ * Firefox sidebar hosts differ on which activation signal they expose.
+ * Listen for the sidebar event plus normal document/window activation, and
+ * focus once on load for hosts that expose none of them.
  */
 import {
   normalizeSearchQuery,
@@ -110,10 +114,34 @@ export function createSearchController({
     if (!searchInputEl) {
       return;
     }
-    searchInputEl.focus();
+    const alreadyFocused = document.activeElement === searchInputEl;
+    searchInputEl.focus({ preventScroll: true });
+    if (alreadyFocused) {
+      return;
+    }
     const length = searchInputEl.value.length;
     searchInputEl.setSelectionRange(length, length);
   }
+
+  /**
+   * Defer until Firefox finishes moving focus from the toolbar/sidebar host.
+   * Calling focus synchronously can be overwritten by that chrome-level step.
+   */
+  function focusAfterSidebarActivation() {
+    window.requestAnimationFrame(() => focusSearchInput());
+  }
+
+  // `SidebarFocused` is host-specific. `focus`, `pageshow`, and
+  // `visibilitychange` cover reopened or newly loaded extension panels.
+  window.addEventListener("SidebarFocused", focusAfterSidebarActivation);
+  document.addEventListener("SidebarFocused", focusAfterSidebarActivation);
+  window.addEventListener("focus", focusAfterSidebarActivation);
+  window.addEventListener("pageshow", focusAfterSidebarActivation);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      focusAfterSidebarActivation();
+    }
+  });
 
   async function applySearchQueryChange() {
     await maybeSwitchSectionForExactMatch();
@@ -132,6 +160,8 @@ export function createSearchController({
     if (!searchInputEl) {
       return;
     }
+
+    focusAfterSidebarActivation();
 
     searchInputEl.addEventListener("input", async () => {
       searchQuery = searchInputEl.value;

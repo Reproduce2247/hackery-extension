@@ -10,6 +10,7 @@ import {
 } from "../lib/link-behaviors.js";
 import {
   getEditableValueDefs,
+  isCheckedParamValue,
   linkAppliesToUrl,
   linkStorageKey,
   nodeHasOnLoad,
@@ -108,6 +109,7 @@ export function closeOpenCombobox() {
     return;
   }
   openCombobox.list.hidden = true;
+  openCombobox.list.remove();
   if (openCombobox.onScroll) {
     window.removeEventListener("scroll", openCombobox.onScroll, true);
   }
@@ -115,7 +117,11 @@ export function closeOpenCombobox() {
 }
 
 export function handleDocumentClickForCombobox(event) {
-  if (openCombobox && !openCombobox.root.contains(event.target)) {
+  if (
+    openCombobox &&
+    !openCombobox.root.contains(event.target) &&
+    !openCombobox.list.contains(event.target)
+  ) {
     closeOpenCombobox();
   }
   if (openContextMenu && !openContextMenu.contains(event.target)) {
@@ -258,8 +264,10 @@ function buildInspectBody(snapshot) {
     if (params.length) {
       appendInspectRow(
         grid,
-        "params",
-        params.map(([name, value]) => `${name}=${value || "(empty)"}`)
+        "scriptParams",
+        params.map(([name, value]) =>
+          `${name}=${value === "" || value == null ? "(empty)" : value}`
+        )
       );
     }
   }
@@ -420,6 +428,43 @@ function displayLabel(node) {
   return node.name;
 }
 
+/**
+ * Checkbox for `type: "boolean"`. The saved value is the string `"true"` or
+ * `"false"`; script resolution turns that into a real boolean later.
+ * @param {object} def parameter def
+ * @param {Record<string, string>} savedValues stored values for this leaf
+ * @param {string} linkKey storage key passed to `saveParamValue`
+ * @param {Function} onEnter activate this row
+ * @returns {HTMLLabelElement}
+ */
+function createBooleanInput(def, savedValues, linkKey, onEnter) {
+  const label = document.createElement("label");
+  label.className = "param-boolean";
+
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.dataset.param = def.name;
+  const saved = savedValues[def.name];
+  input.checked = isCheckedParamValue(saved !== undefined ? saved : def.default);
+  input.title = def.label;
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onEnter();
+    }
+  });
+  input.addEventListener("change", async () => {
+    await saveParamValue(linkKey, def.name, input.checked ? "true" : "false");
+  });
+
+  const text = document.createElement("span");
+  text.textContent = def.placeholder || def.label || def.name;
+  label.append(input, text);
+  return label;
+}
+
 function bindParamInput(input, def, linkKey, onEnter) {
   input.classList.add("param-input");
   input.dataset.param = def.name;
@@ -449,6 +494,15 @@ function positionComboboxList(root, list) {
   list.style.right = "auto";
 }
 
+/**
+ * Text input plus a choice menu. The menu is moved to `document.body` while
+ * open so the link-row grid does not clip every option after the first.
+ * @param {object} def parameter def, including `choices`
+ * @param {Record<string, string>} savedValues stored values for this leaf
+ * @param {string} linkKey storage key passed to `saveParamValue`
+ * @param {Function} onEnter activate this row
+ * @returns {HTMLDivElement}
+ */
 function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
   const root = document.createElement("div");
   root.className = "param-combobox";
@@ -467,6 +521,7 @@ function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
   toggle.type = "button";
   toggle.className = "param-combobox-toggle";
   toggle.setAttribute("aria-label", `Choose ${def.label}`);
+  toggle.title = `Choose ${def.label}`;
   toggle.textContent = "▾";
 
   const list = document.createElement("ul");
@@ -474,29 +529,37 @@ function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
   list.hidden = true;
   list.setAttribute("role", "listbox");
 
-  function renderList() {
-    const query = input.value.trim().toLowerCase();
+  /**
+   * Fill the menu. A filled value is not a filter until the user types:
+   * filtering on open left only the current choice selectable.
+   * @param {boolean} filter true while the user is editing the text
+   */
+  function renderList(filter) {
+    const query = filter ? input.value.trim().toLowerCase() : "";
     list.replaceChildren();
-    const matches = def.choices.filter(
-      (choice) => !query || choice.toLowerCase().includes(query)
-    );
+    const matches = def.choices.filter((choice) => {
+      const text = String(choice).toLowerCase();
+      return !query || text.includes(query);
+    });
     if (matches.length === 0) {
-      list.hidden = true;
       if (openCombobox?.root === root) {
-        openCombobox = null;
+        closeOpenCombobox();
+      } else {
+        list.hidden = true;
       }
       return;
     }
 
     for (const choice of matches) {
+      const label = String(choice);
       const item = document.createElement("li");
       item.className = "param-combobox-option";
-      item.textContent = choice;
+      item.textContent = label;
       item.setAttribute("role", "option");
       item.addEventListener("mousedown", (event) => event.preventDefault());
       item.addEventListener("click", (event) => {
         event.stopPropagation();
-        input.value = choice;
+        input.value = label;
         closeOpenCombobox();
         input.dispatchEvent(new Event("change", { bubbles: true }));
         input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -505,12 +568,18 @@ function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
     }
   }
 
-  function openList() {
-    renderList();
+  /**
+   * @param {{ filter?: boolean }} [options] filter the menu by the current text
+   */
+  function openList({ filter = false } = {}) {
+    renderList(filter);
     if (list.children.length === 0) {
       return;
     }
     closeOpenCombobox();
+    // Link rows are grid items, so overflow:visible clips. A menu left in
+    // the row only keeps the first option inside the row's hit target.
+    document.body.appendChild(list);
     positionComboboxList(root, list);
     list.hidden = false;
     const onScroll = () => closeOpenCombobox();
@@ -518,6 +587,10 @@ function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
     openCombobox = { root, list, onScroll };
   }
 
+  toggle.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
   toggle.addEventListener("click", (event) => {
     event.stopPropagation();
     if (list.hidden) {
@@ -528,20 +601,26 @@ function createChoiceCombobox(def, savedValues, linkKey, onEnter) {
     }
   });
 
-  input.addEventListener("focus", openList);
-  input.addEventListener("input", () => {
+  input.addEventListener("focus", () => openList());
+  input.addEventListener("input", (event) => {
+    if (!event.isTrusted) {
+      return;
+    }
     if (!list.hidden || document.activeElement === input) {
-      openList();
+      openList({ filter: true });
     }
   });
   input.addEventListener("blur", () => {
-    window.setTimeout(closeOpenCombobox, 120);
+    window.setTimeout(() => {
+      if (openCombobox?.root === root) {
+        closeOpenCombobox();
+      }
+    }, 120);
   });
 
   field.appendChild(input);
   field.appendChild(toggle);
   root.appendChild(field);
-  root.appendChild(list);
   return root;
 }
 
@@ -554,6 +633,10 @@ function createParamInputs(parameterDefs, savedValues, linkKey, onEnter) {
   wrap.className = "param-inputs";
 
   for (const def of parameterDefs) {
+    if (def.type === "boolean") {
+      wrap.appendChild(createBooleanInput(def, savedValues, linkKey, onEnter));
+      continue;
+    }
     if (def.choices?.length) {
       wrap.appendChild(createChoiceCombobox(def, savedValues, linkKey, onEnter));
       continue;

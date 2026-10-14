@@ -10,7 +10,7 @@
           "rows",
           "list"
         ],
-        "params": {
+        "scriptParams": {
           "limit": {
             "placeholder": "limit",
             "default": "100"
@@ -160,6 +160,43 @@
         "url": "{origin}/{table}.do?sys_id={sys_id}&XML"
       },
       {
+        "id": "e93f297a-99a3-430b-9522-33c302763102",
+        "name": "Download from list vieew",
+        "searchTags": [
+          "download",
+          "list",
+          "export",
+          "csv"
+        ],
+        "open": "background",
+        "match": "^https?://[^/]+/(?:now/nav/ui/classic/params/target/)?[^/?]+_list\\.do",
+        "tooltip": "JSON doesn't work yet, XML opens the XML view instead of downloading. Maybe this should be a navigation script instead.",
+        "navParams": {
+          "tableList": {
+            "fromUrl": "/([^/?]+_list)\\.do"
+          },
+          "query": {
+            "fromUrl": "sysparm_query(?:%3D|=)(.*?)(?:&|%26|$)",
+            "optional": true
+          },
+          "format": {
+            "placeholder": "format",
+            "choices": [
+              "XML",
+              "JSON",
+              "CSV"
+            ],
+            "default": "CSV"
+          },
+          "referenceAsDisplay": {
+            "placeholder": "Export display values (vs sys_id)",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "url": "{origin}/{tableList}.do?{format}&sysparm_query={query}&sysparm_default_export_fields=all&sysparm_display_value={referenceAsDisplay}"
+      },
+      {
         "id": "67564988-014f-4187-818c-6c975d27e76d",
         "name": "Show JSON",
         "searchTags": [
@@ -255,7 +292,7 @@
           "cross-instance"
         ],
         "open": "tab",
-        "params": {
+        "scriptParams": {
           "env": {
             "placeholder": "subdomain or host (e.g. mydev)"
           }
@@ -495,7 +532,7 @@
           "top": true,
           "nestingLevel": 1
         },
-        "params": {
+        "scriptParams": {
           "depth": {
             "placeholder": "depth",
             "default": "3"
@@ -599,7 +636,7 @@
       {
         "id": "51b634fe-b6e9-4c6a-b118-e0636765486c",
         "name": "Intercept events",
-        "params": {
+        "scriptParams": {
           "type": {
             "placeholder": "type",
             "default": "click",
@@ -727,7 +764,7 @@
       {
         "id": "23cc3862-049a-4c22-af56-ff3cc76251ca",
         "name": "Throttle auto-refresh",
-        "params": {
+        "scriptParams": {
           "seconds": {
             "placeholder": "seconds",
             "default": "60"
@@ -747,7 +784,7 @@
       {
         "id": "4ef4ac09-0507-4826-9084-0f3a6a93e28a",
         "name": "Trace button click",
-        "params": {
+        "scriptParams": {
           "selector": {
             "placeholder": "selector (blank = pick)",
             "default": "",
@@ -759,7 +796,7 @@
       {
         "id": "1f937c74-6234-430c-bb94-18da4559b411",
         "name": "Watch performance",
-        "params": {
+        "scriptParams": {
           "interval": {
             "placeholder": "ms",
             "default": "5000"
@@ -781,7 +818,7 @@
           "fixed",
           "z-index"
         ],
-        "params": {
+        "scriptParams": {
           "minZ": {
             "placeholder": "min z-index",
             "default": "1000"
@@ -859,7 +896,7 @@
             "youtube(-nocookie)?\\.com/embed"
           ]
         },
-        "params": {
+        "scriptParams": {
           "mode": {
             "placeholder": "mode",
             "default": "audio",
@@ -885,7 +922,7 @@
             "youtube(-nocookie)?\\.com/embed"
           ]
         },
-        "params": {
+        "scriptParams": {
           "rate": {
             "placeholder": "rate",
             "default": "2",
@@ -933,7 +970,7 @@
             "youtube(-nocookie)?\\.com/embed"
           ]
         },
-        "params": {
+        "scriptParams": {
           "quality": {
             "placeholder": "quality",
             "default": "hd1080",
@@ -970,7 +1007,7 @@
             "youtube(-nocookie)?\\.com/embed"
           ]
         },
-        "params": {
+        "scriptParams": {
           "start": {
             "placeholder": "start seconds",
             "default": "0"

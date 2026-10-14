@@ -3,6 +3,7 @@ import { createCopyLink } from "./copy-link.js";
 import { createSearchController } from "./search.js";
 import {
   handleDocumentClickForCombobox,
+  closeOpenCombobox,
   closeOpenContextMenu,
   createLinkUi,
   loadInjectOnLoad,
@@ -402,6 +403,7 @@ async function renderAll({ reloadCatalog = true } = {}) {
       await reloadLinkSections();
     }
     shortcutSlots = await loadShortcutSlots();
+    closeOpenCombobox();
     linksEl.replaceChildren();
     const savedParamValues = await loadParamValues();
     const injectOnLoad = await loadInjectOnLoad();

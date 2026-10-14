@@ -142,11 +142,11 @@ Popup badges: **Run**, **Open**, **Web** (absolute `url`), **Derive** (`navParam
 |---|---|
 | `id` | Stable leaf identity (UUID). New leaves get one at create/import via `ensureLinkId`. Order/shortcuts prefer `id`; leaves without one use a section/folder/`name` path key. Folders have no ids. |
 | `name` | Display label (also used in path/order fallbacks when `id` is absent) |
-| `code` | Script body; `params` keys are lexical bindings at runtime |
+| `code` | Script body; `scriptParams` keys are lexical bindings at runtime |
 | `url` | Relative path, absolute URL, or template |
 | `open` | How to open a resolved URL (see below) |
 | `tooltip` | Optional hover text on the link label in the sidebar |
-| `params` | Script/function bindings only (see below) |
+| `scriptParams` | Script/function bindings only (see below) |
 | `navParams` | URL/URI substitution values only (see below) |
 | `match` | Host/URL regex; `null` = active tab |
 | `exclude` | Host/URL regex; matching URLs never apply |
@@ -202,39 +202,44 @@ Required on URL actions. On scriptlets, only when the script returns a URL (`cod
 | `background` | Open in a new background tab |
 | `download` | Trigger `browser.downloads.download` |
 
-### params vs navParams
+### scriptParams vs navParams
 
 Mutual exclusion by behavior (see [ADR 0001](docs/adr/0001-params-vs-navparams.md)):
 
-| | `params` | `navParams` |
+| | `scriptParams` | `navParams` |
 |---|---|---|
 | **Owns** | Script/function bindings | URL `{name}` / `{encode:name}` substitution |
 | **Used on** | `code` actions (`run`, `open-from-script`) | `url` actions (`open-url`) |
 | **Runtime** | `new Function(...names, code)(...values)` | Applied to `url` template after resolve |
 
-A leaf should not declare both. URL actions use `navParams`; script actions use `params`.
+A leaf should not declare both. URL actions use `navParams`; script actions use `scriptParams`. The old `params` key is not read.
 
-#### `params` fields
+#### `scriptParams` fields
 
 ```json
-"params": {
+"scriptParams": {
   "limit": {
     "placeholder": "limit",
     "default": "100",
     "optional": false,
     "choices": ["50", "100", "200"]
+  },
+  "verbose": {
+    "type": "boolean",
+    "default": false
   }
 }
 ```
 
 | Key | Purpose |
 |---|---|
-| `placeholder` | Popup input hint (also implies the input is shown) |
-| `default` | Used when the input is blank |
-| `optional` | Allow running with an empty value |
-| `choices` | Optional combobox suggestions |
+| `type` | `boolean` renders a checkbox and binds a real boolean. Omit for a string (same as `"string"`) |
+| `placeholder` | Popup input hint (also implies the input is shown). On a boolean, the checkbox label |
+| `default` | Used when the input is blank. For `type: "boolean"`, `true` or `false` |
+| `optional` | Allow running with an empty string. Ignored for booleans, which always have a value |
+| `choices` | Optional combobox suggestions. Ignored when `type` is `boolean` |
 
-Script code uses bare names (`limit`), not `{limit}` or `$limit`.
+Script code uses bare names (`limit`), not `{limit}` or `$limit`. A boolean binding is `true` or `false`, not the strings `"true"` / `"false"`.
 
 #### `navParams` fields
 
@@ -259,18 +264,19 @@ Script code uses bare names (`limit`), not `{limit}` or `$limit`.
 | `fromSelector` | CSS selector on the tab DOM (mutually exclusive with `fromUrl`) |
 | `stringSource` | With `fromSelector`: `textContent` (default), `innerHTML`, `id`, or `attribute` |
 | `attribute` | Required when `stringSource` is `attribute` |
-| `placeholder` | **UI opt-in:** presence (including `""`) shows a popup input; never used as a value |
-| `default` | Used after derivation if still empty |
-| `optional` | Allow navigating with an empty value; otherwise missing required → no-op |
-| `choices` / `label` | Same semantics as `params` when an input is shown |
+| `type` | `boolean` renders a checkbox and substitutes the strings `"true"` / `"false"`. Omit for a string. Derivation is ignored |
+| `placeholder` | **UI opt-in:** presence (including `""`) shows a popup input; never used as a value. On a boolean, the checkbox label. A boolean shows a checkbox even without `placeholder` |
+| `default` | Used after derivation if still empty. For `type: "boolean"`, `"true"` or `"false"` (a boolean `true`/`false` is coerced) |
+| `optional` | Allow navigating with an empty value; otherwise missing required → no-op. Ignored for booleans |
+| `choices` / `label` | Same semantics as `scriptParams` when an input is shown. Ignored when `type` is `boolean` |
 
-**Resolve order** per key: non-empty manual input → `fromUrl` / `fromSelector` → `default`. Blank input means “no manual value” (fall through). At most one derivation source per key.
+**Resolve order** per string key: non-empty manual input → `fromUrl` / `fromSelector` → `default`. Blank input means “no manual value” (fall through). At most one derivation source per key. A boolean is always `"true"` or `"false"`: an explicit checkbox value, otherwise `default`, otherwise `"false"`. That string is set before derivation, so unchecking the box does not fall through to `fromUrl`.
 
 URL templates also support `{origin}` (target tab origin), independent of `navParams`.
 
 ### Schema
 
-Current catalog shape is schema **v3** (`code` / `url` / `open` / `match` / `params` / `navParams` / optional `sandbox`). Overlay is a single `linksJsonOverlay` get — no on-read migrations, id backfill, or `customScripts` / `Custom` section remaps. Import requires this shape; pre-v3 stored data and imports are unsupported.
+Current catalog shape is schema **v3** (`code` / `url` / `open` / `match` / `scriptParams` / `navParams` / optional `sandbox`). Overlay is a single `linksJsonOverlay` get — no on-read migrations, id backfill, or `customScripts` / `Custom` section remaps. Import requires this shape; pre-v3 stored data and imports are unsupported. A leaf `params` key is not read; script bindings live on `scriptParams`.
 
 ### Sandbox (`sandbox` on `code` actions)
 
@@ -454,7 +460,7 @@ If a **scriptlet running in the page** later needs to write the clipboard (e.g. 
 
 ### Bookmark sync contract (future)
 
-Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navParams`, `frames`. Scriptlet bookmarklets should use the same binding model as the extension, not string substitution into `code`.
+Canonical export/import fields: `code`, `url`, `open`, `match`, `scriptParams`, `navParams`, `frames`. Scriptlet bookmarklets should use the same binding model as the extension, not string substitution into `code`.
 
 ### Network rules (`network/`)
 

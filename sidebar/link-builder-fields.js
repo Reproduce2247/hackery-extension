@@ -1,4 +1,5 @@
 import { attachCodeMirror, getFieldValue, setFieldValue } from "../lib/codemirror-fields.bundle.js";
+import { isCheckedParamValue } from "../lib/link-model.js";
 
 export function setFieldVisible(el, visible) {
   if (!el) {
@@ -26,21 +27,40 @@ function parseChoices(raw) {
   return choices.length ? choices : undefined;
 }
 
-function readSingleParameter(container) {
-  const name = container.querySelector('[data-field="param-name"]')?.value.trim();
-  if (!name) {
-    return undefined;
-  }
-  const parameter = { name };
-  const placeholder = container.querySelector('[data-field="param-placeholder"]')?.value.trim();
-  const defaultValue = container.querySelector('[data-field="param-default"]')?.value.trim();
-  const optional = container.querySelector('[data-field="param-optional"]')?.checked;
-  const choices = parseChoices(
-    container.querySelector('[data-field="param-choices"]')?.value
+/**
+ * Show string-only controls, or the checkbox default, for one script param editor.
+ * @param {ParentNode} container row or single-parameter panel
+ */
+function updateScriptParamVisibility(container) {
+  const isBoolean = container.querySelector('[data-field="param-type"]')?.value === "boolean";
+  setFieldVisible(container.querySelector('[data-field="param-default"]'), !isBoolean);
+  setFieldVisible(
+    container.querySelector('[data-field="param-default-bool"]')?.closest(".param-default-bool"),
+    isBoolean
   );
+  setFieldVisible(container.querySelector('[data-field="param-choices"]'), !isBoolean);
+  setFieldVisible(
+    container.querySelector('[data-field="param-optional"]')?.closest(".inline-check"),
+    !isBoolean
+  );
+}
+
+function readScriptParamFields(container) {
+  const parameter = {};
+  const placeholder = container.querySelector('[data-field="param-placeholder"]')?.value.trim();
   if (placeholder) {
     parameter.placeholder = placeholder;
   }
+  if (container.querySelector('[data-field="param-type"]')?.value === "boolean") {
+    parameter.type = "boolean";
+    parameter.default = Boolean(
+      container.querySelector('[data-field="param-default-bool"]')?.checked
+    );
+    return parameter;
+  }
+  const defaultValue = container.querySelector('[data-field="param-default"]')?.value.trim();
+  const optional = container.querySelector('[data-field="param-optional"]')?.checked;
+  const choices = parseChoices(container.querySelector('[data-field="param-choices"]')?.value);
   if (defaultValue) {
     parameter.default = defaultValue;
   }
@@ -53,6 +73,14 @@ function readSingleParameter(container) {
   return parameter;
 }
 
+function readSingleParameter(container) {
+  const name = container.querySelector('[data-field="param-name"]')?.value.trim();
+  if (!name) {
+    return undefined;
+  }
+  return { name, ...readScriptParamFields(container) };
+}
+
 function readMultipleParameters(listEl) {
   const parameters = {};
   for (const row of listEl.querySelectorAll(".parameter-row")) {
@@ -60,24 +88,7 @@ function readMultipleParameters(listEl) {
     if (!name) {
       continue;
     }
-    const config = {};
-    const placeholder = row.querySelector('[data-field="param-placeholder"]')?.value.trim();
-    const defaultValue = row.querySelector('[data-field="param-default"]')?.value.trim();
-    const optional = row.querySelector('[data-field="param-optional"]')?.checked;
-    const choices = parseChoices(row.querySelector('[data-field="param-choices"]')?.value);
-    if (placeholder) {
-      config.placeholder = placeholder;
-    }
-    if (defaultValue) {
-      config.default = defaultValue;
-    }
-    if (optional) {
-      config.optional = true;
-    }
-    if (choices) {
-      config.choices = choices;
-    }
-    parameters[name] = config;
+    parameters[name] = readScriptParamFields(row);
   }
   return Object.keys(parameters).length ? parameters : undefined;
 }
@@ -113,6 +124,19 @@ function readNavParamsList(listEl) {
       }
     }
 
+    if (row.querySelector('[data-field="nav-type"]')?.value === "boolean") {
+      const boolSpec = { type: "boolean" };
+      const placeholder = row.querySelector('[data-field="nav-placeholder"]')?.value ?? "";
+      if (placeholder !== "") {
+        boolSpec.placeholder = placeholder;
+      }
+      boolSpec.default = row.querySelector('[data-field="nav-default-bool"]')?.checked
+        ? "true"
+        : "false";
+      navParams[paramName] = boolSpec;
+      continue;
+    }
+
     const showInput = row.querySelector('[data-field="nav-show-input"]')?.checked;
     if (showInput) {
       spec.placeholder =
@@ -125,8 +149,19 @@ function readNavParamsList(listEl) {
     if (row.querySelector('[data-field="nav-optional"]')?.checked) {
       spec.optional = true;
     }
+    const choices = parseChoices(row.querySelector('[data-field="nav-choices"]')?.value);
+    if (choices) {
+      spec.choices = choices;
+    }
 
-    if (!spec.fromUrl && !spec.fromSelector && !showInput && !spec.default && !spec.optional) {
+    if (
+      !spec.fromUrl &&
+      !spec.fromSelector &&
+      !showInput &&
+      !spec.default &&
+      !spec.optional &&
+      !spec.choices
+    ) {
       continue;
     }
     navParams[paramName] = spec;
@@ -134,11 +169,16 @@ function readNavParamsList(listEl) {
   return Object.keys(navParams).length ? navParams : undefined;
 }
 
-function fillSingleParameter(container, parameter = {}) {
-  container.querySelector('[data-field="param-name"]').value = parameter.name || "";
+function fillScriptParamFields(container, parameter = {}) {
   container.querySelector('[data-field="param-placeholder"]').value =
     parameter.placeholder || "";
-  container.querySelector('[data-field="param-default"]').value = parameter.default ?? "";
+  container.querySelector('[data-field="param-type"]').value =
+    parameter.type === "boolean" ? "boolean" : "string";
+  container.querySelector('[data-field="param-default"]').value =
+    parameter.type === "boolean" ? "" : (parameter.default ?? "");
+  container.querySelector('[data-field="param-default-bool"]').checked = isCheckedParamValue(
+    parameter.default
+  );
   container.querySelector('[data-field="param-optional"]').checked = Boolean(
     parameter.optional
   );
@@ -147,6 +187,12 @@ function fillSingleParameter(container, parameter = {}) {
   )
     ? parameter.choices.join(", ")
     : "";
+  updateScriptParamVisibility(container);
+}
+
+function fillSingleParameter(container, parameter = {}) {
+  container.querySelector('[data-field="param-name"]').value = parameter.name || "";
+  fillScriptParamFields(container, parameter);
 }
 
 function createParameterRow(values = {}) {
@@ -154,40 +200,77 @@ function createParameterRow(values = {}) {
   row.className = "parameter-row builder-row";
   row.innerHTML = `
     <input data-field="param-name" type="text" placeholder="name" />
+    <select data-field="param-type" aria-label="Type">
+      <option value="string">string</option>
+      <option value="boolean">boolean</option>
+    </select>
     <input data-field="param-placeholder" type="text" placeholder="placeholder" />
     <input data-field="param-default" type="text" placeholder="default" />
+    <label class="inline-check param-default-bool is-hidden"><input data-field="param-default-bool" type="checkbox" /> Default on</label>
     <label class="inline-check"><input data-field="param-optional" type="checkbox" /> Optional (may run empty)</label>
     <input data-field="param-choices" type="text" placeholder="choices, comma, separated" />
     <button type="button" class="row-remove secondary" title="Remove">×</button>
   `;
   row.querySelector('[data-field="param-name"]').value = values.name || "";
-  row.querySelector('[data-field="param-placeholder"]').value = values.placeholder || "";
-  row.querySelector('[data-field="param-default"]').value = values.default ?? "";
-  row.querySelector('[data-field="param-optional"]').checked = Boolean(values.optional);
-  row.querySelector('[data-field="param-choices"]').value = Array.isArray(values.choices)
-    ? values.choices.join(", ")
-    : "";
+  row.querySelector('[data-field="param-type"]').addEventListener("change", () => {
+    if (row.querySelector('[data-field="param-type"]').value === "boolean") {
+      const text = row.querySelector('[data-field="param-default"]')?.value.trim();
+      if (text === "true" || text === "false") {
+        row.querySelector('[data-field="param-default-bool"]').checked = text === "true";
+      }
+    }
+    updateScriptParamVisibility(row);
+  });
+  fillScriptParamFields(row, values);
   row.querySelector(".row-remove").addEventListener("click", () => row.remove());
   return row;
 }
 
+/**
+ * Show the source, value, and choice controls that apply to this row.
+ * A boolean navParam is a checkbox: no derivation, no choice list, and the
+ * value is always `"true"` or `"false"`.
+ * @param {HTMLElement} row
+ */
 function updateNavParamRowVisibility(row) {
+  const isBoolean = row.querySelector('[data-field="nav-type"]')?.value === "boolean";
   const kind = row.querySelector('[data-field="nav-kind"]')?.value || "none";
+  setFieldVisible(row.querySelector(".nav-kind-field"), !isBoolean);
   setFieldVisible(
     row.querySelector('[data-field="nav-from-url"]')?.closest(".nav-url-field"),
-    kind === "url"
+    !isBoolean && kind === "url"
   );
-  setFieldVisible(row.querySelector(".nav-dom-fields"), kind === "dom");
+  setFieldVisible(row.querySelector(".nav-dom-fields"), !isBoolean && kind === "dom");
   const stringSource = row.querySelector('[data-field="nav-string-source"]')?.value;
   setFieldVisible(
     row.querySelector('[data-field="nav-attribute"]')?.closest(".nav-attribute-field"),
-    kind === "dom" && stringSource === "attribute"
+    !isBoolean && kind === "dom" && stringSource === "attribute"
   );
   const showInput = row.querySelector('[data-field="nav-show-input"]')?.checked;
+  const hasChoices = Boolean(
+    row.querySelector('[data-field="nav-choices"]')?.value.trim()
+  );
+  const placeholderLabel = row.querySelector(".nav-placeholder-field .field-label");
+  if (placeholderLabel) {
+    placeholderLabel.textContent = isBoolean
+      ? "Checkbox label"
+      : "Input placeholder (may be empty)";
+  }
   setFieldVisible(
     row.querySelector('[data-field="nav-placeholder"]')?.closest(".nav-placeholder-field"),
-    showInput
+    isBoolean || showInput
   );
+  setFieldVisible(row.querySelector('[data-field="nav-default"]')?.closest(".nav-default-field"), !isBoolean);
+  setFieldVisible(
+    row.querySelector('[data-field="nav-default-bool"]')?.closest(".nav-default-bool"),
+    isBoolean
+  );
+  setFieldVisible(
+    row.querySelector('[data-field="nav-choices"]')?.closest(".nav-choices-field"),
+    !isBoolean && (showInput || hasChoices)
+  );
+  setFieldVisible(row.querySelector('[data-field="nav-show-input"]')?.closest(".inline-check"), !isBoolean);
+  setFieldVisible(row.querySelector('[data-field="nav-optional"]')?.closest(".inline-check"), !isBoolean);
 }
 
 function createNavParamRow(values = {}) {
@@ -233,13 +316,28 @@ function createNavParamRow(values = {}) {
       </label>
     </div>
     <div class="nav-value-fields">
+      <label class="field nav-type-field">
+        <span class="field-label">Type</span>
+        <select data-field="nav-type">
+          <option value="string">string</option>
+          <option value="boolean">boolean</option>
+        </select>
+      </label>
       <label class="field nav-default-field">
         <span class="field-label">Default value</span>
         <input data-field="nav-default" type="text" />
       </label>
+      <label class="inline-check nav-default-bool is-hidden">
+        <input data-field="nav-default-bool" type="checkbox" />
+        Default on
+      </label>
       <label class="field nav-placeholder-field is-hidden">
         <span class="field-label">Input placeholder (may be empty)</span>
         <input data-field="nav-placeholder" type="text" />
+      </label>
+      <label class="field nav-choices-field is-hidden">
+        <span class="field-label">Choices (comma-separated)</span>
+        <input data-field="nav-choices" type="text" placeholder="XML, JSON, CSV" />
       </label>
     </div>
     <div class="nav-param-toggles">
@@ -257,9 +355,19 @@ function createNavParamRow(values = {}) {
   const kindSelect = row.querySelector('[data-field="nav-kind"]');
   const sourceSelect = row.querySelector('[data-field="nav-string-source"]');
   const showInput = row.querySelector('[data-field="nav-show-input"]');
+  const typeSelect = row.querySelector('[data-field="nav-type"]');
   kindSelect.addEventListener("change", () => updateNavParamRowVisibility(row));
   sourceSelect.addEventListener("change", () => updateNavParamRowVisibility(row));
   showInput.addEventListener("change", () => updateNavParamRowVisibility(row));
+  typeSelect.addEventListener("change", () => {
+    if (typeSelect.value === "boolean") {
+      const text = row.querySelector('[data-field="nav-default"]')?.value.trim();
+      if (text === "true" || text === "false") {
+        row.querySelector('[data-field="nav-default-bool"]').checked = text === "true";
+      }
+    }
+    updateNavParamRowVisibility(row);
+  });
   row.querySelector(".row-remove").addEventListener("click", () => row.remove());
 
   if (values.fromUrl) {
@@ -285,8 +393,16 @@ function createNavParamRow(values = {}) {
     showInput.checked = true;
     row.querySelector('[data-field="nav-placeholder"]').value = values.placeholder ?? "";
   }
-  row.querySelector('[data-field="nav-default"]').value = values.default ?? "";
+  typeSelect.value = values.type === "boolean" ? "boolean" : "string";
+  row.querySelector('[data-field="nav-default"]').value =
+    values.type === "boolean" ? "" : (values.default ?? "");
+  row.querySelector('[data-field="nav-default-bool"]').checked = isCheckedParamValue(
+    values.default
+  );
   row.querySelector('[data-field="nav-optional"]').checked = Boolean(values.optional);
+  row.querySelector('[data-field="nav-choices"]').value = Array.isArray(values.choices)
+    ? values.choices.join(", ")
+    : "";
 
   updateNavParamRowVisibility(row);
   attachCodeMirror(row.querySelector('[data-field="nav-from-url"]'), {
@@ -309,6 +425,19 @@ export function wireBuilderFieldUi(fieldElements) {
   });
   fieldElements.parameterModeSelect.addEventListener("change", () => {
     updateParameterModeVisibility(fieldElements);
+  });
+  const singleType = fieldElements.singleParameterFields?.querySelector(
+    '[data-field="param-type"]'
+  );
+  singleType?.addEventListener("change", () => {
+    const panel = fieldElements.singleParameterFields;
+    if (singleType.value === "boolean") {
+      const text = panel.querySelector('[data-field="param-default"]')?.value.trim();
+      if (text === "true" || text === "false") {
+        panel.querySelector('[data-field="param-default-bool"]').checked = text === "true";
+      }
+    }
+    updateScriptParamVisibility(panel);
   });
   fieldElements.addParameterBtn.addEventListener("click", () => {
     fieldElements.multipleParametersList.appendChild(createParameterRow());
@@ -517,11 +646,11 @@ export function readParameterFields(fieldElements) {
       return {};
     }
     const { name, ...rest } = parameter;
-    return { params: { [name || "value"]: rest } };
+    return { scriptParams: { [name || "value"]: rest } };
   }
   if (mode === "multiple") {
     const parameters = readMultipleParameters(fieldElements.multipleParametersList);
-    return parameters ? { params: parameters } : {};
+    return parameters ? { scriptParams: parameters } : {};
   }
   return {};
 }
@@ -529,7 +658,7 @@ export function readParameterFields(fieldElements) {
 export function populateParameterFields(fieldElements, node) {
   fieldElements.multipleParametersList.replaceChildren();
   const params =
-    node.params && typeof node.params === "object" ? node.params : null;
+    node.scriptParams && typeof node.scriptParams === "object" ? node.scriptParams : null;
 
   if (params) {
     const entries = Object.entries(params);

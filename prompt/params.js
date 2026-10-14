@@ -9,7 +9,11 @@
  */
 import { loadParamValues } from "../lib/activate-link.js";
 import { getCatalogSnapshot } from "../lib/catalog-service.js";
-import { getEditableValueDefs, linkStorageKey } from "../lib/link-model.js";
+import {
+  getEditableValueDefs,
+  isCheckedParamValue,
+  linkStorageKey,
+} from "../lib/link-model.js";
 import { MessageTypes } from "../lib/message-types.js";
 import { StorageKeys } from "../lib/storage-keys.js";
 import { createUiMessage } from "../lib/ui-message.js";
@@ -30,9 +34,9 @@ let request = null;
 let parameterDefs = [];
 
 /**
- * @param {object} def editable value def (params or navParams)
- * @param {string} value prefilled value
- * @returns {HTMLElement} labelled input, with a datalist when the def has choices
+ * @param {object} def editable value def (scriptParams or navParams)
+ * @param {string | boolean} value prefilled value
+ * @returns {HTMLElement} labelled input, checkbox, or datalist combobox
  */
 function createField(def, value) {
   const wrap = document.createElement("label");
@@ -49,8 +53,18 @@ function createField(def, value) {
   }
 
   const input = document.createElement("input");
-  input.type = "text";
   input.dataset.param = def.name;
+  if (def.type === "boolean") {
+    input.type = "checkbox";
+    input.checked = isCheckedParamValue(value);
+    if (def.placeholder) {
+      label.textContent = def.placeholder;
+    }
+    wrap.append(input, label);
+    return wrap;
+  }
+
+  input.type = "text";
   input.value = value;
   input.placeholder =
     def.placeholder !== undefined && def.placeholder !== ""
@@ -82,7 +96,13 @@ function readValues() {
     const input = fieldsEl.querySelector(
       `[data-param="${CSS.escape(def.name)}"]`
     );
-    values[def.name] = input ? input.value.trim() : "";
+    if (!input) {
+      values[def.name] = "";
+    } else if (input.type === "checkbox") {
+      values[def.name] = input.checked ? "true" : "false";
+    } else {
+      values[def.name] = input.value.trim();
+    }
   }
   return values;
 }
