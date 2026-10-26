@@ -197,6 +197,22 @@
         "url": "{origin}/{tableList}.do?{format}&sysparm_query={query}&sysparm_default_export_fields=all&sysparm_display_value={referenceAsDisplay}"
       },
       {
+        "id": "cd719363-9c7e-4ea1-b1fb-587e382d4634",
+        "name": "Log UXF state changes",
+        "searchTags": [
+          "uxf",
+          "client state",
+          "workspace",
+          "UI Builder",
+          "debug"
+        ],
+        "frames": {
+          "top": true,
+          "nestingLevel": 0
+        },
+        "code": "window.__ENABLE_NOW_UI_EVENT__ = true;\n\nfunction queryDeep(selector, root = document) {\n  const hit = root.querySelector(selector);\n  if (hit) return hit;\n  for (const node of root.querySelectorAll(\"*\")) {\n    if (!node.shadowRoot) continue;\n    const found = queryDeep(selector, node.shadowRoot);\n    if (found) return found;\n  }\n  return null;\n}\n\nconst siteName = window.ux_globals.siteName;\nconst routeKey = location.pathname.substring(siteName.length + 2).split(\"/\")[0];\nconst route = window.ux_globals.experienceConfigs[siteName]\n  .appRouteConfiguration.routes[routeKey][0];\nconst pageEl = queryDeep(`macroponent-${route.macroponents[0].macroponentSysId}`);\nconst pageComponentId = pageEl.getAttribute(\"component-id\");\n\ndocument.addEventListener(\"NOW_UI_EVENT\", (event) => {\n  const detail = event.detail;\n  if (detail.type !== \"STATE_UPDATED\" || detail.componentId !== pageComponentId) return;\n  console.log('state changed:', detail.nextState);\n});"
+      },
+      {
         "id": "67564988-014f-4187-818c-6c975d27e76d",
         "name": "Show JSON",
         "searchTags": [
